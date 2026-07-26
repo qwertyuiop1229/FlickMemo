@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-// ⚠️ ご自身のキーが入っていることを確認してください
+// ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
     authDomain: "flickmemo-qwe.web.app",
@@ -12,7 +12,6 @@ const firebaseConfig = {
     appId: "1:998795111125:web:8e40535e8f2623283a105c",
     measurementId: "G-ZDRMZ5VLY9"
 };
-
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
@@ -20,6 +19,7 @@ const worker = new Worker('worker.js', { type: 'module' });
 worker.postMessage({ type: 'INIT_FIREBASE', config: firebaseConfig });
 
 // DOM要素
+const splashScreen = document.getElementById('splash-screen');
 const authContainer = document.getElementById('auth-container');
 const appContainer = document.getElementById('app-container');
 const mainLayout = document.getElementById('main-layout');
@@ -27,6 +27,7 @@ const noteList = document.getElementById('note-list');
 const emptyState = document.getElementById('empty-state');
 const noteBody = document.getElementById('note-body');
 const statusBar = document.getElementById('status-bar');
+const statusText = document.getElementById('status-text');
 const btnBack = document.getElementById('btn-back');
 const searchInput = document.getElementById('search-input');
 const authLoading = document.getElementById('auth-loading');
@@ -52,7 +53,17 @@ let lastDeletedNote = null;
 let toastTimer = null;
 let db = null;
 
-// Undo / Redo 履歴スタック
+// ★ 同期ステータスリアルタイム表示関数
+function setStatus(type, text) {
+    statusBar.className = `m3-badge status-${type}`;
+    statusText.textContent = text;
+}
+
+// ネット切断・復帰のリアルタイム監視
+window.addEventListener('online', () => setStatus('saving', 'オンライン復帰・同期中...'));
+window.addEventListener('offline', () => setStatus('offline', 'オフライン (ローカル保存済み)'));
+
+// Undo / Redo
 let textHistory = [];
 let historyIndex = -1;
 let isUndoRedoAction = false;
@@ -181,7 +192,6 @@ function renderList(filter = '') {
     });
 }
 
-// ★ メモ選択＆自動フォーカス
 function selectNote(id, autoFocus = true) {
     activeNoteId = id;
     const n = currentNotes[id] || { body: '', pinned: false };
@@ -195,10 +205,12 @@ function selectNote(id, autoFocus = true) {
     updateCharCount();
     renderList(searchInput.value);
 
-    mainLayout.classList.add('view-editor');
-    btnBack.classList.remove('hidden');
+    // スマホ表示時のみ戻るボタン表示＆スライド
+    if (window.innerWidth <= 768) {
+        mainLayout.classList.add('view-editor');
+        btnBack.classList.remove('hidden');
+    }
 
-    // 自動的にテキスト末尾へカーソルをセット
     if (autoFocus) {
         setTimeout(() => {
             noteBody.focus();
@@ -220,6 +232,7 @@ function deleteNote(id) {
         charCount.classList.add('hidden');
     }
     renderList(searchInput.value);
+    setStatus('saving', 'クラウドから削除中...');
     worker.postMessage({ type: 'DELETE_NOTE', id });
     showUndoToast();
 }
@@ -237,6 +250,7 @@ btnToastUndo.onclick = () => {
         currentNotes[lastDeletedNote.id] = lastDeletedNote;
         saveLocalNote(lastDeletedNote);
         selectNote(lastDeletedNote.id);
+        setStatus('saving', '復元中...');
         worker.postMessage({ type: 'SAVE_NOTE', note: lastDeletedNote });
         toastUndo.classList.add('hidden');
         lastDeletedNote = null;
@@ -249,15 +263,15 @@ btnPin.onclick = () => {
     btnPin.classList.toggle('active', currentNotes[activeNoteId].pinned);
     saveLocalNote(currentNotes[activeNoteId]);
     renderList(searchInput.value);
+    setStatus('saving', '保存中...');
     worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
 };
 
 btnCopy.onclick = () => {
     if (!noteBody.value) return;
     navigator.clipboard.writeText(noteBody.value);
-    const origText = statusBar.textContent;
-    statusBar.textContent = "コピー完了";
-    setTimeout(() => statusBar.textContent = origText, 1500);
+    setStatus('synced', 'クリップボードにコピー完了');
+    setTimeout(() => setStatus('synced', '同期完了'), 2000);
 };
 
 function updateCharCount() {
@@ -284,24 +298,26 @@ function handleInput() {
     saveLocalNote(updatedNote);
     updateCharCount();
     renderList(searchInput.value);
+
+    // ★ リアルタイムにステータス変更
+    setStatus('saving', 'クラウドに保存中...');
     worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
 }
 
 noteBody.oninput = handleInput;
 searchInput.oninput = () => renderList(searchInput.value);
 
-// ★ 新規メモ作成 (自動フォーカス機能付き)
 function createNewNote() {
     const newId = 'note_' + Date.now();
     currentNotes[newId] = { id: newId, body: '', pinned: false, updatedAt: Date.now() };
     saveLocalNote(currentNotes[newId]);
     selectNote(newId, true);
+    setStatus('saving', '新規保存中...');
     worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[newId] });
 }
 
 document.getElementById('btn-new').onclick = createNewNote;
 
-// ★ ショートカットキー (Ctrl+N / Cmd+N で新規作成)
 window.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
@@ -309,7 +325,6 @@ window.addEventListener('keydown', e => {
     }
 });
 
-// モーダル
 btnLogoutTrigger.onclick = () => logoutModal.classList.remove('hidden');
 btnModalCancel.onclick = () => logoutModal.classList.add('hidden');
 btnModalConfirm.onclick = () => {
@@ -317,7 +332,6 @@ btnModalConfirm.onclick = () => {
     signOut(auth);
 };
 
-// 認証
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
@@ -333,11 +347,14 @@ async function loginWithProvider(provider) {
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
 document.getElementById('btn-ms').onclick = () => loginWithProvider(new OAuthProvider('microsoft.com'));
 
+// ★【チラつき防止】ログイン状態確定後に画面を表示
 onAuthStateChanged(auth, user => {
+    splashScreen.classList.add('hidden'); // スプラッシュ削除
+
     if (user) {
         authContainer.classList.add('hidden');
         appContainer.classList.remove('hidden');
-        statusBar.textContent = "同期完了";
+        setStatus('synced', 'クラウド同期完了');
         worker.postMessage({ type: 'SET_USER', uid: user.uid });
     } else {
         authContainer.classList.remove('hidden');
@@ -348,6 +365,7 @@ onAuthStateChanged(auth, user => {
     }
 });
 
+// ★ リアルタイム同期完了通知
 worker.onmessage = e => {
     if (e.data.type === 'SYNC_NOTES') {
         const remoteNotes = e.data.notes || {};
@@ -357,6 +375,6 @@ worker.onmessage = e => {
         });
         renderList(searchInput.value);
         if (activeNoteId && currentNotes[activeNoteId]) selectNote(activeNoteId, false);
-        statusBar.textContent = "同期完了";
+        setStatus('synced', 'クラウド同期完了');
     }
 };

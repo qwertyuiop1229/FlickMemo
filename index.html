@@ -15,8 +15,13 @@
 
 <body>
 
+    <!-- 初期ローディング（ちらつき防止スプラッシュ） -->
+    <div id="splash-screen" class="center-screen">
+        <div class="spinner-large"></div>
+    </div>
+
     <!-- ログイン画面 -->
-    <div id="auth-container" class="center-screen">
+    <div id="auth-container" class="center-screen hidden">
         <div class="m3-card auth-card">
             <div class="brand-icon">
                 <span class="material-symbols-outlined">edit_note</span>
@@ -55,7 +60,11 @@
             </div>
 
             <div class="header-right">
-                <span id="status-bar" class="m3-badge">同期完了</span>
+                <!-- リアルタイム同期ステータス -->
+                <div id="status-bar" class="m3-badge status-synced">
+                    <span class="status-dot"></span>
+                    <span id="status-text">同期完了</span>
+                </div>
                 <button id="btn-logout-trigger" class="m3-icon-button" title="ログアウト">
                     <span class="material-symbols-outlined">logout</span>
                 </button>
@@ -105,7 +114,7 @@
 
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
 
-                <!-- 右下にひっそり浮く文字数カウンター -->
+                <!-- 右下文字数表示 -->
                 <div id="char-count" class="char-count-floating hidden">0 文字</div>
             </main>
         </div>
