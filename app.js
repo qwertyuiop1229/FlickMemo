@@ -2,9 +2,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.3";
+const APP_VERSION = "1.3.0";
 
-// ⚠️ キーが入っているか確認してください
+// ⚠️ ご自身のFirebaseキーを入れてください
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
     authDomain: "flickmemo-qwe.web.app",
@@ -66,11 +66,10 @@ const btnEmptyCancel = document.getElementById('btn-empty-cancel');
 const btnEmptyConfirm = document.getElementById('btn-empty-confirm');
 
 const logoutModal = document.getElementById('logout-modal');
-const btnLogoutTrigger = document.getElementById('btn-logout-trigger');
 const btnModalCancel = document.getElementById('btn-modal-cancel');
 const btnModalConfirm = document.getElementById('btn-modal-confirm');
 
-// 設定画面（Discord風）
+// 設定画面
 const settingsModal = document.getElementById('settings-modal');
 const btnSettingsTrigger = document.getElementById('btn-settings-trigger');
 const btnSettingsClose = document.getElementById('btn-settings-close');
@@ -134,7 +133,7 @@ function renderAppVersion() {
     appVersionDisplay.textContent = `v${APP_VERSION}`;
 }
 
-// ★ アバター生成（フォールバック用インラインSVG）
+// アバターフォールバック（インラインSVG）
 function getInitialsAvatar(name) {
     const initial = (name || 'U').charAt(0).toUpperCase();
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#042f66" rx="32"/><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" fill="#a8c7fa" font-size="28" font-family="sans-serif" font-weight="bold">${initial}</text></svg>`;
@@ -203,7 +202,6 @@ btnRedo.onclick = () => {
     }
 };
 
-// ★ タイトル手動指定 ＆ 本文自動抽出
 function getNoteDisplayTitle(note) {
     if (!note) return "空のメモ";
     if (note.title && note.title.trim()) {
@@ -697,15 +695,13 @@ window.addEventListener('keydown', e => {
     }
 });
 
-// モーダル・ログアウト
-btnLogoutTrigger.onclick = () => logoutModal.classList.remove('hidden');
 btnModalCancel.onclick = () => logoutModal.classList.add('hidden');
 btnModalConfirm.onclick = () => {
     logoutModal.classList.add('hidden');
     signOut(auth);
 };
 
-// ★ Discord風設定タブ切り替え
+// Discord風設定タブ切り替え
 document.querySelectorAll('.settings-tab-btn').forEach(btn => {
     btn.onclick = () => {
         document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.remove('active'));
@@ -741,7 +737,7 @@ btnUpdateCheck.onclick = async () => {
     window.location.reload(true);
 };
 
-// 認証
+// 認証ハンドラー
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
@@ -754,10 +750,16 @@ async function loginWithProvider(provider) {
     }
 }
 
-document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
-document.getElementById('btn-ms').onclick = () => loginWithProvider(new OAuthProvider('microsoft.com'));
+// ★ Microsoft ログインの高度ハンドラー（個人・組織アカウント共通指定）
+const msProvider = new OAuthProvider('microsoft.com');
+msProvider.setCustomParameters({
+    tenant: 'common' // 個人アカウント(Outlook/Hotmail)および組織アカウント両対応
+});
 
-// ★【ユーザーアカウント情報の超高精度取得 ＆ 安全アバターフォールバック】
+document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
+document.getElementById('btn-ms').onclick = () => loginWithProvider(msProvider);
+
+// ★【ユーザーアカウント情報の高精度取得 ＆ 安全アバターフォールバック】
 onAuthStateChanged(auth, user => {
     splashScreen.classList.add('hidden');
     if (user) {
@@ -771,17 +773,18 @@ onAuthStateChanged(auth, user => {
         userName.textContent = nameText;
         userEmail.textContent = emailText;
 
-        // アバター画像の確実な読み込み＆失敗時フォールバック
+        // アバター設定 ＆ 読み込み失敗時のインラインSVG安全装置
+        userAvatar.onerror = () => {
+            userAvatar.src = getInitialsAvatar(nameText);
+        };
+
         if (user.photoURL) {
             userAvatar.src = user.photoURL;
-            userAvatar.onerror = () => {
-                userAvatar.src = getInitialsAvatar(nameText);
-            };
         } else {
             userAvatar.src = getInitialsAvatar(nameText);
         }
 
-        // プロバイダ（Google / Microsoft）判別
+        // プロバイダ（Google / Microsoft）自動判定
         let providerName = "Google";
         if (user.providerData && user.providerData[0]) {
             const pId = user.providerData[0].providerId;
