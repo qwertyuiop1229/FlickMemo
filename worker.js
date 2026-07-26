@@ -36,7 +36,7 @@ self.onmessage = e => {
         set(noteRef, note);
     }
 
-    if (type === 'DELETE_NOTE' && currentUid && id) {
+    if (type === 'PERMANENT_DELETE_NOTE' && currentUid && id) {
         if (!db) return;
         const noteRef = ref(db, `users/${currentUid}/notes/${id}`);
         remove(noteRef);

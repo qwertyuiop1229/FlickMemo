@@ -1,0 +1,8 @@
+{
+    "name": "flickmemo",
+    "version": "1.3.0",
+    "type": "module",
+    "scripts": {
+        "deploy": "node bump.js && git add . && git commit -m \"auto deploy: update code and version\" && git push && firebase deploy"
+    }
+}

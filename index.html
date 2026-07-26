@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>FlickMemo</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet"
@@ -15,7 +15,7 @@
 
 <body>
 
-    <!-- 初期ローディング（ちらつき防止スプラッシュ） -->
+    <!-- スプラッシュ -->
     <div id="splash-screen" class="center-screen">
         <div class="spinner-large"></div>
     </div>
@@ -45,11 +45,10 @@
         </div>
     </div>
 
-    <!-- アプリメイン画面 -->
+    <!-- メイン画面 -->
     <div id="app-container" class="hidden">
         <header class="m3-top-app-bar">
             <div class="header-left">
-                <!-- スマホ時のみ表示される戻るボタン -->
                 <button id="btn-back" class="m3-icon-button mobile-only hidden" title="一覧に戻る">
                     <span class="material-symbols-outlined">arrow_back</span>
                 </button>
@@ -60,11 +59,13 @@
             </div>
 
             <div class="header-right">
-                <!-- リアルタイム同期ステータス -->
                 <div id="status-bar" class="m3-badge status-synced">
                     <span class="status-dot"></span>
                     <span id="status-text">同期完了</span>
                 </div>
+                <button id="btn-settings-trigger" class="m3-icon-button" title="設定">
+                    <span class="material-symbols-outlined">settings</span>
+                </button>
                 <button id="btn-logout-trigger" class="m3-icon-button" title="ログアウト">
                     <span class="material-symbols-outlined">logout</span>
                 </button>
@@ -74,6 +75,15 @@
         <div class="main-layout" id="main-layout">
             <!-- サイドバー -->
             <aside class="sidebar">
+                <div class="sidebar-tabs">
+                    <button id="tab-notes" class="tab-btn active">
+                        <span class="material-symbols-outlined">description</span> メモ
+                    </button>
+                    <button id="tab-trash" class="tab-btn">
+                        <span class="material-symbols-outlined">delete</span> ゴミ箱
+                    </button>
+                </div>
+
                 <div class="sidebar-top">
                     <div class="m3-search-bar">
                         <span class="material-symbols-outlined">search</span>
@@ -109,23 +119,36 @@
                         <button id="btn-copy" class="m3-icon-button" title="コピー">
                             <span class="material-symbols-outlined">content_copy</span>
                         </button>
+                        <button id="btn-restore-trash" class="m3-icon-button hidden" title="ゴミ箱から復元">
+                            <span class="material-symbols-outlined">restore_from_trash</span>
+                        </button>
                     </div>
                 </div>
 
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
 
-                <!-- 右下文字数表示 -->
                 <div id="char-count" class="char-count-floating hidden">0 文字</div>
             </main>
+        </div>
+    </div>
+
+    <!-- 削除確認ダイアログ -->
+    <div id="delete-modal" class="modal-overlay hidden">
+        <div class="m3-dialog">
+            <div class="dialog-icon"><span class="material-symbols-outlined">delete</span></div>
+            <h3 id="delete-modal-title">メモを削除しますか？</h3>
+            <p id="delete-modal-msg">削除されたメモはゴミ箱に7日間保存されます。</p>
+            <div class="dialog-actions">
+                <button id="btn-delete-cancel" class="m3-text-button">キャンセル</button>
+                <button id="btn-delete-confirm" class="m3-text-button btn-danger">削除 (Enter)</button>
+            </div>
         </div>
     </div>
 
     <!-- ログアウト確認ダイアログ -->
     <div id="logout-modal" class="modal-overlay hidden">
         <div class="m3-dialog">
-            <div class="dialog-icon">
-                <span class="material-symbols-outlined">logout</span>
-            </div>
+            <div class="dialog-icon"><span class="material-symbols-outlined">logout</span></div>
             <h3>ログアウトの確認</h3>
             <p>本当にログアウトしますか？</p>
             <div class="dialog-actions">
@@ -135,10 +158,35 @@
         </div>
     </div>
 
-    <!-- 「1個戻る（Undo）」トースト -->
-    <div id="toast-undo" class="m3-snackbar hidden">
-        <span>メモを削除しました</span>
-        <button id="btn-toast-undo" class="snackbar-action">元に戻す</button>
+    <!-- 設定ダイアログ -->
+    <div id="settings-modal" class="modal-overlay hidden">
+        <div class="m3-dialog">
+            <div class="dialog-icon"><span class="material-symbols-outlined">settings</span></div>
+            <h3>アプリ設定</h3>
+
+            <div class="settings-content">
+                <div class="settings-row">
+                    <span>現在のバージョン</span>
+                    <span id="app-version-display" class="version-badge">v...</span>
+                </div>
+                <div id="update-notice" class="update-notice hidden">
+                    <span>🆕 新しいバージョンが公開されています！</span>
+                </div>
+                <p class="settings-desc">「更新を確認」を押すと、最新のコードを取得してキャッシュを破棄し、自動再読み込みします。</p>
+                <button id="btn-update-check" class="m3-button btn-primary-full">
+                    <span class="material-symbols-outlined">refresh</span> 最新版に更新・キャッシュクリア
+                </button>
+            </div>
+
+            <div class="dialog-actions" style="margin-top:1.5rem;">
+                <button id="btn-settings-close" class="m3-text-button">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- トースト通知 -->
+    <div id="toast-msg" class="m3-snackbar hidden">
+        <span id="toast-text">メッセージ</span>
     </div>
 
     <script type="module" src="app.js"></script>

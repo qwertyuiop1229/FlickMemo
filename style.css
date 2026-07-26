@@ -34,6 +34,13 @@ html {
     overflow: hidden;
 }
 
+/* ★ iOS Safari 16px未満の自動拡大ズームを完全防止 */
+input,
+textarea,
+select {
+    font-size: 16px !important;
+}
+
 .hidden {
     display: none !important;
 }
@@ -46,7 +53,6 @@ html {
     padding: 1rem;
 }
 
-/* スプラッシュスピナー */
 .spinner-large {
     width: 32px;
     height: 32px;
@@ -187,7 +193,6 @@ html {
     font-weight: 500;
 }
 
-/* ★ リアルタイムステータスバッジ（ドット表示） */
 .m3-badge {
     font-size: 0.72rem;
     color: var(--m3-text-muted);
@@ -212,18 +217,15 @@ html {
     background: #81c995;
 }
 
-/* 緑：同期完了 */
 .status-saving .status-dot {
     background: #fdd663;
     animation: pulse 1s infinite alternate;
 }
 
-/* 黄：保存中 */
 .status-offline .status-dot {
     background: #888;
 }
 
-/* 灰：オフライン */
 @keyframes pulse {
     from {
         opacity: 0.4;
@@ -254,9 +256,11 @@ html {
     background: var(--m3-surface-hover);
 }
 
+/* ★ ピン留めアクティブ状態の強調表示 */
 .m3-icon-button.active {
-    color: var(--m3-primary);
-    background: var(--m3-surface-container);
+    color: var(--m3-primary) !important;
+    background: var(--m3-surface-container) !important;
+    border: 1px solid var(--m3-primary);
 }
 
 .m3-icon-button:disabled {
@@ -281,6 +285,38 @@ html {
     transition: transform 0.2s var(--m3-motion-curve);
 }
 
+.sidebar-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--m3-border);
+    background: var(--m3-bg);
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 0.6rem;
+    background: transparent;
+    border: none;
+    color: var(--m3-text-muted);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    transition: color 0.15s;
+}
+
+.tab-btn span {
+    font-size: 16px;
+}
+
+.tab-btn.active {
+    color: var(--m3-primary);
+    border-bottom: 2px solid var(--m3-primary);
+    background: var(--m3-surface);
+}
+
 .sidebar-top {
     padding: 0.8rem;
     display: flex;
@@ -295,7 +331,7 @@ html {
     background: var(--m3-bg);
     border: 1px solid var(--m3-border);
     border-radius: var(--m3-radius-full);
-    padding: 0.4rem 0.8rem;
+    padding: 0.35rem 0.8rem;
     gap: 0.5rem;
 }
 
@@ -309,7 +345,6 @@ html {
     border: none;
     outline: none;
     color: var(--m3-text);
-    font-size: 0.85rem;
     width: 100%;
 }
 
@@ -344,7 +379,6 @@ html {
     list-style: none;
 }
 
-/* ★ メモ項目（青い縦線を完全排除・コンテナハイライト） */
 .note-item {
     padding: 0.85rem 1rem;
     border-radius: var(--m3-radius-lg);
@@ -416,7 +450,7 @@ html {
     margin-top: 3rem;
 }
 
-/* Editor & Floating Character Counter */
+/* Editor */
 .editor-area {
     flex: 1;
     display: flex;
@@ -448,7 +482,7 @@ html {
     border: none;
     outline: none;
     color: var(--m3-text);
-    font-size: 1.05rem;
+    font-size: 1rem;
     resize: none;
     line-height: 1.7;
     font-family: 'Google Sans', sans-serif;
@@ -474,7 +508,7 @@ html {
     opacity: 1;
 }
 
-/* Modal & Snackbar */
+/* Modal & Dialogs */
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -544,6 +578,44 @@ html {
     border: none;
 }
 
+/* 設定ダイアログ用 */
+.settings-content {
+    text-align: left;
+    margin-top: 1rem;
+}
+
+.settings-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.8rem;
+    font-size: 0.9rem;
+}
+
+.version-badge {
+    background: var(--m3-surface-container);
+    padding: 0.2rem 0.6rem;
+    border-radius: var(--m3-radius-full);
+    border: 1px solid var(--m3-border);
+    color: var(--m3-primary);
+    font-size: 0.8rem;
+}
+
+.settings-desc {
+    font-size: 0.78rem;
+    color: var(--m3-text-muted);
+    margin-bottom: 1.2rem;
+    line-height: 1.5;
+}
+
+.btn-primary-full {
+    width: 100%;
+    background: var(--m3-primary);
+    color: var(--m3-on-primary);
+    border: none;
+    font-weight: 500;
+}
+
 .m3-snackbar {
     position: fixed;
     bottom: 1.5rem;
@@ -560,16 +632,6 @@ html {
     z-index: 90;
 }
 
-.snackbar-action {
-    background: transparent;
-    border: none;
-    color: var(--m3-primary);
-    font-weight: bold;
-    cursor: pointer;
-    font-size: 0.88rem;
-}
-
-/* ★ PC画面（769px以上）では「戻るボタン」を完全に隠す */
 @media (min-width: 769px) {
 
     #btn-back,
@@ -578,7 +640,6 @@ html {
     }
 }
 
-/* スマホ表示対応 */
 @media (max-width: 768px) {
     .sidebar {
         width: 100%;
