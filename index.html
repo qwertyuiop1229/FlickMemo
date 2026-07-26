@@ -85,7 +85,6 @@
                 </div>
 
                 <div class="sidebar-top">
-                    <!-- ゴミ箱モード用警告案内 -->
                     <div id="trash-notice" class="trash-notice-banner hidden">
                         <span class="material-symbols-outlined">info</span> 7日経過すると自動削除されます
                     </div>
@@ -95,12 +94,10 @@
                         <input type="text" id="search-input" placeholder="検索...">
                     </div>
 
-                    <!-- 通常時：新しいメモボタン -->
                     <button id="btn-new" class="m3-fab-button">
                         <span class="material-symbols-outlined">add</span> 新しいメモ
                     </button>
 
-                    <!-- ゴミ箱時：ゴミ箱を空にするボタン -->
                     <button id="btn-empty-trash" class="m3-fab-button btn-danger-fab hidden">
                         <span class="material-symbols-outlined">delete_sweep</span> ゴミ箱を空にする
                     </button>
@@ -139,20 +136,22 @@
 
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
 
+                <!-- 左下：更新日にち表示 / 右下：文字数表示 -->
+                <div id="date-display" class="date-display-floating hidden">--月--日</div>
                 <div id="char-count" class="char-count-floating hidden">0 文字</div>
             </main>
         </div>
     </div>
 
-    <!-- 単一メモ削除ダイアログ -->
+    <!-- ゴミ箱内完全削除ダイアログ -->
     <div id="delete-modal" class="modal-overlay hidden">
         <div class="m3-dialog">
-            <div class="dialog-icon"><span class="material-symbols-outlined">delete</span></div>
-            <h3 id="delete-modal-title">メモを削除しますか？</h3>
-            <p id="delete-modal-msg">削除されたメモはゴミ箱に7日間保存されます。</p>
+            <div class="dialog-icon"><span class="material-symbols-outlined">delete_forever</span></div>
+            <h3>メモを完全削除しますか？</h3>
+            <p>この操作は元に戻せません。</p>
             <div class="dialog-actions">
                 <button id="btn-delete-cancel" class="m3-text-button">キャンセル</button>
-                <button id="btn-delete-confirm" class="m3-text-button btn-danger">削除 (Enter)</button>
+                <button id="btn-delete-confirm" class="m3-text-button btn-danger">完全削除 (Enter)</button>
             </div>
         </div>
     </div>
@@ -160,9 +159,9 @@
     <!-- ゴミ箱を空にするダイアログ -->
     <div id="empty-trash-modal" class="modal-overlay hidden">
         <div class="m3-dialog">
-            <div class="dialog-icon"><span class="material-symbols-outlined">delete_forever</span></div>
+            <div class="dialog-icon"><span class="material-symbols-outlined">delete_sweep</span></div>
             <h3>ゴミ箱を空にしますか？</h3>
-            <p>ゴミ箱内のすべてのメモが永久に消去されます。この操作は元に戻せません。</p>
+            <p>ゴミ箱内のすべてのメモが永久に消去されます。</p>
             <div class="dialog-actions">
                 <button id="btn-empty-cancel" class="m3-text-button">キャンセル</button>
                 <button id="btn-empty-confirm" class="m3-text-button btn-danger">すべて削除 (Enter)</button>
@@ -206,9 +205,10 @@
         </div>
     </div>
 
-    <!-- トースト通知 -->
+    <!-- トースト通知 (元に戻すアクション付き) -->
     <div id="toast-msg" class="m3-snackbar hidden">
         <span id="toast-text">メッセージ</span>
+        <button id="btn-toast-action" class="snackbar-action hidden">元に戻す</button>
     </div>
 
     <script type="module" src="app.js"></script>

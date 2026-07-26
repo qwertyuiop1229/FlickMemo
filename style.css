@@ -9,8 +9,12 @@
     --m3-text: #e3e2e6;
     --m3-text-variant: #c4c6d0;
     --m3-text-muted: #8e918f;
-    --m3-danger: #f2b8b5;
-    --m3-danger-bg: #601410;
+
+    /* ★ ソフトで上品なモダンレッド（禍々しさを排除） */
+    --m3-danger: #f28b82;
+    --m3-danger-bg: #3c2424;
+    --m3-danger-border: #5c3234;
+
     --m3-radius-sm: 8px;
     --m3-radius-md: 12px;
     --m3-radius-lg: 16px;
@@ -328,10 +332,11 @@ select {
     border-bottom: 1px solid var(--m3-border);
 }
 
-/* ゴミ箱バナー */
+/* ソフトな赤色バナー */
 .trash-notice-banner {
     background: var(--m3-danger-bg);
     color: var(--m3-danger);
+    border: 1px solid var(--m3-danger-border);
     font-size: 0.72rem;
     padding: 0.4rem 0.6rem;
     border-radius: var(--m3-radius-sm);
@@ -388,10 +393,15 @@ select {
     opacity: 0.9;
 }
 
+/* ソフトな赤色ボタン */
 .btn-danger-fab {
     background: var(--m3-danger-bg);
     color: var(--m3-danger);
-    border: 1px solid var(--m3-danger);
+    border: 1px solid var(--m3-danger-border);
+}
+
+.btn-danger-fab:hover {
+    background: #4a2b2b;
 }
 
 .list-container {
@@ -404,7 +414,6 @@ select {
     list-style: none;
 }
 
-/* ★ 日付グループ見出し */
 .date-group-header {
     font-size: 0.72rem;
     font-weight: 500;
@@ -413,6 +422,7 @@ select {
     letter-spacing: 0.3px;
 }
 
+/* ★ 枠線周りの全域クリック可能要素 */
 .note-item {
     padding: 0.85rem 1rem;
     border-radius: var(--m3-radius-lg);
@@ -423,6 +433,7 @@ select {
     justify-content: space-between;
     transition: background 0.15s;
     border-left: none !important;
+    user-select: none;
 }
 
 .note-item:hover {
@@ -449,6 +460,7 @@ select {
     display: flex;
     align-items: center;
     gap: 0.3rem;
+    pointer-events: none;
 }
 
 .pin-icon {
@@ -467,6 +479,7 @@ select {
     display: flex;
     align-items: center;
     transition: opacity 0.15s;
+    pointer-events: auto;
 }
 
 .note-item:hover .btn-delete {
@@ -484,7 +497,7 @@ select {
     margin-top: 3rem;
 }
 
-/* Editor */
+/* Editor & Floating Info */
 .editor-area {
     flex: 1;
     display: flex;
@@ -522,6 +535,23 @@ select {
     font-family: 'Google Sans', sans-serif;
 }
 
+/* ★ 左下：日付表示 / 右下：文字数表示 */
+.date-display-floating {
+    position: absolute;
+    bottom: 1.2rem;
+    left: 1.5rem;
+    font-size: 0.72rem;
+    color: var(--m3-text-muted);
+    background: var(--m3-surface);
+    padding: 0.2rem 0.6rem;
+    border-radius: var(--m3-radius-full);
+    border: 1px solid var(--m3-border);
+    pointer-events: none;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+    font-family: 'Roboto Mono', monospace;
+}
+
 .char-count-floating {
     position: absolute;
     bottom: 1.2rem;
@@ -538,6 +568,7 @@ select {
     font-family: 'Roboto Mono', monospace;
 }
 
+.editor-area:hover .date-display-floating,
 .editor-area:hover .char-count-floating {
     opacity: 1;
 }
@@ -606,10 +637,15 @@ select {
     background: var(--m3-surface-hover);
 }
 
+/* ソフトな危険ボタン */
 .m3-text-button.btn-danger {
     background: var(--m3-danger-bg);
     color: var(--m3-danger);
-    border: none;
+    border: 1px solid var(--m3-danger-border);
+}
+
+.m3-text-button.btn-danger:hover {
+    background: #4a2b2b;
 }
 
 .settings-content {
@@ -663,6 +699,15 @@ select {
     gap: 1.2rem;
     font-size: 0.88rem;
     z-index: 90;
+}
+
+.snackbar-action {
+    background: transparent;
+    border: none;
+    color: var(--m3-primary);
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 0.88rem;
 }
 
 @media (min-width: 769px) {
