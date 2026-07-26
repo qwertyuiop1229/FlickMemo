@@ -15,7 +15,7 @@
 
 <body>
 
-    <!-- ログイン画面 (Material 3 Card) -->
+    <!-- ログイン画面 -->
     <div id="auth-container" class="center-screen">
         <div class="m3-card auth-card">
             <div class="brand-icon">
@@ -42,10 +42,10 @@
 
     <!-- アプリメイン画面 -->
     <div id="app-container" class="hidden">
-        <!-- ヘッダー (Top App Bar) -->
         <header class="m3-top-app-bar">
             <div class="header-left">
-                <button id="btn-back" class="m3-icon-button mobile-only hidden" title="戻る">
+                <!-- スマホ時のみ表示される戻るボタン -->
+                <button id="btn-back" class="m3-icon-button mobile-only hidden" title="一覧に戻る">
                     <span class="material-symbols-outlined">arrow_back</span>
                 </button>
                 <div class="brand-logo">
@@ -62,14 +62,13 @@
             </div>
         </header>
 
-        <!-- メインレイアウト -->
         <div class="main-layout" id="main-layout">
-            <!-- ナビゲーションドロワー（サイドバー） -->
+            <!-- サイドバー -->
             <aside class="sidebar">
                 <div class="sidebar-top">
                     <div class="m3-search-bar">
                         <span class="material-symbols-outlined">search</span>
-                        <input type="text" id="search-input" placeholder="メモを検索...">
+                        <input type="text" id="search-input" placeholder="検索...">
                     </div>
                     <button id="btn-new" class="m3-fab-button">
                         <span class="material-symbols-outlined">add</span> 新しいメモ
@@ -84,7 +83,6 @@
 
             <!-- エディタエリア -->
             <main class="editor-area">
-                <!-- マテリアルツールバー (Undo / Redo / Pin / Copy) -->
                 <div class="editor-toolbar hidden" id="editor-toolbar">
                     <div class="toolbar-group">
                         <button id="btn-undo" class="m3-icon-button" title="元に戻す (Undo)" disabled>
@@ -102,16 +100,18 @@
                         <button id="btn-copy" class="m3-icon-button" title="コピー">
                             <span class="material-symbols-outlined">content_copy</span>
                         </button>
-                        <span class="char-count" id="char-count">0 文字</span>
                     </div>
                 </div>
 
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
+
+                <!-- 右下にひっそり浮く文字数カウンター -->
+                <div id="char-count" class="char-count-floating hidden">0 文字</div>
             </main>
         </div>
     </div>
 
-    <!-- ログアウト確認ダイアログ (Material 3 Dialog) -->
+    <!-- ログアウト確認ダイアログ -->
     <div id="logout-modal" class="modal-overlay hidden">
         <div class="m3-dialog">
             <div class="dialog-icon">
@@ -126,7 +126,7 @@
         </div>
     </div>
 
-    <!-- 「1個戻る（Undo）」トースト通知 (Material 3 Snackbar) -->
+    <!-- 「1個戻る（Undo）」トースト -->
     <div id="toast-undo" class="m3-snackbar hidden">
         <span>メモを削除しました</span>
         <button id="btn-toast-undo" class="snackbar-action">元に戻す</button>

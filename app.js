@@ -52,7 +52,7 @@ let lastDeletedNote = null;
 let toastTimer = null;
 let db = null;
 
-// ★ テキスト編集の Undo/Redo 履歴スタック
+// Undo / Redo 履歴スタック
 let textHistory = [];
 let historyIndex = -1;
 let isUndoRedoAction = false;
@@ -181,12 +181,14 @@ function renderList(filter = '') {
     });
 }
 
-function selectNote(id) {
+// ★ メモ選択＆自動フォーカス
+function selectNote(id, autoFocus = true) {
     activeNoteId = id;
     const n = currentNotes[id] || { body: '', pinned: false };
     noteBody.value = n.body || '';
     noteBody.disabled = false;
     editorToolbar.classList.remove('hidden');
+    charCount.classList.remove('hidden');
     btnPin.classList.toggle('active', !!n.pinned);
 
     resetTextHistory(n.body || '');
@@ -195,6 +197,14 @@ function selectNote(id) {
 
     mainLayout.classList.add('view-editor');
     btnBack.classList.remove('hidden');
+
+    // 自動的にテキスト末尾へカーソルをセット
+    if (autoFocus) {
+        setTimeout(() => {
+            noteBody.focus();
+            noteBody.setSelectionRange(noteBody.value.length, noteBody.value.length);
+        }, 50);
+    }
 }
 
 function deleteNote(id) {
@@ -207,6 +217,7 @@ function deleteNote(id) {
         noteBody.value = '';
         noteBody.disabled = true;
         editorToolbar.classList.add('hidden');
+        charCount.classList.add('hidden');
     }
     renderList(searchInput.value);
     worker.postMessage({ type: 'DELETE_NOTE', id });
@@ -279,13 +290,24 @@ function handleInput() {
 noteBody.oninput = handleInput;
 searchInput.oninput = () => renderList(searchInput.value);
 
-document.getElementById('btn-new').onclick = () => {
+// ★ 新規メモ作成 (自動フォーカス機能付き)
+function createNewNote() {
     const newId = 'note_' + Date.now();
     currentNotes[newId] = { id: newId, body: '', pinned: false, updatedAt: Date.now() };
     saveLocalNote(currentNotes[newId]);
-    selectNote(newId);
+    selectNote(newId, true);
     worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[newId] });
-};
+}
+
+document.getElementById('btn-new').onclick = createNewNote;
+
+// ★ ショートカットキー (Ctrl+N / Cmd+N で新規作成)
+window.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        createNewNote();
+    }
+});
 
 // モーダル
 btnLogoutTrigger.onclick = () => logoutModal.classList.remove('hidden');
@@ -334,7 +356,7 @@ worker.onmessage = e => {
             saveLocalNote(n);
         });
         renderList(searchInput.value);
-        if (activeNoteId && currentNotes[activeNoteId]) selectNote(activeNoteId);
+        if (activeNoteId && currentNotes[activeNoteId]) selectNote(activeNoteId, false);
         statusBar.textContent = "同期完了";
     }
 };

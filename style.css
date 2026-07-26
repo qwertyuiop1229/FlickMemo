@@ -46,7 +46,7 @@ html {
     padding: 1rem;
 }
 
-/* Material 3 Card */
+/* 認証カード */
 .m3-card {
     background: var(--m3-surface);
     border: 1px solid var(--m3-border);
@@ -362,7 +362,7 @@ html {
     margin-top: 3rem;
 }
 
-/* Editor */
+/* Editor & Floating Character Counter */
 .editor-area {
     flex: 1;
     display: flex;
@@ -370,6 +370,7 @@ html {
     background: var(--m3-bg);
     padding: 1rem 1.5rem;
     overflow-y: auto;
+    position: relative;
 }
 
 .editor-toolbar {
@@ -387,13 +388,6 @@ html {
     gap: 0.4rem;
 }
 
-.char-count {
-    font-size: 0.75rem;
-    color: var(--m3-text-muted);
-    margin-left: 0.4rem;
-    font-family: 'Roboto Mono', monospace;
-}
-
 .m3-text-area {
     flex: 1;
     background: transparent;
@@ -406,7 +400,28 @@ html {
     font-family: 'Google Sans', sans-serif;
 }
 
-/* Material 3 Dialog */
+/* ★ 右下にひっそり浮く文字数表示 */
+.char-count-floating {
+    position: absolute;
+    bottom: 1.2rem;
+    right: 1.5rem;
+    font-size: 0.72rem;
+    color: var(--m3-text-muted);
+    background: var(--m3-surface);
+    padding: 0.2rem 0.6rem;
+    border-radius: var(--m3-radius-full);
+    border: 1px solid var(--m3-border);
+    pointer-events: none;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+    font-family: 'Roboto Mono', monospace;
+}
+
+.editor-area:hover .char-count-floating {
+    opacity: 1;
+}
+
+/* Material 3 Dialog & Snackbar */
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -476,7 +491,6 @@ html {
     border: none;
 }
 
-/* Material 3 Snackbar */
 .m3-snackbar {
     position: fixed;
     bottom: 1.5rem;
@@ -502,7 +516,7 @@ html {
     font-size: 0.88rem;
 }
 
-/* Mobile */
+/* Mobile Only Navigation */
 @media (max-width: 768px) {
     .mobile-only {
         display: flex !important;
