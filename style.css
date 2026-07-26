@@ -38,60 +38,40 @@ html {
     overflow: hidden;
 }
 
+/* 共通：スクロールバーの小さな三角アローボタンを完全に消去 */
 ::-webkit-scrollbar-button {
     display: none !important;
     width: 0;
     height: 0;
 }
 
-/* メモ一覧：iOS風 極細スクロールバー */
-.list-container {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    position: relative;
-    scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
+/* ★ アプリ全領域共通：iOS/iPhone風（普段は完全に消え、スクロール時のみ自然にフェードイン） */
+::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
 }
 
-.list-container::-webkit-scrollbar {
-    width: 4px;
-}
-
-.list-container::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
     background: transparent;
 }
 
-.list-container::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
     background: transparent;
     border-radius: var(--m3-radius-full);
-    transition: background 0.3s;
+    transition: background 0.4s var(--m3-motion-curve);
 }
 
+/* スクロール操作中 (.is-scrolling) またはマウスホバー時にフェードイン表示 */
+.is-scrolling::-webkit-scrollbar-thumb,
+.editor-area.is-scrolling::-webkit-scrollbar-thumb,
+.m3-text-area.is-scrolling::-webkit-scrollbar-thumb,
+.m3-code-view.is-scrolling::-webkit-scrollbar-thumb,
 .list-container.is-scrolling::-webkit-scrollbar-thumb,
+.editor-area:hover::-webkit-scrollbar-thumb,
+.m3-text-area:hover::-webkit-scrollbar-thumb,
+.m3-code-view:hover::-webkit-scrollbar-thumb,
 .list-container:hover::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-}
-
-/* エディタ：独自UIスクロールバー */
-.editor-area::-webkit-scrollbar,
-.m3-text-area::-webkit-scrollbar,
-.m3-code-view::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-
-.editor-area::-webkit-scrollbar-track,
-.m3-text-area::-webkit-scrollbar-track,
-.m3-code-view::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.editor-area::-webkit-scrollbar-thumb,
-.m3-text-area::-webkit-scrollbar-thumb,
-.m3-code-view::-webkit-scrollbar-thumb {
-    background: #2a2b2d;
-    border-radius: var(--m3-radius-full);
+    background: rgba(255, 255, 255, 0.22);
 }
 
 input,
@@ -446,6 +426,13 @@ select {
     background: #4a2b2b;
 }
 
+.list-container {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    position: relative;
+}
+
 .note-list {
     list-style: none;
     padding: 0.4rem 0.75rem 3.5rem 0.75rem;
@@ -717,7 +704,7 @@ select {
     overflow-x: auto;
 }
 
-/* ★ 折りたたみ（Collapse）時のスタイル */
+/* 折りたたみ（Collapse）時のスタイル */
 .code-block-wrapper.is-collapsed pre {
     display: none !important;
 }
@@ -766,7 +753,7 @@ select {
     opacity: 1;
 }
 
-/* ダイアログ汎用 */
+/* ダイアログ */
 .modal-overlay {
     position: fixed;
     inset: 0;

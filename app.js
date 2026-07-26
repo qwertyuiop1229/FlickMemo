@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.6";
+const APP_VERSION = "1.1.7";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -96,15 +96,22 @@ let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
 
-// iOS風スクロールバー監視
-let scrollTimer = null;
-listContainer.addEventListener('scroll', () => {
-    listContainer.classList.add('is-scrolling');
-    clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(() => {
-        listContainer.classList.remove('is-scrolling');
-    }, 800);
-});
+// ★【全領域共通の動的フェードスクロールバー監視】
+function setupScrollFade(element) {
+    if (!element) return;
+    let timer = null;
+    element.addEventListener('scroll', () => {
+        element.classList.add('is-scrolling');
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            element.classList.remove('is-scrolling');
+        }, 800);
+    });
+}
+
+setupScrollFade(listContainer);
+setupScrollFade(noteBody);
+setupScrollFade(noteCodeView);
 
 function setStatus(type, text) {
     statusBar.className = `m3-badge status-${type}`;
@@ -142,45 +149,28 @@ function getInitialsAvatar(name) {
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
-// ★【高度構文解析エンジン】(コメントや文字列の中の日本語を一時除去してコード構造を判定)
-function isPureCodeBlock(blockText) {
-    if (!blockText || !blockText.trim()) return { isCode: false, lang: 'javascript' };
+// ★【単一行レベルのコード構造判定】(コメントや文字列の中の日本語を一時除外)
+function isCodeLine(line) {
+    const l = line.trim();
+    if (!l) return true; // 空行は文脈を維持
 
-    // コメント（//や#）と文字列（"..."や'...'）を除去した純粋な構文テキストを抽出
-    let cleanText = blockText.replace(/\/\/.*$/gm, '');
-    cleanText = cleanText.replace(/#.*$/gm, '');
-    cleanText = cleanText.replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, '""');
-    cleanText = cleanText.replace(/'[^'\\]*(?:\\.[^'\\]*)*'/g, "''");
-
-    const patterns = [
-        { lang: 'javascript', regex: /\b(const|let|var|function|async|await|return|import|export|class|console\.log|document\.|window\.|MutationObserver|=>)\b/g },
-        { lang: 'python', regex: /\b(def\s+\w+|self\.|import\s+\w+|from\s+\w+\s+import|elif|print\(|__name__)\b/g },
-        { lang: 'html', regex: /<\/?[a-z][\s\S]*?>/i },
-        { lang: 'css', regex: /[\.\#][a-zA-Z0-9_\-]+\s*\{[\s\S]*?\}/g },
-        { lang: 'clike', regex: /\b(#include|public\s+class|std::|system\.out\.println)\b/g }
-    ];
-
-    let totalScore = 0;
-    let detectedLang = 'javascript';
-    let maxScore = 0;
-
-    for (const item of patterns) {
-        const matches = cleanText.match(item.regex);
-        if (matches) {
-            const score = matches.length;
-            totalScore += score;
-            if (score > maxScore) {
-                maxScore = score;
-                detectedLang = item.lang;
-            }
-        }
+    // コメント行の判定
+    if (l.startsWith('//') || l.startsWith('/*') || l.startsWith('*') || l.startsWith('#')) {
+        return true;
     }
 
-    const isCode = totalScore >= 1 || /^\s*(\(function|function|const|let|var|def|<div|<html)/.test(cleanText.trim());
-    return { isCode, lang: detectedLang };
+    // 日本語コメント・文字列を一時除去した純粋構文でキーワード判定
+    let cleanLine = l.replace(/\/\/.*$/, '');
+    cleanLine = cleanLine.replace(/#.*$/, '');
+    cleanLine = cleanLine.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+
+    const hasKeywords = /\b(function|const|let|var|if|else|for|while|return|class|import|export|def|async|await|console|document|window|MutationObserver)\b/.test(cleanLine);
+    const hasSymbols = /[\{\}\(\)\[\];=><\+\-\*\/]/.test(cleanLine);
+
+    return hasKeywords || hasSymbols;
 }
 
-// ★【全自動コード変身 ＆ 折りたたみ（RTDB同期付き）レンダラー】
+// ★【行ベースの一括コード統合＆レンダラー】(空行でバラバラに分裂するバグを修復)
 function updateAutoCodeRender() {
     const text = noteBody.value || '';
     if (!text.trim()) {
@@ -225,23 +215,54 @@ function updateAutoCodeRender() {
             html += `<p>${escapeHTML(remaining)}</p>`;
         }
     } else {
-        // 段落ごとに切り分けて高精度判定
-        const paragraphs = text.split(/\n\s*\n/);
+        // 行単位でグループ化（空行があっても連続するコードを1つのコードカードに結合）
+        const lines = text.split('\n');
+        let currentBlock = [];
+        let currentIsCode = null;
 
-        paragraphs.forEach(p => {
-            const trimmed = p.trim();
-            if (!trimmed) return;
+        lines.forEach((line) => {
+            const lineIsCode = isCodeLine(line);
+            const isBlank = !line.trim();
 
-            const check = isPureCodeBlock(trimmed);
-            if (check.isCode) {
-                hasAnyCode = true;
-                const isCollapsed = !!collapsedState[`block_${blockIndex}`];
-                html += buildCodeBlockHTML(check.lang, trimmed, blockIndex, isCollapsed);
-                blockIndex++;
+            // 空行の場合は直前の判定（CODE/TEXT）をそのまま引き継ぐ
+            const targetType = isBlank ? (currentIsCode ?? 'TEXT') : (lineIsCode ? 'CODE' : 'TEXT');
+
+            if (currentIsCode === null) {
+                currentIsCode = targetType;
+                currentBlock.push(line);
+            } else if (currentIsCode === targetType) {
+                currentBlock.push(line);
             } else {
-                html += `<p>${escapeHTML(trimmed)}</p>`;
+                // グループの切り替わりで描画
+                const blockContent = currentBlock.join('\n').trim();
+                if (blockContent) {
+                    if (currentIsCode === 'CODE') {
+                        hasAnyCode = true;
+                        const isCollapsed = !!collapsedState[`block_${blockIndex}`];
+                        html += buildCodeBlockHTML('javascript', blockContent, blockIndex, isCollapsed);
+                        blockIndex++;
+                    } else {
+                        html += `<p>${escapeHTML(blockContent)}</p>`;
+                    }
+                }
+                currentBlock = [line];
+                currentIsCode = targetType;
             }
         });
+
+        if (currentBlock.length > 0) {
+            const blockContent = currentBlock.join('\n').trim();
+            if (blockContent) {
+                if (currentIsCode === 'CODE') {
+                    hasAnyCode = true;
+                    const isCollapsed = !!collapsedState[`block_${blockIndex}`];
+                    html += buildCodeBlockHTML('javascript', blockContent, blockIndex, isCollapsed);
+                    blockIndex++;
+                } else {
+                    html += `<p>${escapeHTML(blockContent)}</p>`;
+                }
+            }
+        }
     }
 
     if (hasAnyCode && document.activeElement !== noteBody) {
@@ -250,7 +271,6 @@ function updateAutoCodeRender() {
             Prism.highlightAllUnder(noteCodeView);
         }
 
-        // コピーボタンの動作
         noteCodeView.querySelectorAll('.copy-code-btn').forEach(btn => {
             btn.onclick = (e) => {
                 e.stopPropagation();
@@ -260,7 +280,6 @@ function updateAutoCodeRender() {
             };
         });
 
-        // ★【折りたたみ（Collapse/Expand）ボタン ＆ RTDB保存】
         noteCodeView.querySelectorAll('.collapse-code-btn').forEach(btn => {
             btn.onclick = (e) => {
                 e.stopPropagation();
@@ -275,7 +294,6 @@ function updateAutoCodeRender() {
                     wrapper.classList.toggle('is-collapsed', nextState);
                     btn.querySelector('span').textContent = nextState ? 'unfold_more' : 'unfold_less';
 
-                    // ローカル＆RTDB（クラウド）に折りたたみ状態を即座に保存・同期！
                     saveLocalNote(activeNote);
                     setStatus('saving', 'クラウドに保存中...');
                     worker.postMessage({ type: 'SAVE_NOTE', note: activeNote });
