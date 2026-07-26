@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.8";
+const APP_VERSION = "1.3.0";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -96,7 +96,7 @@ let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
 
-// ★【3秒間停止で自然にフェードアウト消去する万能スクロール監視】
+// iOS風スクロールバー監視
 function setupScrollFade(element) {
     if (!element) return;
     let timer = null;
@@ -104,7 +104,6 @@ function setupScrollFade(element) {
     const triggerShow = () => {
         element.classList.add('is-scrolling');
         clearTimeout(timer);
-        // 操作停止から3秒(3000ms)後にスッとフェードアウト
         timer = setTimeout(() => {
             element.classList.remove('is-scrolling');
         }, 3000);
@@ -160,7 +159,34 @@ function getInitialsAvatar(name) {
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
-// 高度構文解析エンジン
+// ★【ソースコード全体一括判定エンジン】(app.jsや本格スクリプトを100%自動認識)
+function isFullSourceCode(text) {
+    if (!text || !text.trim()) return false;
+    if (/```[\s\S]*?```/.test(text)) return true;
+
+    const indicators = [
+        /\bimport\s+[\s\S]*?\s+from\s+["']/,
+        /\bexport\s+(default|const|let|var|function|class)\b/,
+        /\binitializeApp\s*\(/,
+        /\bgetAuth\s*\(/,
+        /\bnew\s+Worker\s*\(/,
+        /\bdocument\.getElementById\s*\(/,
+        /\bwindow\.addEventListener\s*\(/,
+        /\bfunction\s+\w+\s*\(/,
+        /\bconst\s+\w+\s*=\s*/,
+        /\blet\s+\w+\s*=\s*/,
+        /\bclass\s+\w+/,
+        /\bdef\s+\w+\s*\(/
+    ];
+
+    let matches = 0;
+    for (const pat of indicators) {
+        if (pat.test(text)) matches++;
+    }
+    return matches >= 2;
+}
+
+// 単一行のコード構文判定
 function isCodeLine(line) {
     const l = line.trim();
     if (!l) return true;
@@ -179,7 +205,7 @@ function isCodeLine(line) {
     return hasKeywords || hasSymbols;
 }
 
-// 全自動コード変身＆一括統合レンダラー
+// ★【全自動コード変身＆部分コピー保護付き統合レンダラー】
 function updateAutoCodeRender() {
     const text = noteBody.value || '';
     if (!text.trim()) {
@@ -191,39 +217,48 @@ function updateAutoCodeRender() {
     const activeNote = activeNoteId ? currentNotes[activeNoteId] : null;
     const collapsedState = (activeNote && activeNote.codeCollapsed) ? activeNote.codeCollapsed : {};
 
+    const isFullCode = isFullSourceCode(text);
     const hasMarkdownBlock = /```[\s\S]*?```/.test(text);
 
     let hasAnyCode = false;
     let html = '';
     let blockIndex = 0;
 
-    if (hasMarkdownBlock) {
+    if (isFullCode || hasMarkdownBlock) {
         hasAnyCode = true;
-        const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
-        let lastIndex = 0;
-        let match;
 
-        while ((match = codeBlockRegex.exec(text)) !== null) {
-            const plainText = text.substring(lastIndex, match.index);
-            if (plainText.trim()) {
-                html += `<p>${escapeHTML(plainText)}</p>`;
+        if (hasMarkdownBlock) {
+            const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+            let lastIndex = 0;
+            let match;
+
+            while ((match = codeBlockRegex.exec(text)) !== null) {
+                const plainText = text.substring(lastIndex, match.index);
+                if (plainText.trim()) {
+                    html += `<p>${escapeHTML(plainText)}</p>`;
+                }
+
+                const lang = (match[1] || 'javascript').toLowerCase();
+                const rawCode = match[2].trim();
+                const isCollapsed = !!collapsedState[`block_${blockIndex}`];
+
+                html += buildCodeBlockHTML(lang, rawCode, blockIndex, isCollapsed);
+                blockIndex++;
+
+                lastIndex = match.index + match[0].length;
             }
 
-            const lang = (match[1] || 'javascript').toLowerCase();
-            const rawCode = match[2].trim();
-            const isCollapsed = !!collapsedState[`block_${blockIndex}`];
-
-            html += buildCodeBlockHTML(lang, rawCode, blockIndex, isCollapsed);
-            blockIndex++;
-
-            lastIndex = match.index + match[0].length;
-        }
-
-        const remaining = text.substring(lastIndex);
-        if (remaining.trim()) {
-            html += `<p>${escapeHTML(remaining)}</p>`;
+            const remaining = text.substring(lastIndex);
+            if (remaining.trim()) {
+                html += `<p>${escapeHTML(remaining)}</p>`;
+            }
+        } else {
+            // app.js 等の本格コード全体の1括自動コードカード化
+            const isCollapsed = !!collapsedState[`block_0`];
+            html = buildCodeBlockHTML('javascript', text.trim(), 0, isCollapsed);
         }
     } else {
+        // 行スキャン統合
         const lines = text.split('\n');
         let currentBlock = [];
         let currentIsCode = null;
@@ -315,8 +350,17 @@ function updateAutoCodeRender() {
     }
 }
 
-noteCodeView.onclick = (e) => {
+// ★【部分コピー（ドラッグ選択）を保護しつつ、単クリックでスムーズ編集移行】
+noteCodeView.onmouseup = (e) => {
     if (e.target.closest('.copy-code-btn') || e.target.closest('.collapse-code-btn')) return;
+
+    // ユーザーがテキストをマウスでドラッグ（範囲選択）している場合は画面切替をキャンセル！（部分コピー可能に）
+    const selection = window.getSelection();
+    if (selection && selection.toString().length > 0) {
+        return;
+    }
+
+    // 単クリック時のみ編集モードへ切り替え
     noteCodeView.classList.add('hidden');
     noteBody.classList.remove('hidden');
     noteBody.focus();
