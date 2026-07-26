@@ -143,6 +143,10 @@
                     </div>
                 </div>
 
+                <!-- ★ メモの名前（タイトル）手動設定＆自動復帰入力欄 -->
+                <input type="text" id="note-title-input" class="m3-title-input hidden" placeholder="タイトル（未入力時は自動抽出）"
+                    disabled>
+
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
 
                 <div id="date-display" class="date-display-floating hidden">--月--日</div>
@@ -190,50 +194,96 @@
         </div>
     </div>
 
-    <!-- ★ 洗練された多機能設定ダイアログ (Google/Notion風) -->
+    <!-- ★ Discordスタイルの洗練設定モーダル -->
     <div id="settings-modal" class="modal-overlay hidden">
-        <div class="m3-dialog settings-dialog">
+        <div class="m3-dialog settings-dialog-discord">
             <div class="dialog-header">
-                <h3>設定</h3>
+                <div class="dialog-title-group">
+                    <span class="material-symbols-outlined" style="color:var(--m3-primary);">settings</span>
+                    <h3>アプリ設定</h3>
+                </div>
                 <button id="btn-settings-close" class="m3-icon-button" title="閉じる">
                     <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
 
-            <div class="settings-body">
-                <!-- 1. アカウントセクション -->
-                <div class="settings-section">
-                    <div class="section-title">アカウント</div>
-                    <div class="account-card">
-                        <img id="user-avatar" class="user-avatar"
-                            src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
-                            alt="ユーザー">
-                        <div class="user-info">
-                            <div id="user-name" class="user-name">ユーザー名</div>
-                            <div id="user-email" class="user-email">email@example.com</div>
+            <div class="discord-settings-layout">
+                <!-- 左ナビタブ -->
+                <nav class="settings-nav">
+                    <button class="settings-tab-btn active" data-tab="account">
+                        <span class="material-symbols-outlined">account_circle</span> アカウント
+                    </button>
+                    <button class="settings-tab-btn" data-tab="system">
+                        <span class="material-symbols-outlined">tune</span> 一般・同期
+                    </button>
+                    <button class="settings-tab-btn" data-tab="about">
+                        <span class="material-symbols-outlined">info</span> アプリ情報
+                    </button>
+                </nav>
+
+                <!-- 右コンテンツエリア -->
+                <div class="settings-content-area">
+                    <!-- 1. アカウントタブ -->
+                    <div id="tab-content-account" class="tab-content">
+                        <div class="discord-profile-card">
+                            <div class="profile-banner"></div>
+                            <div class="profile-header-content">
+                                <img id="user-avatar" class="discord-avatar" src="" alt="Avatar">
+                                <span id="user-provider-tag" class="provider-tag">Google</span>
+                            </div>
+                            <div class="profile-details">
+                                <div id="user-name" class="profile-name">ユーザー</div>
+                                <div id="user-email" class="profile-email">---</div>
+                            </div>
+                        </div>
+
+                        <div class="setting-item-box" style="margin-top:1rem;">
+                            <div class="setting-text">
+                                <div class="setting-label">サインアウト</div>
+                                <div class="setting-desc">このデバイスからログアウトします</div>
+                            </div>
+                            <button id="btn-settings-logout-action" class="m3-button btn-danger-sm">
+                                <span class="material-symbols-outlined" style="font-size:16px;">logout</span> ログアウト
+                            </button>
                         </div>
                     </div>
-                </div>
 
-                <!-- 2. システムセクション -->
-                <div class="settings-section">
-                    <div class="section-title">システム</div>
-                    <div class="settings-item-row">
-                        <span>リアルタイム自動同期</span>
-                        <span class="badge-active">有効</span>
-                    </div>
-                </div>
+                    <!-- 2. システムタブ -->
+                    <div id="tab-content-system" class="tab-content hidden">
+                        <div class="setting-item-box">
+                            <div class="setting-text">
+                                <div class="setting-label">リアルタイム同期</div>
+                                <div class="setting-desc">1文字単位でリアルタイムにクラウドへ保存</div>
+                            </div>
+                            <span class="badge-active">有効</span>
+                        </div>
 
-                <!-- 3. バージョン ＆ 更新確認 -->
-                <div class="settings-section">
-                    <div class="section-title">アプリ情報</div>
-                    <div class="settings-item-row">
-                        <span>現在のバージョン</span>
-                        <span id="app-version-display" class="version-badge">v...</span>
+                        <div class="setting-item-box">
+                            <div class="setting-text">
+                                <div class="setting-label">オフライン機能</div>
+                                <div class="setting-desc">ネット未接続時もローカルに自動保持</div>
+                            </div>
+                            <span class="badge-active">有効</span>
+                        </div>
                     </div>
-                    <button id="btn-update-check" class="m3-button btn-primary-full" style="margin-top:0.8rem;">
-                        <span class="material-symbols-outlined">refresh</span> 更新を確認
-                    </button>
+
+                    <!-- 3. アプリ情報タブ -->
+                    <div id="tab-content-about" class="tab-content hidden">
+                        <div class="setting-item-box">
+                            <div class="setting-text">
+                                <div class="setting-label">現在のバージョン</div>
+                                <div class="setting-desc">ブラウザでロード中のコードバージョン</div>
+                            </div>
+                            <span id="app-version-display" class="version-badge">v...</span>
+                        </div>
+
+                        <p class="settings-desc" style="margin-top:0.8rem;">
+                            ボタンを押すとキャッシュを全破棄して、常に最新の公開コードで再リロードします。
+                        </p>
+                        <button id="btn-update-check" class="m3-button btn-primary-full">
+                            <span class="material-symbols-outlined">refresh</span> 更新を確認
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

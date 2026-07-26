@@ -1,9 +1,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-// ★【重要】このファイル(app.js)自体に直埋めされたバージョン定数
-// デプロイコマンド(npm run deploy)時に bump.js がこの行を直接書き換えます。
-const APP_VERSION = "1.3.10";
+// ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
+const APP_VERSION = "1.1.2";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -33,6 +32,7 @@ const mainLayout = document.getElementById('main-layout');
 const listContainer = document.getElementById('list-container');
 const noteList = document.getElementById('note-list');
 const emptyState = document.getElementById('empty-state');
+const noteTitleInput = document.getElementById('note-title-input');
 const noteBody = document.getElementById('note-body');
 const statusBar = document.getElementById('status-bar');
 const statusText = document.getElementById('status-text');
@@ -70,6 +70,7 @@ const btnLogoutTrigger = document.getElementById('btn-logout-trigger');
 const btnModalCancel = document.getElementById('btn-modal-cancel');
 const btnModalConfirm = document.getElementById('btn-modal-confirm');
 
+// 設定画面（Discord風）
 const settingsModal = document.getElementById('settings-modal');
 const btnSettingsTrigger = document.getElementById('btn-settings-trigger');
 const btnSettingsClose = document.getElementById('btn-settings-close');
@@ -78,6 +79,8 @@ const appVersionDisplay = document.getElementById('app-version-display');
 const userAvatar = document.getElementById('user-avatar');
 const userName = document.getElementById('user-name');
 const userEmail = document.getElementById('user-email');
+const userProviderTag = document.getElementById('user-provider-tag');
+const btnSettingsLogoutAction = document.getElementById('btn-settings-logout-action');
 
 const toastMsg = document.getElementById('toast-msg');
 const toastText = document.getElementById('toast-text');
@@ -127,7 +130,6 @@ function showToast(msg, actionCallback = null) {
 window.addEventListener('online', () => setStatus('saving', 'オンライン復帰・同期中...'));
 window.addEventListener('offline', () => setStatus('offline', 'オフライン (ローカル保存済み)'));
 
-// ★ 通信(fetch)は一切行わず、今ブラウザで動いているこのコードの定数APP_VERSIONのみを表示
 function renderAppVersion() {
     appVersionDisplay.textContent = `v${APP_VERSION}`;
 }
@@ -194,8 +196,18 @@ btnRedo.onclick = () => {
     }
 };
 
-function getNoteTitle(body) {
-    if (!body || !body.trim()) return "空のメモ";
+// ★【タイトル手動指定 ＆ 本文自動抽出の完璧両立ロジック】
+function getNoteDisplayTitle(note) {
+    if (!note) return "空のメモ";
+
+    // 手動カスタムタイトルがある場合
+    if (note.title && note.title.trim()) {
+        return note.title.trim();
+    }
+
+    // 未入力の場合は本文の1行目を自動抽出
+    const body = note.body || '';
+    if (!body.trim()) return "空のメモ";
     const lines = body.split("\n").map(l => l.trim()).filter(l => l.length > 0);
     if (lines.length === 0) return "空のメモ";
     const firstLine = lines[0];
@@ -264,7 +276,7 @@ function deleteLocalNote(id) {
 function cleanupEmptyNotes(exceptId = null) {
     let changed = false;
     Object.values(currentNotes).forEach(n => {
-        if (n.id !== exceptId && !n.deletedAt && (!n.body || !n.body.trim())) {
+        if (n.id !== exceptId && !n.deletedAt && (!n.body || !n.body.trim()) && (!n.title || !n.title.trim())) {
             delete currentNotes[n.id];
             deleteLocalNote(n.id);
             worker.postMessage({ type: 'PERMANENT_DELETE_NOTE', id: n.id });
@@ -280,7 +292,7 @@ window.addEventListener('beforeunload', () => {
 
 function initAutoNote() {
     if (currentTab !== 'notes') return;
-    const existingEmpty = Object.values(currentNotes).find(n => !n.deletedAt && (!n.body || !n.body.trim()));
+    const existingEmpty = Object.values(currentNotes).find(n => !n.deletedAt && (!n.body || !n.body.trim()) && (!n.title || !n.title.trim()));
     if (existingEmpty) {
         selectNote(existingEmpty.id, true);
     } else {
@@ -308,7 +320,7 @@ function renderList(filter = '') {
             if (currentTab === 'notes') return !n.deletedAt;
             return !!n.deletedAt && (now - n.deletedAt <= SEVEN_DAYS_MS);
         })
-        .filter(n => (n.body || '').includes(filter))
+        .filter(n => (n.body || '').includes(filter) || (n.title || '').includes(filter))
         .sort((a, b) => {
             if (currentTab === 'notes') {
                 const aPinned = !!a.pinned;
@@ -359,9 +371,9 @@ function renderList(filter = '') {
         const titleSpan = document.createElement('span');
         titleSpan.className = 'title';
         if (n.pinned && currentTab === 'notes') {
-            titleSpan.innerHTML = `<span class="material-symbols-outlined pin-icon">push_pin</span> ${getNoteTitle(n.body)}`;
+            titleSpan.innerHTML = `<span class="material-symbols-outlined pin-icon">push_pin</span> ${getNoteDisplayTitle(n)}`;
         } else {
-            titleSpan.textContent = getNoteTitle(n.body);
+            titleSpan.textContent = getNoteDisplayTitle(n);
         }
         contentDiv.appendChild(titleSpan);
 
@@ -398,17 +410,23 @@ function selectNote(id, autoFocus = true) {
 
     const isSameNote = (activeNoteId === id);
     activeNoteId = id;
-    const n = currentNotes[id] || { body: '', pinned: false, updatedAt: Date.now() };
+    const n = currentNotes[id] || { title: '', body: '', pinned: false, updatedAt: Date.now() };
 
     const isTrashNote = !!n.deletedAt;
     noteBody.disabled = isTrashNote;
+    noteTitleInput.disabled = isTrashNote;
 
     if (!isSameNote) {
+        noteTitleInput.value = n.title || '';
         noteBody.value = n.body || '';
         resetTextHistory(n.body || '');
     }
 
+    // タイトルプレースホルダーを動的に更新（未入力時に見出し表示）
+    updateTitlePlaceholder(n);
+
     editorToolbar.classList.remove('hidden');
+    noteTitleInput.classList.remove('hidden');
     charCount.classList.remove('hidden');
     dateDisplay.classList.remove('hidden');
 
@@ -439,6 +457,29 @@ function selectNote(id, autoFocus = true) {
     }
 }
 
+function updateTitlePlaceholder(note) {
+    if (!note) return;
+    const tempNote = { ...note, title: '' };
+    const autoTitle = getNoteDisplayTitle(tempNote);
+    noteTitleInput.placeholder = autoTitle === "空のメモ" ? "タイトル（未入力時は自動抽出）" : `自動: ${autoTitle}`;
+}
+
+// ★ タイトル入力ハンドラ
+noteTitleInput.oninput = () => {
+    if (!activeNoteId || !currentNotes[activeNoteId]) return;
+    const val = noteTitleInput.value;
+
+    currentNotes[activeNoteId].title = val;
+    currentNotes[activeNoteId].updatedAt = Date.now();
+
+    saveLocalNote(currentNotes[activeNoteId]);
+    updateTitlePlaceholder(currentNotes[activeNoteId]);
+    renderList(searchInput.value);
+
+    setStatus('saving', 'クラウドに保存中...');
+    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+};
+
 function moveToTrash(id) {
     if (!currentNotes[id]) return;
     lastMovedToTrashNote = { ...currentNotes[id] };
@@ -449,9 +490,12 @@ function moveToTrash(id) {
 
     if (activeNoteId === id) {
         activeNoteId = null;
+        noteTitleInput.value = '';
         noteBody.value = '';
         noteBody.disabled = true;
+        noteTitleInput.disabled = true;
         editorToolbar.classList.add('hidden');
+        noteTitleInput.classList.add('hidden');
         charCount.classList.add('hidden');
         dateDisplay.classList.add('hidden');
     }
@@ -487,9 +531,12 @@ function executeDelete() {
 
     if (activeNoteId === id) {
         activeNoteId = null;
+        noteTitleInput.value = '';
         noteBody.value = '';
         noteBody.disabled = true;
+        noteTitleInput.disabled = true;
         editorToolbar.classList.add('hidden');
+        noteTitleInput.classList.add('hidden');
         charCount.classList.add('hidden');
         dateDisplay.classList.add('hidden');
     }
@@ -517,9 +564,12 @@ function executeEmptyTrash() {
 
     if (activeNoteId && (!currentNotes[activeNoteId] || currentNotes[activeNoteId].deletedAt)) {
         activeNoteId = null;
+        noteTitleInput.value = '';
         noteBody.value = '';
         noteBody.disabled = true;
+        noteTitleInput.disabled = true;
         editorToolbar.classList.add('hidden');
+        noteTitleInput.classList.add('hidden');
         charCount.classList.add('hidden');
         dateDisplay.classList.add('hidden');
     }
@@ -615,6 +665,7 @@ function handleInput() {
     };
     currentNotes[activeNoteId] = updatedNote;
     saveLocalNote(updatedNote);
+    updateTitlePlaceholder(updatedNote);
     updateEditorFooter();
     renderList(searchInput.value);
 
@@ -629,7 +680,7 @@ function createNewNote(autoFocus = true) {
     cleanupEmptyNotes();
 
     const newId = 'note_' + Date.now();
-    currentNotes[newId] = { id: newId, body: '', pinned: false, updatedAt: Date.now() };
+    currentNotes[newId] = { id: newId, title: '', body: '', pinned: false, updatedAt: Date.now() };
     saveLocalNote(currentNotes[newId]);
     selectNote(newId, autoFocus);
     setStatus('saving', '新規作成中...');
@@ -645,6 +696,7 @@ window.addEventListener('keydown', e => {
     }
 });
 
+// モーダル制御
 btnLogoutTrigger.onclick = () => logoutModal.classList.remove('hidden');
 btnModalCancel.onclick = () => logoutModal.classList.add('hidden');
 btnModalConfirm.onclick = () => {
@@ -652,14 +704,29 @@ btnModalConfirm.onclick = () => {
     signOut(auth);
 };
 
-// ★ 設定モーダル開いた際も通信は一切せず、純粋に画面のメモリ(APP_VERSION)を表示するだけ
+// ★ Discord風設定モーダルのタブ切り替え機能
+document.querySelectorAll('.settings-tab-btn').forEach(btn => {
+    btn.onclick = () => {
+        document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+
+        btn.classList.add('active');
+        const tabName = btn.getAttribute('data-tab');
+        document.getElementById(`tab-content-${tabName}`).classList.remove('hidden');
+    };
+});
+
 btnSettingsTrigger.onclick = () => {
     renderAppVersion();
     settingsModal.classList.remove('hidden');
 };
 btnSettingsClose.onclick = () => settingsModal.classList.add('hidden');
 
-// 強制キャッシュクリア ＆ リロード
+btnSettingsLogoutAction.onclick = () => {
+    settingsModal.classList.add('hidden');
+    logoutModal.classList.remove('hidden');
+};
+
 btnUpdateCheck.onclick = async () => {
     setStatus('saving', 'キャッシュをクリア中...');
     if ('caches' in window) {
@@ -689,6 +756,7 @@ async function loginWithProvider(provider) {
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
 document.getElementById('btn-ms').onclick = () => loginWithProvider(new OAuthProvider('microsoft.com'));
 
+// ★【ユーザーアカウント情報の高精度取得 ＆ ディスコード風表示】
 onAuthStateChanged(auth, user => {
     splashScreen.classList.add('hidden');
     if (user) {
@@ -696,13 +764,21 @@ onAuthStateChanged(auth, user => {
         appContainer.classList.remove('hidden');
         setStatus('synced', 'クラウド同期完了');
 
-        userName.textContent = user.displayName || 'ユーザー';
-        userEmail.textContent = user.email || '';
-        if (user.photoURL) {
-            userAvatar.src = user.photoURL;
-        } else {
-            userAvatar.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="%238e918f"><circle cx="12" cy="8" r="4"/><path d="M12 14c-6.1 0-8 4-8 4v2h16v-2s-1.9-4-8-4z"/></svg>';
+        const name = user.displayName || user.email?.split('@')[0] || 'ユーザー';
+        const email = user.email || 'メールアドレス非公開';
+        const photo = user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=a8c7fa&color=042f66`;
+
+        let providerName = "Google";
+        if (user.providerData && user.providerData[0]) {
+            const pId = user.providerData[0].providerId;
+            if (pId.includes('microsoft')) providerName = "Microsoft";
+            if (pId.includes('google')) providerName = "Google";
         }
+
+        userName.textContent = name;
+        userEmail.textContent = email;
+        userAvatar.src = photo;
+        if (userProviderTag) userProviderTag.textContent = providerName;
 
         worker.postMessage({ type: 'SET_USER', uid: user.uid });
     } else {
@@ -726,7 +802,7 @@ worker.onmessage = e => {
         renderList(searchInput.value);
 
         if (activeNoteId && currentNotes[activeNoteId]) {
-            if (document.activeElement !== noteBody) {
+            if (document.activeElement !== noteBody && document.activeElement !== noteTitleInput) {
                 selectNote(activeNoteId, false);
             }
         } else {
