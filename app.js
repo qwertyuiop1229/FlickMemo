@@ -27,6 +27,7 @@ const splashScreen = document.getElementById('splash-screen');
 const authContainer = document.getElementById('auth-container');
 const appContainer = document.getElementById('app-container');
 const mainLayout = document.getElementById('main-layout');
+const listContainer = document.getElementById('list-container');
 const noteList = document.getElementById('note-list');
 const emptyState = document.getElementById('empty-state');
 const noteBody = document.getElementById('note-body');
@@ -40,6 +41,7 @@ const editorToolbar = document.getElementById('editor-toolbar');
 const charCount = document.getElementById('char-count');
 const dateDisplay = document.getElementById('date-display');
 const btnPin = document.getElementById('btn-pin');
+const btnTrashIndicator = document.getElementById('btn-trash-indicator');
 const btnCopy = document.getElementById('btn-copy');
 const btnUndo = document.getElementById('btn-undo');
 const btnRedo = document.getElementById('btn-redo');
@@ -82,6 +84,16 @@ let lastMovedToTrashNote = null;
 let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
+
+// ★ iOS風スクロールバー監視
+let scrollTimer = null;
+listContainer.addEventListener('scroll', () => {
+    listContainer.classList.add('is-scrolling');
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => {
+        listContainer.classList.remove('is-scrolling');
+    }, 800);
+});
 
 function setStatus(type, text) {
     statusBar.className = `m3-badge status-${type}`;
@@ -210,6 +222,15 @@ function formatDateOnly(timestamp) {
     return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
+// ゴミ箱の残り日数計算
+function getDaysRemaining(deletedAt) {
+    if (!deletedAt) return 7;
+    const elapsed = Date.now() - deletedAt;
+    const remainingMs = SEVEN_DAYS_MS - elapsed;
+    const days = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+    return Math.max(0, days);
+}
+
 // IndexedDB
 const dbReq = indexedDB.open('FlickMemoDB', 1);
 dbReq.onupgradeneeded = e => e.target.result.createObjectStore('notes', { keyPath: 'id' });
@@ -282,7 +303,7 @@ function cleanExpiredTrash() {
     });
 }
 
-// ★ ピン留め最優先グループ化ロジック
+// ★ リスト描画（ピン留め最優先・ゴミ箱情報＆色なしアイコン化）
 function renderList(filter = '') {
     noteList.innerHTML = '';
     const now = Date.now();
@@ -310,22 +331,26 @@ function renderList(filter = '') {
         emptyState.classList.add('hidden');
     }
 
-    let currentGroupLabel = '';
+    let currentGroupKey = '';
 
     filtered.forEach(n => {
-        let groupLabel = '';
-        // ★ ピン留めされているメモは日付に関係なく「📌 ピン留め」グループに固定
+        let groupKey = '';
+        let groupHeaderHTML = '';
+
         if (currentTab === 'notes' && n.pinned) {
-            groupLabel = '📌 ピン留め';
+            groupKey = 'pinned';
+            groupHeaderHTML = `<span class="material-symbols-outlined" style="font-size:15px; vertical-align:middle; color:var(--m3-primary);">push_pin</span> ピン留め`;
         } else {
-            groupLabel = getDateGroup(currentTab === 'notes' ? n.updatedAt : n.deletedAt);
+            const dateText = getDateGroup(currentTab === 'notes' ? n.updatedAt : n.deletedAt);
+            groupKey = dateText;
+            groupHeaderHTML = dateText;
         }
 
-        if (groupLabel !== currentGroupLabel) {
-            currentGroupLabel = groupLabel;
+        if (groupKey !== currentGroupKey) {
+            currentGroupKey = groupKey;
             const groupHeader = document.createElement('div');
             groupHeader.className = 'date-group-header';
-            groupHeader.textContent = groupLabel;
+            groupHeader.innerHTML = groupHeaderHTML;
             noteList.appendChild(groupHeader);
         }
 
@@ -333,12 +358,25 @@ function renderList(filter = '') {
         li.className = `note-item ${n.id === activeNoteId ? 'active' : ''}`;
         li.onclick = () => selectNote(n.id);
 
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'item-content';
+
         const titleSpan = document.createElement('span');
         titleSpan.className = 'title';
         if (n.pinned && currentTab === 'notes') {
             titleSpan.innerHTML = `<span class="material-symbols-outlined pin-icon">push_pin</span> ${getNoteTitle(n.body)}`;
         } else {
             titleSpan.textContent = getNoteTitle(n.body);
+        }
+        contentDiv.appendChild(titleSpan);
+
+        // ★ ゴミ箱タブ時：移動日 ＆ 残り日数のサブテキスト追加
+        if (currentTab === 'trash') {
+            const subMeta = document.createElement('span');
+            subMeta.className = 'sub-meta';
+            const daysLeft = getDaysRemaining(n.deletedAt);
+            subMeta.textContent = `${formatDateOnly(n.deletedAt)} 移動 • 残り ${daysLeft}日`;
+            contentDiv.appendChild(subMeta);
         }
 
         const delBtn = document.createElement('button');
@@ -355,7 +393,7 @@ function renderList(filter = '') {
             }
         };
 
-        li.appendChild(titleSpan);
+        li.appendChild(contentDiv);
         li.appendChild(delBtn);
         noteList.appendChild(li);
     });
@@ -367,19 +405,24 @@ function selectNote(id, autoFocus = true) {
     activeNoteId = id;
     const n = currentNotes[id] || { body: '', pinned: false, updatedAt: Date.now() };
     noteBody.value = n.body || '';
-    noteBody.disabled = !!n.deletedAt;
+
+    // ★ ゴミ箱の中なら「閲覧モード（編集不可）」
+    const isTrashNote = !!n.deletedAt;
+    noteBody.disabled = isTrashNote;
 
     editorToolbar.classList.remove('hidden');
     charCount.classList.remove('hidden');
     dateDisplay.classList.remove('hidden');
-    btnPin.classList.toggle('active', !!n.pinned);
 
-    if (currentTab === 'trash') {
+    if (isTrashNote) {
         btnRestoreTrash.classList.remove('hidden');
         btnPin.classList.add('hidden');
+        btnTrashIndicator.classList.remove('hidden'); // ゴミ箱マーク表示
     } else {
         btnRestoreTrash.classList.add('hidden');
+        btnTrashIndicator.classList.add('hidden');
         btnPin.classList.remove('hidden');
+        btnPin.classList.toggle('active', !!n.pinned);
     }
 
     resetTextHistory(n.body || '');
@@ -391,7 +434,7 @@ function selectNote(id, autoFocus = true) {
         btnBack.classList.remove('hidden');
     }
 
-    if (autoFocus && !n.deletedAt) {
+    if (autoFocus && !isTrashNote) {
         setTimeout(() => {
             noteBody.focus();
             noteBody.setSelectionRange(noteBody.value.length, noteBody.value.length);
@@ -539,7 +582,7 @@ btnPin.onclick = () => {
     renderList(searchInput.value);
     setStatus('saving', '保存中...');
     worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
-    showToast(isPinned ? "📌 メモをピン留めしました" : "ピン留めを解除しました");
+    showToast(isPinned ? "メモをピン留めしました" : "ピン留めを解除しました");
 };
 
 btnCopy.onclick = () => {
@@ -630,6 +673,7 @@ btnUpdateCheck.onclick = async () => {
     window.location.reload(true);
 };
 
+// 認証
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
@@ -661,6 +705,7 @@ onAuthStateChanged(auth, user => {
     }
 });
 
+// クラウドからの同期受信
 worker.onmessage = e => {
     if (e.data.type === 'SYNC_NOTES') {
         const remoteNotes = e.data.notes || {};

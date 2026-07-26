@@ -10,7 +10,6 @@
     --m3-text-variant: #c4c6d0;
     --m3-text-muted: #8e918f;
 
-    /* ソフトで上品なモダンレッド */
     --m3-danger: #f28b82;
     --m3-danger-bg: #3c2424;
     --m3-danger-border: #5c3234;
@@ -38,29 +37,38 @@ html {
     overflow: hidden;
 }
 
-/* ★ アプリ専用の洗練された極細カスタムスクロールバー */
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+/* ★ スクロールバーの小さな三角アローボタンを完全に消去 */
+::-webkit-scrollbar-button {
+    display: none !important;
+    width: 0;
+    height: 0;
 }
 
-::-webkit-scrollbar-track {
+/* ★ iOS/iPhone風：普段は透明、スクロール・ホバー時のみ浮かび上がる極細バー */
+.list-container {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+
+.list-container::-webkit-scrollbar {
+    width: 4px;
+}
+
+.list-container::-webkit-scrollbar-track {
     background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
-    background: #2a2b2d;
+.list-container::-webkit-scrollbar-thumb {
+    background: transparent;
     border-radius: var(--m3-radius-full);
+    transition: background 0.3s;
 }
 
-::-webkit-scrollbar-thumb:hover {
-    background: var(--m3-surface-hover);
-}
-
-/* Firefox用 */
-* {
-    scrollbar-width: thin;
-    scrollbar-color: #2a2b2d transparent;
+/* スクロール中、またはホバー時にフェードイン表示 */
+.list-container.is-scrolling::-webkit-scrollbar-thumb,
+.list-container:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
 }
 
 input,
@@ -310,6 +318,7 @@ select {
     display: flex;
     flex-direction: column;
     transition: transform 0.2s var(--m3-motion-curve);
+    position: relative;
 }
 
 .sidebar-tabs {
@@ -355,22 +364,6 @@ select {
     flex-direction: column;
     gap: 0.6rem;
     border-bottom: 1px solid var(--m3-border);
-}
-
-.trash-notice-banner {
-    background: var(--m3-danger-bg);
-    color: var(--m3-danger);
-    border: 1px solid var(--m3-danger-border);
-    font-size: 0.72rem;
-    padding: 0.4rem 0.6rem;
-    border-radius: var(--m3-radius-sm);
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-}
-
-.trash-notice-banner span {
-    font-size: 14px;
 }
 
 .m3-search-bar {
@@ -437,16 +430,20 @@ select {
     list-style: none;
 }
 
+/* 日付・アイコン付グループヘッダー */
 .date-group-header {
     font-size: 0.72rem;
     font-weight: 500;
     color: var(--m3-text-muted);
     padding: 0.6rem 0.8rem 0.2rem 0.8rem;
     letter-spacing: 0.3px;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
 }
 
 .note-item {
-    padding: 0.85rem 1rem;
+    padding: 0.75rem 0.9rem;
     border-radius: var(--m3-radius-lg);
     margin-bottom: 0.2rem;
     cursor: pointer;
@@ -471,6 +468,15 @@ select {
     font-weight: 500;
 }
 
+.note-item .item-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    overflow: hidden;
+    pointer-events: none;
+}
+
 .note-item .title {
     font-size: 0.88rem;
     font-weight: 400;
@@ -478,11 +484,16 @@ select {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
     display: flex;
     align-items: center;
     gap: 0.3rem;
-    pointer-events: none;
+}
+
+/* ★ ゴミ箱サブテキスト（移動日 ＆ 残り日数） */
+.note-item .sub-meta {
+    font-size: 0.7rem;
+    color: var(--m3-text-muted);
+    font-family: 'Roboto Mono', monospace;
 }
 
 .pin-icon {
@@ -519,6 +530,37 @@ select {
     margin-top: 3rem;
 }
 
+/* ★ 一番下固定ゴミ箱バナー ＆ 上部シャドウフェード */
+.trash-bottom-banner {
+    position: relative;
+    background: var(--m3-danger-bg);
+    border-top: 1px solid var(--m3-danger-border);
+    z-index: 10;
+}
+
+.trash-fade-overlay {
+    position: absolute;
+    top: -24px;
+    left: 0;
+    right: 0;
+    height: 24px;
+    background: linear-gradient(to bottom, rgba(30, 31, 32, 0), var(--m3-surface));
+    pointer-events: none;
+}
+
+.trash-banner-content {
+    padding: 0.6rem 0.8rem;
+    font-size: 0.72rem;
+    color: var(--m3-danger);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.trash-banner-content span {
+    font-size: 15px;
+}
+
 /* Editor & Floating Info */
 .editor-area {
     flex: 1;
@@ -545,7 +587,6 @@ select {
     gap: 0.4rem;
 }
 
-/* ★ 文字とバッジの重なりを完全防止する余白 (padding-bottom: 3.8rem) */
 .m3-text-area {
     flex: 1;
     background: transparent;

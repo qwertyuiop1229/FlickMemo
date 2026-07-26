@@ -85,10 +85,6 @@
                 </div>
 
                 <div class="sidebar-top">
-                    <div id="trash-notice" class="trash-notice-banner hidden">
-                        <span class="material-symbols-outlined">info</span> 7日経過すると自動削除されます
-                    </div>
-
                     <div class="m3-search-bar">
                         <span class="material-symbols-outlined">search</span>
                         <input type="text" id="search-input" placeholder="検索...">
@@ -103,9 +99,19 @@
                     </button>
                 </div>
 
-                <div class="list-container">
+                <!-- リスト容器 -->
+                <div class="list-container" id="list-container">
                     <ul id="note-list" class="note-list"></ul>
                     <div id="empty-state" class="empty-state hidden">メモがありません</div>
+                </div>
+
+                <!-- ★ サイドバー最下部固定：ゴミ箱警告メッセージ & フェード効果 -->
+                <div id="trash-notice" class="trash-bottom-banner hidden">
+                    <div class="trash-fade-overlay"></div>
+                    <div class="trash-banner-content">
+                        <span class="material-symbols-outlined">info</span>
+                        <span>ゴミ箱のメモは7日後に自動消去されます</span>
+                    </div>
                 </div>
             </aside>
 
@@ -122,9 +128,16 @@
                     </div>
 
                     <div class="toolbar-group">
+                        <!-- ピン留めボタン（通常時） -->
                         <button id="btn-pin" class="m3-icon-button" title="ピン留め">
                             <span class="material-symbols-outlined">push_pin</span>
                         </button>
+                        <!-- ゴミ箱マーク（ゴミ箱閲覧時） -->
+                        <button id="btn-trash-indicator" class="m3-icon-button active hidden" title="ゴミ箱内のメモ（閲覧のみ）"
+                            style="color:var(--m3-danger) !important; border-color:var(--m3-danger-border) !important; cursor:default;">
+                            <span class="material-symbols-outlined">delete</span>
+                        </button>
+
                         <button id="btn-copy" class="m3-icon-button" title="コピー">
                             <span class="material-symbols-outlined">content_copy</span>
                         </button>
@@ -136,14 +149,13 @@
 
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
 
-                <!-- 左下：更新日にち表示 / 右下：文字数表示 -->
                 <div id="date-display" class="date-display-floating hidden">--月--日</div>
                 <div id="char-count" class="char-count-floating hidden">0 文字</div>
             </main>
         </div>
     </div>
 
-    <!-- ゴミ箱内完全削除ダイアログ -->
+    <!-- 完全削除ダイアログ -->
     <div id="delete-modal" class="modal-overlay hidden">
         <div class="m3-dialog">
             <div class="dialog-icon"><span class="material-symbols-outlined">delete_forever</span></div>
@@ -205,7 +217,7 @@
         </div>
     </div>
 
-    <!-- トースト通知 (元に戻すアクション付き) -->
+    <!-- トースト通知 -->
     <div id="toast-msg" class="m3-snackbar hidden">
         <span id="toast-text">メッセージ</span>
         <button id="btn-toast-action" class="snackbar-action hidden">元に戻す</button>
