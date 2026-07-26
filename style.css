@@ -45,10 +45,10 @@ html {
     height: 0;
 }
 
-/* ★ アプリ全領域共通：iOS/iPhone風（普段は完全に消え、スクロール時のみ自然にフェードイン） */
+/* ★ 全領域共通：幅6px、平常時は完全透明、操作時のみ表示され3秒後にじわっと消えるフェードスクロールバー */
 ::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+    width: 6px;
+    height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -57,21 +57,30 @@ html {
 
 ::-webkit-scrollbar-thumb {
     background: transparent;
+    /* 平常時は完全透明 */
     border-radius: var(--m3-radius-full);
-    transition: background 0.4s var(--m3-motion-curve);
+    transition: background 0.6s var(--m3-motion-curve);
+    /* 消える時はじわっと0.6秒かけて滑らかにフェードアウト */
 }
 
-/* スクロール操作中 (.is-scrolling) またはマウスホバー時にフェードイン表示 */
+/* 操作中 (.is-scrolling) のみ浮かび上がる */
 .is-scrolling::-webkit-scrollbar-thumb,
 .editor-area.is-scrolling::-webkit-scrollbar-thumb,
 .m3-text-area.is-scrolling::-webkit-scrollbar-thumb,
 .m3-code-view.is-scrolling::-webkit-scrollbar-thumb,
-.list-container.is-scrolling::-webkit-scrollbar-thumb,
-.editor-area:hover::-webkit-scrollbar-thumb,
-.m3-text-area:hover::-webkit-scrollbar-thumb,
-.m3-code-view:hover::-webkit-scrollbar-thumb,
-.list-container:hover::-webkit-scrollbar-thumb {
+.list-container.is-scrolling::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.22);
+}
+
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+    background: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* Firefox用 */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
 }
 
 input,

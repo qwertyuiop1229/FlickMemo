@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.7";
+const APP_VERSION = "1.1.8";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -96,16 +96,27 @@ let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
 
-// ★【全領域共通の動的フェードスクロールバー監視】
+// ★【3秒間停止で自然にフェードアウト消去する万能スクロール監視】
 function setupScrollFade(element) {
     if (!element) return;
     let timer = null;
-    element.addEventListener('scroll', () => {
+
+    const triggerShow = () => {
         element.classList.add('is-scrolling');
+        clearTimeout(timer);
+        // 操作停止から3秒(3000ms)後にスッとフェードアウト
+        timer = setTimeout(() => {
+            element.classList.remove('is-scrolling');
+        }, 3000);
+    };
+
+    element.addEventListener('scroll', triggerShow);
+    element.addEventListener('mousemove', triggerShow);
+    element.addEventListener('mouseleave', () => {
         clearTimeout(timer);
         timer = setTimeout(() => {
             element.classList.remove('is-scrolling');
-        }, 800);
+        }, 1000);
     });
 }
 
@@ -149,28 +160,26 @@ function getInitialsAvatar(name) {
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
-// ★【単一行レベルのコード構造判定】(コメントや文字列の中の日本語を一時除外)
+// 高度構文解析エンジン
 function isCodeLine(line) {
     const l = line.trim();
-    if (!l) return true; // 空行は文脈を維持
+    if (!l) return true;
 
-    // コメント行の判定
     if (l.startsWith('//') || l.startsWith('/*') || l.startsWith('*') || l.startsWith('#')) {
         return true;
     }
 
-    // 日本語コメント・文字列を一時除去した純粋構文でキーワード判定
     let cleanLine = l.replace(/\/\/.*$/, '');
     cleanLine = cleanLine.replace(/#.*$/, '');
     cleanLine = cleanLine.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
 
-    const hasKeywords = /\b(function|const|let|var|if|else|for|while|return|class|import|export|def|async|await|console|document|window|MutationObserver)\b/.test(cleanLine);
+    const hasKeywords = /\b(import|export|const|let|var|function|async|await|return|class|if|else|for|while|def|console|document|window|MutationObserver|initializeApp|getAuth)\b/.test(cleanLine);
     const hasSymbols = /[\{\}\(\)\[\];=><\+\-\*\/]/.test(cleanLine);
 
     return hasKeywords || hasSymbols;
 }
 
-// ★【行ベースの一括コード統合＆レンダラー】(空行でバラバラに分裂するバグを修復)
+// 全自動コード変身＆一括統合レンダラー
 function updateAutoCodeRender() {
     const text = noteBody.value || '';
     if (!text.trim()) {
@@ -215,7 +224,6 @@ function updateAutoCodeRender() {
             html += `<p>${escapeHTML(remaining)}</p>`;
         }
     } else {
-        // 行単位でグループ化（空行があっても連続するコードを1つのコードカードに結合）
         const lines = text.split('\n');
         let currentBlock = [];
         let currentIsCode = null;
@@ -224,7 +232,6 @@ function updateAutoCodeRender() {
             const lineIsCode = isCodeLine(line);
             const isBlank = !line.trim();
 
-            // 空行の場合は直前の判定（CODE/TEXT）をそのまま引き継ぐ
             const targetType = isBlank ? (currentIsCode ?? 'TEXT') : (lineIsCode ? 'CODE' : 'TEXT');
 
             if (currentIsCode === null) {
@@ -233,7 +240,6 @@ function updateAutoCodeRender() {
             } else if (currentIsCode === targetType) {
                 currentBlock.push(line);
             } else {
-                // グループの切り替わりで描画
                 const blockContent = currentBlock.join('\n').trim();
                 if (blockContent) {
                     if (currentIsCode === 'CODE') {
@@ -309,8 +315,8 @@ function updateAutoCodeRender() {
     }
 }
 
-// コードビュークリックで編集モードへ
-noteCodeView.onclick = () => {
+noteCodeView.onclick = (e) => {
+    if (e.target.closest('.copy-code-btn') || e.target.closest('.collapse-code-btn')) return;
     noteCodeView.classList.add('hidden');
     noteBody.classList.remove('hidden');
     noteBody.focus();
