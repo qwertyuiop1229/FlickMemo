@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithRedirect, getRedirectResult, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
+// ⚠️ Firebase設定（ご自身のキーが入っているか確認してください）
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
     authDomain: "flickmemo-qwe.firebaseapp.com",
@@ -34,24 +35,6 @@ const authButtons = document.getElementById('auth-buttons');
 let currentNotes = {};
 let activeNoteId = null;
 let db = null;
-
-// ★【重要】リダイレクトからの復帰ログイン処理の受信
-authLoading.classList.remove('hidden');
-authButtons.classList.add('hidden');
-
-getRedirectResult(auth)
-    .then((result) => {
-        if (result?.user) {
-            console.log("Redirect login successful:", result.user);
-        }
-    })
-    .catch((error) => {
-        console.error("Redirect login error:", error);
-    })
-    .finally(() => {
-        authLoading.classList.add('hidden');
-        authButtons.classList.remove('hidden');
-    });
 
 // IndexedDB ロード
 const dbReq = indexedDB.open('FlickMemoDB', 1);
@@ -136,11 +119,26 @@ document.getElementById('btn-new').onclick = () => {
     worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[newId] });
 };
 
-// 認証アクション
-document.getElementById('btn-google').onclick = () => signInWithRedirect(auth, new GoogleAuthProvider());
-document.getElementById('btn-ms').onclick = () => signInWithRedirect(auth, new OAuthProvider('microsoft.com'));
+// ★【確実なポップアップログイン処理】
+async function loginWithProvider(provider) {
+    try {
+        authLoading.classList.remove('hidden');
+        authButtons.classList.add('hidden');
+        await signInWithPopup(auth, provider);
+    } catch (error) {
+        console.error("Login Error:", error);
+        alert("ログインエラー: " + error.message);
+        authLoading.classList.add('hidden');
+        authButtons.classList.remove('hidden');
+    }
+}
+
+document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
+document.getElementById('btn-ms').onclick = () => loginWithProvider(new OAuthProvider('microsoft.com'));
+
 document.getElementById('btn-logout').onclick = () => signOut(auth);
 
+// ★【ログイン状態監視】
 onAuthStateChanged(auth, user => {
     if (user) {
         authContainer.classList.add('hidden');
@@ -150,6 +148,8 @@ onAuthStateChanged(auth, user => {
     } else {
         authContainer.classList.remove('hidden');
         appContainer.classList.add('hidden');
+        authLoading.classList.add('hidden');
+        authButtons.classList.remove('hidden');
         worker.postMessage({ type: 'CLEAR_USER' });
     }
 });
@@ -167,7 +167,7 @@ worker.onmessage = e => {
     }
 };
 
-// 10秒後のメモリ極限クリーンアップ
+// 10秒後のメモリクリーンアップ
 setTimeout(() => {
     statusBar.textContent = "⚡ 省メモリモード";
     if (window.gc) window.gc();
