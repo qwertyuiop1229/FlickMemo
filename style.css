@@ -76,20 +76,20 @@ html {
 /* エディタ：独自UIスクロールバー */
 .editor-area::-webkit-scrollbar,
 .m3-text-area::-webkit-scrollbar,
-.m3-preview-container::-webkit-scrollbar {
+.m3-code-view::-webkit-scrollbar {
     width: 6px;
     height: 6px;
 }
 
 .editor-area::-webkit-scrollbar-track,
 .m3-text-area::-webkit-scrollbar-track,
-.m3-preview-container::-webkit-scrollbar-track {
+.m3-code-view::-webkit-scrollbar-track {
     background: transparent;
 }
 
 .editor-area::-webkit-scrollbar-thumb,
 .m3-text-area::-webkit-scrollbar-thumb,
-.m3-preview-container::-webkit-scrollbar-thumb {
+.m3-code-view::-webkit-scrollbar-thumb {
     background: #2a2b2d;
     border-radius: var(--m3-radius-full);
 }
@@ -644,16 +644,17 @@ select {
     padding-bottom: 3.8rem !important;
 }
 
-/* ★【VS Code / Google AI Studio 風コード表示コンテナ】 */
-.m3-preview-container {
+/* ★【全自動変身：Google AI Studio スタイル コード表示ビュー】 */
+.m3-code-view {
     flex: 1;
     overflow-y: auto;
     padding-bottom: 3.8rem !important;
     font-size: 1rem;
     line-height: 1.7;
+    cursor: text;
 }
 
-.m3-preview-container p {
+.m3-code-view p {
     margin-bottom: 0.8rem;
     white-space: pre-wrap;
     word-break: break-word;
@@ -663,7 +664,7 @@ select {
     background: #1e1f20;
     border: 1px solid var(--m3-border);
     border-radius: var(--m3-radius-md);
-    margin: 1rem 0;
+    margin: 0.8rem 0;
     overflow: hidden;
 }
 
@@ -672,7 +673,7 @@ select {
     justify-content: space-between;
     align-items: center;
     background: var(--m3-surface-container);
-    padding: 0.4rem 0.8rem;
+    padding: 0.45rem 0.88rem;
     border-bottom: 1px solid var(--m3-border);
     font-size: 0.75rem;
     color: var(--m3-primary);
@@ -688,9 +689,10 @@ select {
     font-size: 0.75rem;
     display: flex;
     align-items: center;
-    gap: 0.2rem;
+    gap: 0.3rem;
     padding: 0.2rem 0.5rem;
     border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
 }
 
 .code-block-header .copy-code-btn:hover {
@@ -748,7 +750,7 @@ select {
     opacity: 1;
 }
 
-/* ダイアログ */
+/* ダイアログ汎用 */
 .modal-overlay {
     position: fixed;
     inset: 0;

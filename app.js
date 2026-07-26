@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.4";
+const APP_VERSION = "1.1.5";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -34,8 +34,7 @@ const noteList = document.getElementById('note-list');
 const emptyState = document.getElementById('empty-state');
 const noteTitleInput = document.getElementById('note-title-input');
 const noteBody = document.getElementById('note-body');
-const notePreview = document.getElementById('note-preview');
-const btnTogglePreview = document.getElementById('btn-toggle-preview');
+const noteCodeView = document.getElementById('note-code-view');
 
 const statusBar = document.getElementById('status-bar');
 const statusText = document.getElementById('status-text');
@@ -94,7 +93,6 @@ let activeNoteId = null;
 let pendingDeleteId = null;
 let lastMovedToTrashNote = null;
 let currentTab = 'notes';
-let isPreviewMode = false;
 let toastTimer = null;
 let db = null;
 
@@ -144,64 +142,128 @@ function getInitialsAvatar(name) {
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
-// ★【VS Code / Google AI Studio 風コードハイライトパースエンジン】
-function renderFormattedPreview(text) {
-    if (!text) {
-        notePreview.innerHTML = '<p style="color:var(--m3-text-muted);">（内容がありません）</p>';
-        return;
+// ★【Google AI Studio レベルの高精度コード検出解析エンジン】
+function analyzeCodeInText(text) {
+    if (!text || !text.trim()) return { isCode: false, lang: 'javascript' };
+
+    if (/```[\s\S]*?```/.test(text)) {
+        return { isCode: true, hasMarkdown: true, lang: 'javascript' };
     }
 
-    // コードブロック ```lang ... ``` の抽出と変換
-    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
-    let html = '';
-    let lastIndex = 0;
-    let match;
+    const patterns = [
+        { lang: 'javascript', regex: /\b(const|let|var|function|async|await|return|import|export|class|console\.log|document\.|window\.|MutationObserver|=>)\b/g },
+        { lang: 'python', regex: /\b(def\s+\w+|self\.|import\s+\w+|from\s+\w+\s+import|elif|print\(|__name__)\b/g },
+        { lang: 'html', regex: /<\/?[a-z][\s\S]*?>/i },
+        { lang: 'css', regex: /[\.\#][a-zA-Z0-9_\-]+\s*\{[\s\S]*?\}/g },
+        { lang: 'clike', regex: /\b(#include|public\s+class|std::|system\.out\.println)\b/g }
+    ];
 
-    while ((match = codeBlockRegex.exec(text)) !== null) {
-        const plainText = text.substring(lastIndex, match.index);
-        if (plainText) {
-            html += `<p>${escapeHTML(plainText)}</p>`;
+    let totalScore = 0;
+    let detectedLang = 'javascript';
+    let maxScore = 0;
+
+    for (const item of patterns) {
+        const matches = text.match(item.regex);
+        if (matches) {
+            const score = matches.length;
+            totalScore += score;
+            if (score > maxScore) {
+                maxScore = score;
+                detectedLang = item.lang;
+            }
+        }
+    }
+
+    const symbols = text.match(/[\{\}\(\)\[\];=<>\+\-\*\/]/g);
+    const symbolDensity = symbols ? symbols.length / text.length : 0;
+
+    const isCode = totalScore >= 1 || (symbolDensity > 0.08 && text.length > 20) || /^\s*(\(function|function|const|let|var|def|<div|<html)/.test(text);
+
+    return { isCode, hasMarkdown: false, lang: detectedLang };
+}
+
+// ★【全自動変身コードカードレンダラー】
+function updateAutoCodeRender() {
+    const text = noteBody.value || '';
+    const analysis = analyzeCodeInText(text);
+
+    // コードと検知され、かつエディタにフォーカス中でない時に美しく変身！
+    if (analysis.isCode && document.activeElement !== noteBody) {
+        renderFormattedCodeView(text, analysis);
+        noteBody.classList.add('hidden');
+        noteCodeView.classList.remove('hidden');
+    } else {
+        noteBody.classList.remove('hidden');
+        noteCodeView.classList.add('hidden');
+    }
+}
+
+// コードビューをクリックした時に即座に編集状態へ移行
+noteCodeView.onclick = () => {
+    noteCodeView.classList.add('hidden');
+    noteBody.classList.remove('hidden');
+    noteBody.focus();
+};
+
+function renderFormattedCodeView(text, analysis) {
+    let html = '';
+
+    if (analysis.hasMarkdown) {
+        const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+        let lastIndex = 0;
+        let match;
+
+        while ((match = codeBlockRegex.exec(text)) !== null) {
+            const plainText = text.substring(lastIndex, match.index);
+            if (plainText) {
+                html += `<p>${escapeHTML(plainText)}</p>`;
+            }
+
+            const lang = (match[1] || 'javascript').toLowerCase();
+            const rawCode = match[2].trim();
+            html += buildCodeBlockHTML(lang, rawCode);
+
+            lastIndex = match.index + match[0].length;
         }
 
-        const lang = (match[1] || 'code').toLowerCase();
-        const rawCode = match[2].trim();
-        const escapedCode = escapeHTML(rawCode);
-
-        html += `
-      <div class="code-block-wrapper">
-        <div class="code-block-header">
-          <span>${lang}</span>
-          <button class="copy-code-btn" data-code="${encodeURIComponent(rawCode)}">
-            <span class="material-symbols-outlined" style="font-size:14px;">content_copy</span> コピー
-          </button>
-        </div>
-        <pre><code class="language-${lang}">${escapedCode}</code></pre>
-      </div>
-    `;
-
-        lastIndex = match.index + match[0].length;
+        const remaining = text.substring(lastIndex);
+        if (remaining) {
+            html += `<p>${escapeHTML(remaining)}</p>`;
+        }
+    } else {
+        // 直貼りコード全自動変身
+        html = buildCodeBlockHTML(analysis.lang, text.trim());
     }
 
-    const remaining = text.substring(lastIndex);
-    if (remaining) {
-        html += `<p>${escapeHTML(remaining)}</p>`;
-    }
+    noteCodeView.innerHTML = html;
 
-    notePreview.innerHTML = html;
-
-    // Prism.js による色付け適用
     if (window.Prism) {
-        Prism.highlightAllUnder(notePreview);
+        Prism.highlightAllUnder(noteCodeView);
     }
 
-    // コードコピーボタンの動作設定
-    notePreview.querySelectorAll('.copy-code-btn').forEach(btn => {
-        btn.onclick = () => {
+    noteCodeView.querySelectorAll('.copy-code-btn').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation(); // 編集状態への移行を防止してコピーのみ実行
             const code = decodeURIComponent(btn.getAttribute('data-code'));
             navigator.clipboard.writeText(code);
             showToast("コードをコピーしました");
         };
     });
+}
+
+function buildCodeBlockHTML(lang, rawCode) {
+    const escapedCode = escapeHTML(rawCode);
+    return `
+    <div class="code-block-wrapper">
+      <div class="code-block-header">
+        <span>${lang}</span>
+        <button class="copy-code-btn" data-code="${encodeURIComponent(rawCode)}">
+          <span class="material-symbols-outlined" style="font-size:14px;">content_copy</span> コピー
+        </button>
+      </div>
+      <pre><code class="language-${lang}">${escapedCode}</code></pre>
+    </div>
+  `;
 }
 
 function escapeHTML(str) {
@@ -212,21 +274,6 @@ function escapeHTML(str) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
 }
-
-// プレビュー表示切り替え
-btnTogglePreview.onclick = () => {
-    isPreviewMode = !isPreviewMode;
-    btnTogglePreview.classList.toggle('active', isPreviewMode);
-    if (isPreviewMode) {
-        noteBody.classList.add('hidden');
-        notePreview.classList.remove('hidden');
-        renderFormattedPreview(noteBody.value);
-    } else {
-        noteBody.classList.remove('hidden');
-        notePreview.classList.add('hidden');
-        noteBody.focus();
-    }
-};
 
 // Undo / Redo 多段階スタック
 let textHistory = [];
@@ -270,7 +317,7 @@ function applyUndoRedoText(targetText) {
     saveLocalNote(updatedNote);
     updateEditorFooter();
     renderList(searchInput.value);
-    if (isPreviewMode) renderFormattedPreview(targetText);
+    updateAutoCodeRender();
     setStatus('saving', 'クラウドに保存中...');
     worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
 }
@@ -510,7 +557,6 @@ function selectNote(id, autoFocus = true) {
         noteTitleInput.value = n.title || '';
         noteBody.value = n.body || '';
         resetTextHistory(n.body || '');
-        if (isPreviewMode) renderFormattedPreview(n.body || '');
     }
 
     updateTitlePlaceholder(n);
@@ -534,12 +580,15 @@ function selectNote(id, autoFocus = true) {
     updateEditorFooter();
     renderList(searchInput.value);
 
+    // ★ 全自動コード変身描画の更新
+    updateAutoCodeRender();
+
     if (window.innerWidth <= 768) {
         mainLayout.classList.add('view-editor');
         btnBack.classList.remove('hidden');
     }
 
-    if (autoFocus && !isTrashNote && !isPreviewMode) {
+    if (autoFocus && !isTrashNote) {
         setTimeout(() => {
             noteBody.focus();
             noteBody.setSelectionRange(noteBody.value.length, noteBody.value.length);
@@ -587,6 +636,7 @@ function moveToTrash(id) {
         noteTitleInput.classList.add('hidden');
         charCount.classList.add('hidden');
         dateDisplay.classList.add('hidden');
+        noteCodeView.classList.add('hidden');
     }
 
     renderList(searchInput.value);
@@ -628,6 +678,7 @@ function executeDelete() {
         noteTitleInput.classList.add('hidden');
         charCount.classList.add('hidden');
         dateDisplay.classList.add('hidden');
+        noteCodeView.classList.add('hidden');
     }
     pendingDeleteId = null;
     renderList(searchInput.value);
@@ -661,6 +712,7 @@ function executeEmptyTrash() {
         noteTitleInput.classList.add('hidden');
         charCount.classList.add('hidden');
         dateDisplay.classList.add('hidden');
+        noteCodeView.classList.add('hidden');
     }
 
     renderList(searchInput.value);
@@ -758,13 +810,17 @@ function handleInput() {
     updateEditorFooter();
     renderList(searchInput.value);
 
-    if (isPreviewMode) renderFormattedPreview(val);
-
     setStatus('saving', 'クラウドに保存中...');
     worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
 }
 
 noteBody.oninput = handleInput;
+
+// フォーカスが外れた時に全自動でコードコンテナに変身！
+noteBody.onblur = () => {
+    updateAutoCodeRender();
+};
+
 searchInput.oninput = () => renderList(searchInput.value);
 
 function createNewNote(autoFocus = true) {
@@ -842,10 +898,8 @@ async function loginWithProvider(provider) {
     }
 }
 
-// ★ Google サインイン一本化
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
 
-// ユーザーアカウント情報取得
 onAuthStateChanged(auth, user => {
     splashScreen.classList.add('hidden');
     if (user) {
