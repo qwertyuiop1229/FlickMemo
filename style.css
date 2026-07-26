@@ -38,14 +38,20 @@ html {
     overflow: hidden;
 }
 
-/* 共通：スクロールバーの小さな三角アローボタンを完全に消去 */
-::-webkit-scrollbar-button {
+/* ★ 上下の小さな三角矢印ボタン（アロー）を100%完全消去 */
+::-webkit-scrollbar-button,
+::-webkit-scrollbar-button:single-button,
+::-webkit-scrollbar-button:vertical,
+::-webkit-scrollbar-button:horizontal,
+::-webkit-scrollbar-button:start:decrement,
+::-webkit-scrollbar-button:end:increment {
     display: none !important;
-    width: 0;
-    height: 0;
+    width: 0 !important;
+    height: 0 !important;
+    background: transparent !important;
 }
 
-/* ★ アプリ全領域共通：幅6px、常時薄く見えてホバーやドラッグで強調される洗練スクロールバー */
+/* ★ 幅6px、平常時は完全透明。操作中のみ表示され、3秒後にじわっと消えるフェードスクロールバー */
 ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -56,22 +62,30 @@ html {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
-    /* 常に少し見えているためドラッグで掴みやすい */
+    background: transparent;
+    /* 平常時は100%完全透明 */
     border-radius: var(--m3-radius-full);
-    transition: background 0.2s ease;
+    transition: background 0.5s var(--m3-motion-curve);
+}
+
+/* 操作中 (.is-scrolling) のみ浮かび上がる */
+.is-scrolling::-webkit-scrollbar-thumb,
+.editor-area.is-scrolling::-webkit-scrollbar-thumb,
+.m3-text-area.is-scrolling::-webkit-scrollbar-thumb,
+.m3-code-view.is-scrolling::-webkit-scrollbar-thumb,
+.list-container.is-scrolling::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.22);
 }
 
 ::-webkit-scrollbar-thumb:hover,
 ::-webkit-scrollbar-thumb:active {
-    background: rgba(255, 255, 255, 0.35);
-    /* マウス操作・ドラッグ時 */
+    background: rgba(255, 255, 255, 0.4) !important;
 }
 
 /* Firefox用 */
 * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+    scrollbar-color: transparent transparent;
 }
 
 input,
@@ -618,6 +632,7 @@ select {
     font-weight: 400;
 }
 
+/* ★ テキストエリア：直接編集時もコード用フォントで美しく維持 */
 .m3-text-area {
     flex: 1;
     background: transparent;
@@ -627,11 +642,11 @@ select {
     font-size: 1rem;
     resize: none;
     line-height: 1.7;
-    font-family: 'Google Sans', sans-serif;
+    font-family: 'Google Sans', 'Roboto Mono', sans-serif;
     padding-bottom: 3.8rem !important;
 }
 
-/* 全自動変身：Google AI Studio スタイル コード表示ビュー */
+/* ★ Google AI Studio スタイル コード表示ビュー */
 .m3-code-view {
     flex: 1;
     overflow-y: auto;
@@ -640,7 +655,6 @@ select {
     line-height: 1.7;
     cursor: text;
     user-select: text;
-    /* 部分コピー用のドラッグ選択を確実に許可 */
 }
 
 .m3-code-view p {
@@ -706,7 +720,6 @@ select {
     overflow-x: auto;
 }
 
-/* 折りたたみ（Collapse）時のスタイル */
 .code-block-wrapper.is-collapsed pre {
     display: none !important;
 }

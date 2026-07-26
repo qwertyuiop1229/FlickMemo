@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.9";
+const APP_VERSION = "1.1.10";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -96,7 +96,7 @@ let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
 
-// iOS風スクロールバー監視
+// ★【3秒間停止で自然にフェードアウト消去する万能スクロール監視】
 function setupScrollFade(element) {
     if (!element) return;
     let timer = null;
@@ -104,6 +104,7 @@ function setupScrollFade(element) {
     const triggerShow = () => {
         element.classList.add('is-scrolling');
         clearTimeout(timer);
+        // 操作停止からピッタリ3秒(3000ms)後にスッとフェードアウト
         timer = setTimeout(() => {
             element.classList.remove('is-scrolling');
         }, 3000);
@@ -159,11 +160,10 @@ function getInitialsAvatar(name) {
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
-// ★【ソースコード全体一括判定エンジン】(app.jsや本格スクリプトを100%自動認識)
+// ソースコード一括判定エンジン
 function isFullSourceCode(text) {
     if (!text || !text.trim()) return false;
 
-    // 決定的なプログラム指標
     const indicators = [
         /\bimport\s+[\s\S]*?\s+from\s+["']/,
         /\bexport\s+(default|const|let|var|function|class)\b/,
@@ -186,7 +186,6 @@ function isFullSourceCode(text) {
     return matches >= 2;
 }
 
-// 単一行のコード構文判定
 function isCodeLine(line) {
     const l = line.trim();
     if (!l) return true;
@@ -205,7 +204,7 @@ function isCodeLine(line) {
     return hasKeywords || hasSymbols;
 }
 
-// ★【全自動コード変身＆一括統合修正レンダラー】
+// 全自動コード変身＆一括統合修正レンダラー
 function updateAutoCodeRender(forceRender = false) {
     const text = noteBody.value || '';
     if (!text.trim()) {
@@ -225,7 +224,6 @@ function updateAutoCodeRender(forceRender = false) {
     let blockIndex = 0;
 
     if (isFullCode) {
-        // app.js 等の本格コード全文の一括カード化（テンプレ文字列が含まれていても絶対に崩れない）
         hasAnyCode = true;
         const isCollapsed = !!collapsedState[`block_0`];
         html = buildCodeBlockHTML('javascript', text.trim(), 0, isCollapsed);
@@ -256,7 +254,6 @@ function updateAutoCodeRender(forceRender = false) {
             html += `<p>${escapeHTML(remaining)}</p>`;
         }
     } else {
-        // 行スキャン統合
         const lines = text.split('\n');
         let currentBlock = [];
         let currentIsCode = null;
@@ -304,7 +301,6 @@ function updateAutoCodeRender(forceRender = false) {
         }
     }
 
-    // ★ コピペ直後(forceRender) または フォーカスが外れたタイミングでコードカード表示
     if (hasAnyCode && (forceRender || document.activeElement !== noteBody)) {
         noteCodeView.innerHTML = html;
         if (window.Prism) {
@@ -349,18 +345,47 @@ function updateAutoCodeRender(forceRender = false) {
     }
 }
 
-// ★ 部分コピー（ドラッグ選択）を保護しつつ、単クリックでスムーズ編集移行
+// ★【正確な文字位置計算 ＆ スクロールバー上ドラッグの誤作動防止】
 noteCodeView.onmouseup = (e) => {
+    // コピー・折りたたみボタン上は除外
     if (e.target.closest('.copy-code-btn') || e.target.closest('.collapse-code-btn')) return;
 
+    // 右端スクロールバー上のドラッグ操作は100%除外！
+    const rect = noteCodeView.getBoundingClientRect();
+    if (e.clientX >= rect.right - 12) return;
+
+    // テキスト範囲選択中（部分コピー中）は除外
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) {
         return;
     }
 
+    // クリックされた文字位置（オフセット）の割り出し
+    let clickCaretOffset = noteBody.value.length;
+    if (document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+        if (range && range.startContainer) {
+            const clickedTextNode = range.startContainer;
+            const clickedCharOffset = range.startOffset;
+            const fullText = noteBody.value;
+            const targetStr = clickedTextNode.textContent;
+
+            if (targetStr) {
+                const foundPos = fullText.indexOf(targetStr);
+                if (foundPos !== -1) {
+                    clickCaretOffset = foundPos + clickedCharOffset;
+                }
+            }
+        }
+    }
+
+    // 切替 ＆ 正確なカーソル位置へセットしてフォーカス！
     noteCodeView.classList.add('hidden');
     noteBody.classList.remove('hidden');
     noteBody.focus();
+    setTimeout(() => {
+        noteBody.setSelectionRange(clickCaretOffset, clickCaretOffset);
+    }, 20);
 };
 
 function buildCodeBlockHTML(lang, rawCode, index, isCollapsed) {
@@ -935,7 +960,6 @@ function handleInput() {
 
 noteBody.oninput = handleInput;
 
-// ★【コピペ(paste)した瞬間に即座に自動コードカード化】
 noteBody.addEventListener('paste', () => {
     setTimeout(() => {
         handleInput();
