@@ -644,7 +644,7 @@ select {
     padding-bottom: 3.8rem !important;
 }
 
-/* ★【全自動変身：Google AI Studio スタイル コード表示ビュー】 */
+/* 全自動変身：Google AI Studio スタイル コード表示ビュー */
 .m3-code-view {
     flex: 1;
     overflow-y: auto;
@@ -666,6 +666,7 @@ select {
     border-radius: var(--m3-radius-md);
     margin: 0.8rem 0;
     overflow: hidden;
+    transition: all 0.2s var(--m3-motion-curve);
 }
 
 .code-block-header {
@@ -681,7 +682,13 @@ select {
     font-weight: 500;
 }
 
-.code-block-header .copy-code-btn {
+.code-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.code-header-btn {
     background: transparent;
     border: none;
     color: var(--m3-text-muted);
@@ -689,13 +696,13 @@ select {
     font-size: 0.75rem;
     display: flex;
     align-items: center;
-    gap: 0.3rem;
+    gap: 0.2rem;
     padding: 0.2rem 0.5rem;
     border-radius: 4px;
     transition: background 0.15s, color 0.15s;
 }
 
-.code-block-header .copy-code-btn:hover {
+.code-header-btn:hover {
     color: var(--m3-text);
     background: var(--m3-surface-hover);
 }
@@ -708,6 +715,15 @@ select {
     font-size: 0.9rem !important;
     line-height: 1.6 !important;
     overflow-x: auto;
+}
+
+/* ★ 折りたたみ（Collapse）時のスタイル */
+.code-block-wrapper.is-collapsed pre {
+    display: none !important;
+}
+
+.code-block-wrapper.is-collapsed {
+    border-color: var(--m3-border);
 }
 
 /* 左下日付 / 右下文字数バッジ */
