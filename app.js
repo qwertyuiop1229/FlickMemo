@@ -1,6 +1,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
+// ★【重要】アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
+const APP_VERSION = "1.3.8";
+
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
@@ -20,7 +23,6 @@ const worker = new Worker('worker.js', { type: 'module' });
 worker.postMessage({ type: 'INIT_FIREBASE', config: firebaseConfig });
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-let currentAppVersion = "1.3.0";
 
 // DOM要素
 const splashScreen = document.getElementById('splash-screen');
@@ -85,7 +87,7 @@ let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
 
-// iOS風スクロールバー監視
+// iOS風スクロールバーのクラス切り替え
 let scrollTimer = null;
 listContainer.addEventListener('scroll', () => {
     listContainer.classList.add('is-scrolling');
@@ -121,21 +123,13 @@ function showToast(msg, actionCallback = null) {
 window.addEventListener('online', () => setStatus('saving', 'オンライン復帰・同期中...'));
 window.addEventListener('offline', () => setStatus('offline', 'オフライン (ローカル保存済み)'));
 
-async function checkVersion() {
-    try {
-        const res = await fetch(`version.json?t=${Date.now()}`);
-        if (res.ok) {
-            const data = await res.json();
-            currentAppVersion = data.version;
-            appVersionDisplay.textContent = `v${currentAppVersion}`;
-        }
-    } catch (err) {
-        appVersionDisplay.textContent = `v1.3.0`;
-    }
+// ★【直埋めバージョン表示】(キャッシュが破棄されて最新コードが届いたか一目で判定)
+function renderAppVersion() {
+    appVersionDisplay.textContent = `v${APP_VERSION}`;
 }
-checkVersion();
+renderAppVersion();
 
-// ★【Undo / Redo スタック（履歴を破壊しない独立設計）】
+// Undo / Redo 多段階スタック
 let textHistory = [];
 let historyIndex = -1;
 let historyDebounceTimer = null;
@@ -396,7 +390,6 @@ function renderList(filter = '') {
     });
 }
 
-// ★【超重要修復】同じメモが開かれ続けている場合はUndo/Redo履歴を消去・リセットしない！
 function selectNote(id, autoFocus = true) {
     cleanupEmptyNotes(id);
 
@@ -407,7 +400,6 @@ function selectNote(id, autoFocus = true) {
     const isTrashNote = !!n.deletedAt;
     noteBody.disabled = isTrashNote;
 
-    // ★ 別のメモに切り替わった時のみテキストとUndo履歴を初期化する！
     if (!isSameNote) {
         noteBody.value = n.body || '';
         resetTextHistory(n.body || '');
@@ -508,7 +500,6 @@ btnDeleteCancel.onclick = () => deleteModal.classList.add('hidden');
 btnEmptyTrash.onclick = () => emptyTrashModal.classList.remove('hidden');
 btnEmptyCancel.onclick = () => emptyTrashModal.classList.add('hidden');
 
-// ★【一括削除修正】Workerへ一括クリア依頼を送信して完全にゴミ箱を空にする
 function executeEmptyTrash() {
     emptyTrashModal.classList.add('hidden');
 
@@ -519,7 +510,6 @@ function executeEmptyTrash() {
         }
     });
 
-    // クラウド上でも一括削除
     worker.postMessage({ type: 'CLEAR_ALL_TRASH' });
 
     if (activeNoteId && (!currentNotes[activeNoteId] || currentNotes[activeNoteId].deletedAt)) {
@@ -660,7 +650,7 @@ btnModalConfirm.onclick = () => {
 };
 
 btnSettingsTrigger.onclick = () => {
-    checkVersion();
+    renderAppVersion();
     settingsModal.classList.remove('hidden');
 };
 btnSettingsClose.onclick = () => settingsModal.classList.add('hidden');
@@ -710,7 +700,7 @@ onAuthStateChanged(auth, user => {
     }
 });
 
-// クラウドからの同期受信
+// クラウド同期受信
 worker.onmessage = e => {
     if (e.data.type === 'SYNC_NOTES') {
         const remoteNotes = e.data.notes || {};

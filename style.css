@@ -37,19 +37,20 @@ html {
     overflow: hidden;
 }
 
-/* 共通：スクロールバーの小さな三角アローボタンを完全に消去 */
+/* スクロールバーの小さな三角アローボタンを完全に消去 */
 ::-webkit-scrollbar-button {
     display: none !important;
     width: 0;
     height: 0;
 }
 
-/* =========================================================
-   1. メモ一覧（サイドバー）：iOS/iPhone風 極細スクロールバー
-   （普段は完全透明、スクロール中・ホバー時のみ極細で表示）
-   ========================================================= */
+/* メモ一覧（サイドバー）：iOS風 極細スクロールバー */
 .list-container {
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    padding: 0.6rem;
+    /* ★ 横に美しいすき間（余白）を復元 */
     scrollbar-width: thin;
     scrollbar-color: transparent transparent;
 }
@@ -73,10 +74,7 @@ html {
     background: rgba(255, 255, 255, 0.2);
 }
 
-/* =========================================================
-   2. メモ内（エディタエリア）：最初に作った独自UIスクロールバー
-   （幅6px、常に上品に見えるダークな半透明独自デザイン）
-   ========================================================= */
+/* メモ内（エディタエリア）：独自UIスクロールバー */
 .editor-area::-webkit-scrollbar,
 .m3-text-area::-webkit-scrollbar {
     width: 6px;
@@ -345,6 +343,7 @@ select {
     border-right: 1px solid var(--m3-border);
     display: flex;
     flex-direction: column;
+    height: 100%;
     transition: transform 0.2s var(--m3-motion-curve);
     position: relative;
 }
@@ -456,17 +455,18 @@ select {
     font-size: 0.72rem;
     font-weight: 500;
     color: var(--m3-text-muted);
-    padding: 0.6rem 0.8rem 0.2rem 0.8rem;
+    padding: 0.6rem 0.4rem 0.2rem 0.4rem;
     letter-spacing: 0.3px;
     display: flex;
     align-items: center;
     gap: 0.3rem;
 }
 
+/* ★ メモ項目：元の通り、ホバー時の綺麗な角丸カード余白を復元 */
 .note-item {
-    padding: 0.75rem 0.9rem;
-    border-radius: var(--m3-radius-lg);
-    margin-bottom: 0.2rem;
+    padding: 0.8rem 1rem;
+    border-radius: var(--m3-radius-md);
+    margin-bottom: 0.3rem;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -550,8 +550,9 @@ select {
     margin-top: 3rem;
 }
 
-/* 一番下固定ゴミ箱バナー ＆ シャドウフェード */
+/* ★ 一番下固定ゴミ箱バナー (margin-top: auto で完全に底辺固定) */
 .trash-bottom-banner {
+    margin-top: auto;
     position: relative;
     background: var(--m3-danger-bg);
     border-top: 1px solid var(--m3-danger-border);
