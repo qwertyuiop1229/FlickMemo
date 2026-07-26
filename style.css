@@ -10,7 +10,7 @@
     --m3-text-variant: #c4c6d0;
     --m3-text-muted: #8e918f;
 
-    /* ★ ソフトで上品なモダンレッド（禍々しさを排除） */
+    /* ソフトで上品なモダンレッド */
     --m3-danger: #f28b82;
     --m3-danger-bg: #3c2424;
     --m3-danger-border: #5c3234;
@@ -36,6 +36,31 @@ html {
     background: var(--m3-bg);
     color: var(--m3-text);
     overflow: hidden;
+}
+
+/* ★ アプリ専用の洗練された極細カスタムスクロールバー */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #2a2b2d;
+    border-radius: var(--m3-radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--m3-surface-hover);
+}
+
+/* Firefox用 */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #2a2b2d transparent;
 }
 
 input,
@@ -332,7 +357,6 @@ select {
     border-bottom: 1px solid var(--m3-border);
 }
 
-/* ソフトな赤色バナー */
 .trash-notice-banner {
     background: var(--m3-danger-bg);
     color: var(--m3-danger);
@@ -393,7 +417,6 @@ select {
     opacity: 0.9;
 }
 
-/* ソフトな赤色ボタン */
 .btn-danger-fab {
     background: var(--m3-danger-bg);
     color: var(--m3-danger);
@@ -422,7 +445,6 @@ select {
     letter-spacing: 0.3px;
 }
 
-/* ★ 枠線周りの全域クリック可能要素 */
 .note-item {
     padding: 0.85rem 1rem;
     border-radius: var(--m3-radius-lg);
@@ -523,6 +545,7 @@ select {
     gap: 0.4rem;
 }
 
+/* ★ 文字とバッジの重なりを完全防止する余白 (padding-bottom: 3.8rem) */
 .m3-text-area {
     flex: 1;
     background: transparent;
@@ -533,9 +556,10 @@ select {
     resize: none;
     line-height: 1.7;
     font-family: 'Google Sans', sans-serif;
+    padding-bottom: 3.8rem !important;
 }
 
-/* ★ 左下：日付表示 / 右下：文字数表示 */
+/* 左下日付 / 右下文字数バッジ */
 .date-display-floating {
     position: absolute;
     bottom: 1.2rem;
@@ -550,6 +574,7 @@ select {
     opacity: 0.6;
     transition: opacity 0.2s;
     font-family: 'Roboto Mono', monospace;
+    z-index: 5;
 }
 
 .char-count-floating {
@@ -566,6 +591,7 @@ select {
     opacity: 0.6;
     transition: opacity 0.2s;
     font-family: 'Roboto Mono', monospace;
+    z-index: 5;
 }
 
 .editor-area:hover .date-display-floating,
@@ -637,7 +663,6 @@ select {
     background: var(--m3-surface-hover);
 }
 
-/* ソフトな危険ボタン */
 .m3-text-button.btn-danger {
     background: var(--m3-danger-bg);
     color: var(--m3-danger);

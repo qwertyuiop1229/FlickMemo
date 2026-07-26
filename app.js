@@ -123,7 +123,7 @@ async function checkVersion() {
 }
 checkVersion();
 
-// ★【完全修正 Undo / Redo 多段階スタック】
+// Undo / Redo 多段階スタック
 let textHistory = [];
 let historyIndex = -1;
 let historyDebounceTimer = null;
@@ -151,7 +151,6 @@ function updateUndoRedoButtons() {
     btnRedo.disabled = historyIndex >= textHistory.length - 1;
 }
 
-// 履歴を変更せずにテキスト適用＆保存のみを行う関数
 function applyUndoRedoText(targetText) {
     noteBody.value = targetText;
     if (!activeNoteId) return;
@@ -227,10 +226,8 @@ function loadLocalNotes() {
         currentNotes = {};
         req.result.forEach(n => currentNotes[n.id] = n);
         cleanExpiredTrash();
-        cleanupEmptyNotes(); // 空のメモの自動クリーンアップ
+        cleanupEmptyNotes();
         renderList(searchInput.value);
-
-        // 起動時の自動フォーカスメモの準備
         initAutoNote();
     };
 }
@@ -247,7 +244,6 @@ function deleteLocalNote(id) {
     tx.objectStore('notes').delete(id);
 }
 
-// ★ 空のメモ（未入力）を消去するクリーンアップ
 function cleanupEmptyNotes(exceptId = null) {
     let changed = false;
     Object.values(currentNotes).forEach(n => {
@@ -261,12 +257,10 @@ function cleanupEmptyNotes(exceptId = null) {
     if (changed) renderList(searchInput.value);
 }
 
-// ウィンドウ閉じ時の空メモ掃除
 window.addEventListener('beforeunload', () => {
     cleanupEmptyNotes();
 });
 
-// アプリ起動時の自動入力準備
 function initAutoNote() {
     if (currentTab !== 'notes') return;
     const existingEmpty = Object.values(currentNotes).find(n => !n.deletedAt && (!n.body || !n.body.trim()));
@@ -288,6 +282,7 @@ function cleanExpiredTrash() {
     });
 }
 
+// ★ ピン留め最優先グループ化ロジック
 function renderList(filter = '') {
     noteList.innerHTML = '';
     const now = Date.now();
@@ -300,7 +295,9 @@ function renderList(filter = '') {
         .filter(n => (n.body || '').includes(filter))
         .sort((a, b) => {
             if (currentTab === 'notes') {
-                if (a.pinned !== b.pinned) return b.pinned ? -1 : 1;
+                const aPinned = !!a.pinned;
+                const bPinned = !!b.pinned;
+                if (aPinned !== bPinned) return aPinned ? -1 : 1;
             }
             return (b.updatedAt || 0) - (a.updatedAt || 0);
         });
@@ -317,8 +314,9 @@ function renderList(filter = '') {
 
     filtered.forEach(n => {
         let groupLabel = '';
+        // ★ ピン留めされているメモは日付に関係なく「📌 ピン留め」グループに固定
         if (currentTab === 'notes' && n.pinned) {
-            groupLabel = 'ピン留め';
+            groupLabel = '📌 ピン留め';
         } else {
             groupLabel = getDateGroup(currentTab === 'notes' ? n.updatedAt : n.deletedAt);
         }
@@ -333,8 +331,6 @@ function renderList(filter = '') {
 
         const li = document.createElement('li');
         li.className = `note-item ${n.id === activeNoteId ? 'active' : ''}`;
-
-        // ★ 枠線周りを含めた LI 全体へのクリックイベント設定
         li.onclick = () => selectNote(n.id);
 
         const titleSpan = document.createElement('span');
@@ -351,12 +347,10 @@ function renderList(filter = '') {
         delBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">${currentTab === 'notes' ? 'delete' : 'delete_forever'}</span>`;
 
         delBtn.onclick = (e) => {
-            e.stopPropagation(); // liへのクリック連動を防止
+            e.stopPropagation();
             if (currentTab === 'notes') {
-                // 通常メモ：確認なしで即時ゴミ箱へ移動
                 moveToTrash(n.id);
             } else {
-                // ゴミ箱メモ：確認モーダル表示
                 openDeleteModal(n.id);
             }
         };
@@ -368,7 +362,6 @@ function renderList(filter = '') {
 }
 
 function selectNote(id, autoFocus = true) {
-    // 選択切り替え時に他の空メモを掃除
     cleanupEmptyNotes(id);
 
     activeNoteId = id;
@@ -406,7 +399,6 @@ function selectNote(id, autoFocus = true) {
     }
 }
 
-// ★ 通常メモをゴミ箱へ移動（確認無し＋トースト表示）
 function moveToTrash(id) {
     if (!currentNotes[id]) return;
     lastMovedToTrashNote = { ...currentNotes[id] };
@@ -426,7 +418,6 @@ function moveToTrash(id) {
 
     renderList(searchInput.value);
 
-    // トースト表示（「元に戻す」ボタン付き）
     showToast("メモをゴミ箱に移動しました", () => {
         if (lastMovedToTrashNote) {
             delete currentNotes[lastMovedToTrashNote.id].deletedAt;
@@ -439,7 +430,6 @@ function moveToTrash(id) {
     });
 }
 
-// ゴミ箱内完全削除モーダル
 function openDeleteModal(id) {
     pendingDeleteId = id;
     deleteModal.classList.remove('hidden');
@@ -470,7 +460,6 @@ function executeDelete() {
 btnDeleteConfirm.onclick = executeDelete;
 btnDeleteCancel.onclick = () => deleteModal.classList.add('hidden');
 
-// ★ ゴミ箱を空にする（バグ修正：通常メモは閉じない）
 btnEmptyTrash.onclick = () => emptyTrashModal.classList.remove('hidden');
 btnEmptyCancel.onclick = () => emptyTrashModal.classList.add('hidden');
 
@@ -485,7 +474,6 @@ function executeEmptyTrash() {
         }
     });
 
-    // アクティブなメモがゴミ箱のものだった場合のみ閉じ
     if (activeNoteId && (!currentNotes[activeNoteId] || currentNotes[activeNoteId].deletedAt)) {
         activeNoteId = null;
         noteBody.value = '';
@@ -501,7 +489,6 @@ function executeEmptyTrash() {
 
 btnEmptyConfirm.onclick = executeEmptyTrash;
 
-// Enterキー決定の対応
 window.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
         if (!deleteModal.classList.contains('hidden')) {
@@ -523,7 +510,6 @@ btnRestoreTrash.onclick = () => {
     selectNote(activeNoteId);
 };
 
-// タブ切り替え
 tabNotes.onclick = () => {
     currentTab = 'notes';
     tabNotes.classList.add('active');
@@ -544,7 +530,6 @@ tabTrash.onclick = () => {
     renderList(searchInput.value);
 };
 
-// ★ ピン留め（メッセージ最優先通知＆デザイン強調）
 btnPin.onclick = () => {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const isPinned = !currentNotes[activeNoteId].pinned;
@@ -600,7 +585,7 @@ noteBody.oninput = handleInput;
 searchInput.oninput = () => renderList(searchInput.value);
 
 function createNewNote(autoFocus = true) {
-    cleanupEmptyNotes(); // 事前に古い空メモを削除
+    cleanupEmptyNotes();
 
     const newId = 'note_' + Date.now();
     currentNotes[newId] = { id: newId, body: '', pinned: false, updatedAt: Date.now() };
@@ -619,7 +604,6 @@ window.addEventListener('keydown', e => {
     }
 });
 
-// モーダル制御
 btnLogoutTrigger.onclick = () => logoutModal.classList.remove('hidden');
 btnModalCancel.onclick = () => logoutModal.classList.add('hidden');
 btnModalConfirm.onclick = () => {
@@ -646,7 +630,6 @@ btnUpdateCheck.onclick = async () => {
     window.location.reload(true);
 };
 
-// 認証
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
@@ -678,7 +661,6 @@ onAuthStateChanged(auth, user => {
     }
 });
 
-// クラウドからの同期受信
 worker.onmessage = e => {
     if (e.data.type === 'SYNC_NOTES') {
         const remoteNotes = e.data.notes || {};
@@ -690,7 +672,6 @@ worker.onmessage = e => {
         renderList(searchInput.value);
 
         if (activeNoteId && currentNotes[activeNoteId]) {
-            // ユーザーが入力中でない場合のみ同期描画
             if (document.activeElement !== noteBody) {
                 selectNote(activeNoteId, false);
             }
