@@ -3,13 +3,14 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, o
 
 // ⚠️ ご自身のFirebaseキーを入れてください
 const firebaseConfig = {
-    apiKey: "YOUR_API_KEY",
+    apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
     authDomain: "flickmemo-qwe.web.app",
-    databaseURL: "https://flickmemo-qwe-default-rtdb.firebaseio.com",
+    databaseURL: "https://flickmemo-qwe-default-rtdb.asia-southeast1.firebasedatabase.app",
     projectId: "flickmemo-qwe",
-    storageBucket: "flickmemo-qwe.appspot.com",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+    storageBucket: "flickmemo-qwe.firebasestorage.app",
+    messagingSenderId: "998795111125",
+    appId: "1:998795111125:web:8e40535e8f2623283a105c",
+    measurementId: "G-ZDRMZ5VLY9"
 };
 
 const app = initializeApp(firebaseConfig);
