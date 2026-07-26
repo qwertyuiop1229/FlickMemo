@@ -1,10 +1,10 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.1.4";
 
-// ⚠️ ご自身のFirebaseキーを入れてください
+// ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
     authDomain: "flickmemo-qwe.web.app",
@@ -34,6 +34,9 @@ const noteList = document.getElementById('note-list');
 const emptyState = document.getElementById('empty-state');
 const noteTitleInput = document.getElementById('note-title-input');
 const noteBody = document.getElementById('note-body');
+const notePreview = document.getElementById('note-preview');
+const btnTogglePreview = document.getElementById('btn-toggle-preview');
+
 const statusBar = document.getElementById('status-bar');
 const statusText = document.getElementById('status-text');
 const btnBack = document.getElementById('btn-back');
@@ -66,6 +69,7 @@ const btnEmptyCancel = document.getElementById('btn-empty-cancel');
 const btnEmptyConfirm = document.getElementById('btn-empty-confirm');
 
 const logoutModal = document.getElementById('logout-modal');
+const btnLogoutTrigger = document.getElementById('btn-logout-trigger');
 const btnModalCancel = document.getElementById('btn-modal-cancel');
 const btnModalConfirm = document.getElementById('btn-modal-confirm');
 
@@ -90,6 +94,7 @@ let activeNoteId = null;
 let pendingDeleteId = null;
 let lastMovedToTrashNote = null;
 let currentTab = 'notes';
+let isPreviewMode = false;
 let toastTimer = null;
 let db = null;
 
@@ -133,12 +138,95 @@ function renderAppVersion() {
     appVersionDisplay.textContent = `v${APP_VERSION}`;
 }
 
-// アバターフォールバック（インラインSVG）
 function getInitialsAvatar(name) {
     const initial = (name || 'U').charAt(0).toUpperCase();
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#042f66" rx="32"/><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" fill="#a8c7fa" font-size="28" font-family="sans-serif" font-weight="bold">${initial}</text></svg>`;
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
+
+// ★【VS Code / Google AI Studio 風コードハイライトパースエンジン】
+function renderFormattedPreview(text) {
+    if (!text) {
+        notePreview.innerHTML = '<p style="color:var(--m3-text-muted);">（内容がありません）</p>';
+        return;
+    }
+
+    // コードブロック ```lang ... ``` の抽出と変換
+    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+    let html = '';
+    let lastIndex = 0;
+    let match;
+
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+        const plainText = text.substring(lastIndex, match.index);
+        if (plainText) {
+            html += `<p>${escapeHTML(plainText)}</p>`;
+        }
+
+        const lang = (match[1] || 'code').toLowerCase();
+        const rawCode = match[2].trim();
+        const escapedCode = escapeHTML(rawCode);
+
+        html += `
+      <div class="code-block-wrapper">
+        <div class="code-block-header">
+          <span>${lang}</span>
+          <button class="copy-code-btn" data-code="${encodeURIComponent(rawCode)}">
+            <span class="material-symbols-outlined" style="font-size:14px;">content_copy</span> コピー
+          </button>
+        </div>
+        <pre><code class="language-${lang}">${escapedCode}</code></pre>
+      </div>
+    `;
+
+        lastIndex = match.index + match[0].length;
+    }
+
+    const remaining = text.substring(lastIndex);
+    if (remaining) {
+        html += `<p>${escapeHTML(remaining)}</p>`;
+    }
+
+    notePreview.innerHTML = html;
+
+    // Prism.js による色付け適用
+    if (window.Prism) {
+        Prism.highlightAllUnder(notePreview);
+    }
+
+    // コードコピーボタンの動作設定
+    notePreview.querySelectorAll('.copy-code-btn').forEach(btn => {
+        btn.onclick = () => {
+            const code = decodeURIComponent(btn.getAttribute('data-code'));
+            navigator.clipboard.writeText(code);
+            showToast("コードをコピーしました");
+        };
+    });
+}
+
+function escapeHTML(str) {
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+// プレビュー表示切り替え
+btnTogglePreview.onclick = () => {
+    isPreviewMode = !isPreviewMode;
+    btnTogglePreview.classList.toggle('active', isPreviewMode);
+    if (isPreviewMode) {
+        noteBody.classList.add('hidden');
+        notePreview.classList.remove('hidden');
+        renderFormattedPreview(noteBody.value);
+    } else {
+        noteBody.classList.remove('hidden');
+        notePreview.classList.add('hidden');
+        noteBody.focus();
+    }
+};
 
 // Undo / Redo 多段階スタック
 let textHistory = [];
@@ -182,6 +270,7 @@ function applyUndoRedoText(targetText) {
     saveLocalNote(updatedNote);
     updateEditorFooter();
     renderList(searchInput.value);
+    if (isPreviewMode) renderFormattedPreview(targetText);
     setStatus('saving', 'クラウドに保存中...');
     worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
 }
@@ -421,6 +510,7 @@ function selectNote(id, autoFocus = true) {
         noteTitleInput.value = n.title || '';
         noteBody.value = n.body || '';
         resetTextHistory(n.body || '');
+        if (isPreviewMode) renderFormattedPreview(n.body || '');
     }
 
     updateTitlePlaceholder(n);
@@ -449,7 +539,7 @@ function selectNote(id, autoFocus = true) {
         btnBack.classList.remove('hidden');
     }
 
-    if (autoFocus && !isTrashNote) {
+    if (autoFocus && !isTrashNote && !isPreviewMode) {
         setTimeout(() => {
             noteBody.focus();
             noteBody.setSelectionRange(noteBody.value.length, noteBody.value.length);
@@ -635,7 +725,7 @@ btnPin.onclick = () => {
 btnCopy.onclick = () => {
     if (!noteBody.value) return;
     navigator.clipboard.writeText(noteBody.value);
-    showToast("クリップボードにコピーしました");
+    showToast("全文をコピーしました");
 };
 
 function updateEditorFooter() {
@@ -667,6 +757,8 @@ function handleInput() {
     updateTitlePlaceholder(updatedNote);
     updateEditorFooter();
     renderList(searchInput.value);
+
+    if (isPreviewMode) renderFormattedPreview(val);
 
     setStatus('saving', 'クラウドに保存中...');
     worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
@@ -737,7 +829,7 @@ btnUpdateCheck.onclick = async () => {
     window.location.reload(true);
 };
 
-// 認証ハンドラー
+// 認証
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
@@ -750,16 +842,10 @@ async function loginWithProvider(provider) {
     }
 }
 
-// ★ Microsoft ログインの高度ハンドラー（個人・組織アカウント共通指定）
-const msProvider = new OAuthProvider('microsoft.com');
-msProvider.setCustomParameters({
-    tenant: 'common' // 個人アカウント(Outlook/Hotmail)および組織アカウント両対応
-});
-
+// ★ Google サインイン一本化
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
-document.getElementById('btn-ms').onclick = () => loginWithProvider(msProvider);
 
-// ★【ユーザーアカウント情報の高精度取得 ＆ 安全アバターフォールバック】
+// ユーザーアカウント情報取得
 onAuthStateChanged(auth, user => {
     splashScreen.classList.add('hidden');
     if (user) {
@@ -773,7 +859,6 @@ onAuthStateChanged(auth, user => {
         userName.textContent = nameText;
         userEmail.textContent = emailText;
 
-        // アバター設定 ＆ 読み込み失敗時のインラインSVG安全装置
         userAvatar.onerror = () => {
             userAvatar.src = getInitialsAvatar(nameText);
         };
@@ -784,14 +869,7 @@ onAuthStateChanged(auth, user => {
             userAvatar.src = getInitialsAvatar(nameText);
         }
 
-        // プロバイダ（Google / Microsoft）自動判定
-        let providerName = "Google";
-        if (user.providerData && user.providerData[0]) {
-            const pId = user.providerData[0].providerId;
-            if (pId.includes('microsoft')) providerName = "Microsoft";
-            if (pId.includes('google')) providerName = "Google";
-        }
-        if (userProviderTag) userProviderTag.textContent = providerName;
+        if (userProviderTag) userProviderTag.textContent = "Google";
 
         worker.postMessage({ type: 'SET_USER', uid: user.uid });
     } else {

@@ -1,0 +1,18 @@
+# AI Agent / Skill 関連（ドキュメント類でトークンを圧迫するため除外）
+.agents/
+.claude/
+skills-lock.json
+
+# CI/CD & Deploy 設定ファイル
+.github/
+.firebaserc
+
+# Node / npm 関連（自動生成ファイル）
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# OS / 一時ファイル
+.DS_Store
+*.log

@@ -10,6 +10,10 @@
         href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto+Mono&display=swap">
     <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+
+    <!-- ★ 超軽量 VS Code Dark テーマ (Prism.js 15KB) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+
     <link rel="stylesheet" href="style.css">
 </head>
 
@@ -37,9 +41,6 @@
             <div id="auth-buttons" class="auth-buttons">
                 <button id="btn-google" class="m3-button btn-google">
                     <span class="material-symbols-outlined">login</span> Google でログイン
-                </button>
-                <button id="btn-ms" class="m3-button btn-ms">
-                    <span class="material-symbols-outlined">key</span> Microsoft でログイン
                 </button>
             </div>
         </div>
@@ -123,6 +124,10 @@
                     </div>
 
                     <div class="toolbar-group">
+                        <!-- ★ プレビュー切替ボタン -->
+                        <button id="btn-toggle-preview" class="m3-icon-button" title="プレビュー表示切替">
+                            <span class="material-symbols-outlined">visibility</span>
+                        </button>
                         <button id="btn-pin" class="m3-icon-button" title="ピン留め">
                             <span class="material-symbols-outlined">push_pin</span>
                         </button>
@@ -131,7 +136,7 @@
                             <span class="material-symbols-outlined">delete</span>
                         </button>
 
-                        <button id="btn-copy" class="m3-icon-button" title="コピー">
+                        <button id="btn-copy" class="m3-icon-button" title="全文コピー">
                             <span class="material-symbols-outlined">content_copy</span>
                         </button>
                         <button id="btn-restore-trash" class="m3-icon-button hidden" title="ゴミ箱から復元">
@@ -142,7 +147,12 @@
 
                 <input type="text" id="note-title-input" class="m3-title-input hidden" placeholder="タイトル（未入力時は自動抽出）"
                     disabled>
+
+                <!-- テキスト入力欄 -->
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
+
+                <!-- ★ VS Code / Google AI Studio 風コードブロックプレビュー容器 -->
+                <div id="note-preview" class="m3-preview-container hidden"></div>
 
                 <div id="date-display" class="date-display-floating hidden">--月--日</div>
                 <div id="char-count" class="char-count-floating hidden">0 文字</div>
@@ -189,7 +199,7 @@
         </div>
     </div>
 
-    <!-- ★ Discordスタイルの洗練設定モーダル（PC：2カラム / スマホ：フルスクリーン） -->
+    <!-- Discordスタイルの設定モーダル -->
     <div id="settings-modal" class="modal-overlay hidden">
         <div class="m3-dialog settings-dialog-discord">
             <div class="dialog-header">
@@ -203,7 +213,6 @@
             </div>
 
             <div class="discord-settings-layout">
-                <!-- 左ナビタブ -->
                 <nav class="settings-nav">
                     <button class="settings-tab-btn active" data-tab="account">
                         <span class="material-symbols-outlined">account_circle</span> アカウント
@@ -216,9 +225,7 @@
                     </button>
                 </nav>
 
-                <!-- 右コンテンツエリア -->
                 <div class="settings-content-area">
-                    <!-- 1. アカウントタブ -->
                     <div id="tab-content-account" class="tab-content">
                         <div class="discord-profile-card">
                             <div class="profile-banner"></div>
@@ -243,7 +250,6 @@
                         </div>
                     </div>
 
-                    <!-- 2. システムタブ -->
                     <div id="tab-content-system" class="tab-content hidden">
                         <div class="setting-item-box">
                             <div class="setting-text">
@@ -262,7 +268,6 @@
                         </div>
                     </div>
 
-                    <!-- 3. アプリ情報タブ -->
                     <div id="tab-content-about" class="tab-content hidden">
                         <div class="setting-item-box">
                             <div class="setting-text">
@@ -289,6 +294,15 @@
         <span id="toast-text">メッセージ</span>
         <button id="btn-toast-action" class="snackbar-action hidden">元に戻す</button>
     </div>
+
+    <!-- ★ 超軽量 Prism.js スクリプト -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-typescript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-css.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
 
     <script type="module" src="app.js"></script>
 </body>

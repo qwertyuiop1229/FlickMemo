@@ -75,25 +75,23 @@ html {
 
 /* エディタ：独自UIスクロールバー */
 .editor-area::-webkit-scrollbar,
-.m3-text-area::-webkit-scrollbar {
+.m3-text-area::-webkit-scrollbar,
+.m3-preview-container::-webkit-scrollbar {
     width: 6px;
     height: 6px;
 }
 
 .editor-area::-webkit-scrollbar-track,
-.m3-text-area::-webkit-scrollbar-track {
+.m3-text-area::-webkit-scrollbar-track,
+.m3-preview-container::-webkit-scrollbar-track {
     background: transparent;
 }
 
 .editor-area::-webkit-scrollbar-thumb,
-.m3-text-area::-webkit-scrollbar-thumb {
+.m3-text-area::-webkit-scrollbar-thumb,
+.m3-preview-container::-webkit-scrollbar-thumb {
     background: #2a2b2d;
     border-radius: var(--m3-radius-full);
-}
-
-.editor-area::-webkit-scrollbar-thumb:hover,
-.m3-text-area::-webkit-scrollbar-thumb:hover {
-    background: var(--m3-surface-hover);
 }
 
 input,
@@ -646,6 +644,70 @@ select {
     padding-bottom: 3.8rem !important;
 }
 
+/* ★【VS Code / Google AI Studio 風コード表示コンテナ】 */
+.m3-preview-container {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 3.8rem !important;
+    font-size: 1rem;
+    line-height: 1.7;
+}
+
+.m3-preview-container p {
+    margin-bottom: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.code-block-wrapper {
+    background: #1e1f20;
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    margin: 1rem 0;
+    overflow: hidden;
+}
+
+.code-block-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--m3-surface-container);
+    padding: 0.4rem 0.8rem;
+    border-bottom: 1px solid var(--m3-border);
+    font-size: 0.75rem;
+    color: var(--m3-primary);
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 500;
+}
+
+.code-block-header .copy-code-btn {
+    background: transparent;
+    border: none;
+    color: var(--m3-text-muted);
+    cursor: pointer;
+    font-size: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+}
+
+.code-block-header .copy-code-btn:hover {
+    color: var(--m3-text);
+    background: var(--m3-surface-hover);
+}
+
+.code-block-wrapper pre {
+    margin: 0 !important;
+    padding: 1rem !important;
+    background: transparent !important;
+    font-family: 'Roboto Mono', monospace !important;
+    font-size: 0.9rem !important;
+    line-height: 1.6 !important;
+    overflow-x: auto;
+}
+
 /* 左下日付 / 右下文字数バッジ */
 .date-display-floating {
     position: absolute;
@@ -686,7 +748,7 @@ select {
     opacity: 1;
 }
 
-/* ダイアログ汎用 */
+/* ダイアログ */
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -761,7 +823,7 @@ select {
     background: #4a2b2b;
 }
 
-/* ★【本物のDiscord風 ✕ Material 3 洗練設定モーダル】 */
+/* Discordスタイル設定モーダル */
 .settings-dialog-discord {
     max-width: 620px !important;
     width: 90vw;
@@ -799,7 +861,6 @@ select {
     overflow: hidden;
 }
 
-/* 左側ナビゲーション（Discordスタイル） */
 .settings-nav {
     width: 160px;
     background: var(--m3-surface-container);
@@ -843,7 +904,6 @@ select {
     font-weight: 500;
 }
 
-/* 右側メインコンテンツ */
 .settings-content-area {
     flex: 1;
     padding: 1.2rem 1.5rem;
@@ -857,7 +917,6 @@ select {
     gap: 1rem;
 }
 
-/* Discord風プロフィールカード */
 .discord-profile-card {
     background: var(--m3-surface);
     border-radius: var(--m3-radius-lg);
@@ -1014,7 +1073,6 @@ select {
     }
 }
 
-/* ★ スマホ（768px以下）：画面全域を使ったアプリ専用フルスクリーン設定画面 */
 @media (max-width: 768px) {
     .sidebar {
         width: 100%;
@@ -1043,7 +1101,6 @@ select {
         z-index: 3;
     }
 
-    /* スマホフルスクリーン設定ダイアログ */
     .settings-dialog-discord {
         position: fixed;
         inset: 0;
