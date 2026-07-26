@@ -37,14 +37,17 @@ html {
     overflow: hidden;
 }
 
-/* ★ スクロールバーの小さな三角アローボタンを完全に消去 */
+/* 共通：スクロールバーの小さな三角アローボタンを完全に消去 */
 ::-webkit-scrollbar-button {
     display: none !important;
     width: 0;
     height: 0;
 }
 
-/* ★ iOS/iPhone風：普段は透明、スクロール・ホバー時のみ浮かび上がる極細バー */
+/* =========================================================
+   1. メモ一覧（サイドバー）：iOS/iPhone風 極細スクロールバー
+   （普段は完全透明、スクロール中・ホバー時のみ極細で表示）
+   ========================================================= */
 .list-container {
     overflow-y: auto;
     scrollbar-width: thin;
@@ -65,10 +68,35 @@ html {
     transition: background 0.3s;
 }
 
-/* スクロール中、またはホバー時にフェードイン表示 */
 .list-container.is-scrolling::-webkit-scrollbar-thumb,
 .list-container:hover::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.2);
+}
+
+/* =========================================================
+   2. メモ内（エディタエリア）：最初に作った独自UIスクロールバー
+   （幅6px、常に上品に見えるダークな半透明独自デザイン）
+   ========================================================= */
+.editor-area::-webkit-scrollbar,
+.m3-text-area::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.editor-area::-webkit-scrollbar-track,
+.m3-text-area::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.editor-area::-webkit-scrollbar-thumb,
+.m3-text-area::-webkit-scrollbar-thumb {
+    background: #2a2b2d;
+    border-radius: var(--m3-radius-full);
+}
+
+.editor-area::-webkit-scrollbar-thumb:hover,
+.m3-text-area::-webkit-scrollbar-thumb:hover {
+    background: var(--m3-surface-hover);
 }
 
 input,
@@ -118,9 +146,9 @@ select {
     background: var(--m3-surface);
     border: 1px solid var(--m3-border);
     border-radius: var(--m3-radius-xl);
-    padding: 2.5rem 2rem;
+    padding: 2.2rem 1.8rem;
     width: 100%;
-    max-width: 340px;
+    max-width: 320px;
     text-align: center;
 }
 
@@ -131,7 +159,7 @@ select {
 }
 
 .m3-card h2 {
-    font-size: 1.6rem;
+    font-size: 1.5rem;
     font-weight: 500;
     margin-bottom: 0.2rem;
 }
@@ -139,7 +167,7 @@ select {
 .m3-card p {
     color: var(--m3-text-muted);
     font-size: 0.85rem;
-    margin-bottom: 2rem;
+    margin-bottom: 1.8rem;
 }
 
 .auth-buttons {
@@ -150,12 +178,12 @@ select {
 
 .m3-button {
     width: 100%;
-    padding: 0.85rem;
+    padding: 0.8rem;
     border-radius: var(--m3-radius-full);
     border: 1px solid var(--m3-border);
     background: transparent;
     color: var(--m3-text);
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     font-weight: 500;
     cursor: pointer;
     display: flex;
@@ -420,17 +448,10 @@ select {
     background: #4a2b2b;
 }
 
-.list-container {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0.4rem;
-}
-
 .note-list {
     list-style: none;
 }
 
-/* 日付・アイコン付グループヘッダー */
 .date-group-header {
     font-size: 0.72rem;
     font-weight: 500;
@@ -489,7 +510,6 @@ select {
     gap: 0.3rem;
 }
 
-/* ★ ゴミ箱サブテキスト（移動日 ＆ 残り日数） */
 .note-item .sub-meta {
     font-size: 0.7rem;
     color: var(--m3-text-muted);
@@ -530,7 +550,7 @@ select {
     margin-top: 3rem;
 }
 
-/* ★ 一番下固定ゴミ箱バナー ＆ 上部シャドウフェード */
+/* 一番下固定ゴミ箱バナー ＆ シャドウフェード */
 .trash-bottom-banner {
     position: relative;
     background: var(--m3-danger-bg);
@@ -561,7 +581,7 @@ select {
     font-size: 15px;
 }
 
-/* Editor & Floating Info */
+/* Editor */
 .editor-area {
     flex: 1;
     display: flex;
@@ -640,7 +660,7 @@ select {
     opacity: 1;
 }
 
-/* Dialogs */
+/* ダイアログ */
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -657,44 +677,45 @@ select {
     background: var(--m3-surface);
     border: 1px solid var(--m3-border);
     border-radius: var(--m3-radius-xl);
-    padding: 1.8rem;
+    padding: 1.4rem;
     width: 100%;
-    max-width: 320px;
+    max-width: 290px;
     text-align: center;
 }
 
 .dialog-icon span {
-    font-size: 32px;
+    font-size: 28px;
     color: var(--m3-danger);
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.3rem;
 }
 
 .m3-dialog h3 {
-    font-size: 1.2rem;
+    font-size: 1.1rem;
     font-weight: 500;
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.3rem;
 }
 
 .m3-dialog p {
-    font-size: 0.88rem;
+    font-size: 0.82rem;
     color: var(--m3-text-muted);
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.2rem;
+    line-height: 1.4;
 }
 
 .dialog-actions {
     display: flex;
-    gap: 0.8rem;
+    gap: 0.6rem;
     justify-content: flex-end;
 }
 
 .m3-text-button {
     flex: 1;
-    padding: 0.6rem;
+    padding: 0.55rem;
     border-radius: var(--m3-radius-full);
     border: 1px solid var(--m3-border);
     background: transparent;
     color: var(--m3-text);
-    font-size: 0.88rem;
+    font-size: 0.85rem;
     font-weight: 500;
     cursor: pointer;
     transition: background 0.2s;
@@ -716,7 +737,7 @@ select {
 
 .settings-content {
     text-align: left;
-    margin-top: 1rem;
+    margin-top: 0.8rem;
 }
 
 .settings-row {
@@ -724,7 +745,7 @@ select {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 0.8rem;
-    font-size: 0.9rem;
+    font-size: 0.88rem;
 }
 
 .version-badge {
@@ -739,8 +760,8 @@ select {
 .settings-desc {
     font-size: 0.78rem;
     color: var(--m3-text-muted);
-    margin-bottom: 1.2rem;
-    line-height: 1.5;
+    margin-bottom: 1rem;
+    line-height: 1.4;
 }
 
 .btn-primary-full {
@@ -758,12 +779,12 @@ select {
     background: var(--m3-surface-container);
     border: 1px solid var(--m3-border);
     color: var(--m3-text);
-    padding: 0.7rem 1.2rem;
+    padding: 0.65rem 1.1rem;
     border-radius: var(--m3-radius-md);
     display: flex;
     align-items: center;
-    gap: 1.2rem;
-    font-size: 0.88rem;
+    gap: 1rem;
+    font-size: 0.85rem;
     z-index: 90;
 }
 
@@ -773,7 +794,7 @@ select {
     color: var(--m3-primary);
     font-weight: bold;
     cursor: pointer;
-    font-size: 0.88rem;
+    font-size: 0.85rem;
 }
 
 @media (min-width: 769px) {

@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, set, remove, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { getDatabase, ref, set, remove, get, update, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 let db = null;
 let currentUid = null;
@@ -40,5 +40,23 @@ self.onmessage = e => {
         if (!db) return;
         const noteRef = ref(db, `users/${currentUid}/notes/${id}`);
         remove(noteRef);
+    }
+
+    // ★ クラウド上のゴミ箱メモを一括完全削除
+    if (type === 'CLEAR_ALL_TRASH' && currentUid) {
+        if (!db) return;
+        const notesRef = ref(db, `users/${currentUid}/notes`);
+        get(notesRef).then(snapshot => {
+            const data = snapshot.val();
+            if (data) {
+                const updates = {};
+                Object.keys(data).forEach(key => {
+                    if (data[key].deletedAt) {
+                        updates[key] = null; // nullで一括削除
+                    }
+                });
+                update(notesRef, updates);
+            }
+        }).catch(err => console.error("Clear trash error:", err));
     }
 };

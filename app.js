@@ -85,7 +85,7 @@ let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
 
-// ★ iOS風スクロールバー監視
+// iOS風スクロールバー監視
 let scrollTimer = null;
 listContainer.addEventListener('scroll', () => {
     listContainer.classList.add('is-scrolling');
@@ -135,7 +135,7 @@ async function checkVersion() {
 }
 checkVersion();
 
-// Undo / Redo 多段階スタック
+// ★【Undo / Redo スタック（履歴を破壊しない独立設計）】
 let textHistory = [];
 let historyIndex = -1;
 let historyDebounceTimer = null;
@@ -222,7 +222,6 @@ function formatDateOnly(timestamp) {
     return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-// ゴミ箱の残り日数計算
 function getDaysRemaining(deletedAt) {
     if (!deletedAt) return 7;
     const elapsed = Date.now() - deletedAt;
@@ -303,7 +302,6 @@ function cleanExpiredTrash() {
     });
 }
 
-// ★ リスト描画（ピン留め最優先・ゴミ箱情報＆色なしアイコン化）
 function renderList(filter = '') {
     noteList.innerHTML = '';
     const now = Date.now();
@@ -370,7 +368,6 @@ function renderList(filter = '') {
         }
         contentDiv.appendChild(titleSpan);
 
-        // ★ ゴミ箱タブ時：移動日 ＆ 残り日数のサブテキスト追加
         if (currentTab === 'trash') {
             const subMeta = document.createElement('span');
             subMeta.className = 'sub-meta';
@@ -399,16 +396,22 @@ function renderList(filter = '') {
     });
 }
 
+// ★【超重要修復】同じメモが開かれ続けている場合はUndo/Redo履歴を消去・リセットしない！
 function selectNote(id, autoFocus = true) {
     cleanupEmptyNotes(id);
 
+    const isSameNote = (activeNoteId === id);
     activeNoteId = id;
     const n = currentNotes[id] || { body: '', pinned: false, updatedAt: Date.now() };
-    noteBody.value = n.body || '';
 
-    // ★ ゴミ箱の中なら「閲覧モード（編集不可）」
     const isTrashNote = !!n.deletedAt;
     noteBody.disabled = isTrashNote;
+
+    // ★ 別のメモに切り替わった時のみテキストとUndo履歴を初期化する！
+    if (!isSameNote) {
+        noteBody.value = n.body || '';
+        resetTextHistory(n.body || '');
+    }
 
     editorToolbar.classList.remove('hidden');
     charCount.classList.remove('hidden');
@@ -417,7 +420,7 @@ function selectNote(id, autoFocus = true) {
     if (isTrashNote) {
         btnRestoreTrash.classList.remove('hidden');
         btnPin.classList.add('hidden');
-        btnTrashIndicator.classList.remove('hidden'); // ゴミ箱マーク表示
+        btnTrashIndicator.classList.remove('hidden');
     } else {
         btnRestoreTrash.classList.add('hidden');
         btnTrashIndicator.classList.add('hidden');
@@ -425,7 +428,6 @@ function selectNote(id, autoFocus = true) {
         btnPin.classList.toggle('active', !!n.pinned);
     }
 
-    resetTextHistory(n.body || '');
     updateEditorFooter();
     renderList(searchInput.value);
 
@@ -506,6 +508,7 @@ btnDeleteCancel.onclick = () => deleteModal.classList.add('hidden');
 btnEmptyTrash.onclick = () => emptyTrashModal.classList.remove('hidden');
 btnEmptyCancel.onclick = () => emptyTrashModal.classList.add('hidden');
 
+// ★【一括削除修正】Workerへ一括クリア依頼を送信して完全にゴミ箱を空にする
 function executeEmptyTrash() {
     emptyTrashModal.classList.add('hidden');
 
@@ -513,9 +516,11 @@ function executeEmptyTrash() {
         if (n.deletedAt) {
             delete currentNotes[n.id];
             deleteLocalNote(n.id);
-            worker.postMessage({ type: 'PERMANENT_DELETE_NOTE', id: n.id });
         }
     });
+
+    // クラウド上でも一括削除
+    worker.postMessage({ type: 'CLEAR_ALL_TRASH' });
 
     if (activeNoteId && (!currentNotes[activeNoteId] || currentNotes[activeNoteId].deletedAt)) {
         activeNoteId = null;

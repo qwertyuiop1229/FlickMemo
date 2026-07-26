@@ -99,13 +99,11 @@
                     </button>
                 </div>
 
-                <!-- リスト容器 -->
                 <div class="list-container" id="list-container">
                     <ul id="note-list" class="note-list"></ul>
                     <div id="empty-state" class="empty-state hidden">メモがありません</div>
                 </div>
 
-                <!-- ★ サイドバー最下部固定：ゴミ箱警告メッセージ & フェード効果 -->
                 <div id="trash-notice" class="trash-bottom-banner hidden">
                     <div class="trash-fade-overlay"></div>
                     <div class="trash-banner-content">
@@ -128,11 +126,9 @@
                     </div>
 
                     <div class="toolbar-group">
-                        <!-- ピン留めボタン（通常時） -->
                         <button id="btn-pin" class="m3-icon-button" title="ピン留め">
                             <span class="material-symbols-outlined">push_pin</span>
                         </button>
-                        <!-- ゴミ箱マーク（ゴミ箱閲覧時） -->
                         <button id="btn-trash-indicator" class="m3-icon-button active hidden" title="ゴミ箱内のメモ（閲覧のみ）"
                             style="color:var(--m3-danger) !important; border-color:var(--m3-danger-border) !important; cursor:default;">
                             <span class="material-symbols-outlined">delete</span>
@@ -163,7 +159,7 @@
             <p>この操作は元に戻せません。</p>
             <div class="dialog-actions">
                 <button id="btn-delete-cancel" class="m3-text-button">キャンセル</button>
-                <button id="btn-delete-confirm" class="m3-text-button btn-danger">完全削除 (Enter)</button>
+                <button id="btn-delete-confirm" class="m3-text-button btn-danger">削除</button>
             </div>
         </div>
     </div>
@@ -173,10 +169,10 @@
         <div class="m3-dialog">
             <div class="dialog-icon"><span class="material-symbols-outlined">delete_sweep</span></div>
             <h3>ゴミ箱を空にしますか？</h3>
-            <p>ゴミ箱内のすべてのメモが永久に消去されます。</p>
+            <p>すべてのメモが永久に消去されます。</p>
             <div class="dialog-actions">
                 <button id="btn-empty-cancel" class="m3-text-button">キャンセル</button>
-                <button id="btn-empty-confirm" class="m3-text-button btn-danger">すべて削除 (Enter)</button>
+                <button id="btn-empty-confirm" class="m3-text-button btn-danger">すべて削除</button>
             </div>
         </div>
     </div>
@@ -211,7 +207,7 @@
                 </button>
             </div>
 
-            <div class="dialog-actions" style="margin-top:1.5rem;">
+            <div class="dialog-actions" style="margin-top:1.2rem;">
                 <button id="btn-settings-close" class="m3-text-button">閉じる</button>
             </div>
         </div>
