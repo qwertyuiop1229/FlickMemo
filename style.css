@@ -38,7 +38,7 @@ html {
     overflow: hidden;
 }
 
-/* ★ 上下の小さな三角矢印ボタン（アロー）を100%完全消去 */
+/* ★ 小さな三角矢印ボタン（アロー）を完全に消去 */
 ::-webkit-scrollbar-button,
 ::-webkit-scrollbar-button:single-button,
 ::-webkit-scrollbar-button:vertical,
@@ -51,7 +51,7 @@ html {
     background: transparent !important;
 }
 
-/* ★ 幅6px、平常時は完全透明。操作中のみ表示され、3秒後にじわっと消えるフェードスクロールバー */
+/* ★ アプリ全領域共通：平常時は完全透明、スクロール中・ホバー時に確実に浮かび上がる極細バー */
 ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -63,23 +63,27 @@ html {
 
 ::-webkit-scrollbar-thumb {
     background: transparent;
-    /* 平常時は100%完全透明 */
+    /* 平常時は100%透明 */
     border-radius: var(--m3-radius-full);
-    transition: background 0.5s var(--m3-motion-curve);
+    transition: background 0.3s ease;
 }
 
-/* 操作中 (.is-scrolling) のみ浮かび上がる */
+/* ★ スクロール操作中 (.is-scrolling) または マウスを乗せた時に100%確実に表示 */
 .is-scrolling::-webkit-scrollbar-thumb,
 .editor-area.is-scrolling::-webkit-scrollbar-thumb,
 .m3-text-area.is-scrolling::-webkit-scrollbar-thumb,
 .m3-code-view.is-scrolling::-webkit-scrollbar-thumb,
-.list-container.is-scrolling::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.22);
+.list-container.is-scrolling::-webkit-scrollbar-thumb,
+.editor-area:hover::-webkit-scrollbar-thumb,
+.m3-text-area:hover::-webkit-scrollbar-thumb,
+.m3-code-view:hover::-webkit-scrollbar-thumb,
+.list-container:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.28) !important;
 }
 
 ::-webkit-scrollbar-thumb:hover,
 ::-webkit-scrollbar-thumb:active {
-    background: rgba(255, 255, 255, 0.4) !important;
+    background: rgba(255, 255, 255, 0.5) !important;
 }
 
 /* Firefox用 */
@@ -632,7 +636,7 @@ select {
     font-weight: 400;
 }
 
-/* ★ テキストエリア：直接編集時もコード用フォントで美しく維持 */
+/* テキストエリア */
 .m3-text-area {
     flex: 1;
     background: transparent;
@@ -646,7 +650,7 @@ select {
     padding-bottom: 3.8rem !important;
 }
 
-/* ★ Google AI Studio スタイル コード表示ビュー */
+/* 全自動変身：Google AI Studio スタイル コード表示ビュー */
 .m3-code-view {
     flex: 1;
     overflow-y: auto;

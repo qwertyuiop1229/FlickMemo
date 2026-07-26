@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.10";
+const APP_VERSION = "1.1.11";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -96,7 +96,7 @@ let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
 
-// ★【3秒間停止で自然にフェードアウト消去する万能スクロール監視】
+// ★【3秒自動消去機能付きスクロールバー監視】
 function setupScrollFade(element) {
     if (!element) return;
     let timer = null;
@@ -104,10 +104,9 @@ function setupScrollFade(element) {
     const triggerShow = () => {
         element.classList.add('is-scrolling');
         clearTimeout(timer);
-        // 操作停止からピッタリ3秒(3000ms)後にスッとフェードアウト
         timer = setTimeout(() => {
             element.classList.remove('is-scrolling');
-        }, 3000);
+        }, 3000); // ピッタリ3秒で消去
     };
 
     element.addEventListener('scroll', triggerShow);
@@ -160,7 +159,7 @@ function getInitialsAvatar(name) {
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
-// ソースコード一括判定エンジン
+// ソースコード全体一括判定エンジン
 function isFullSourceCode(text) {
     if (!text || !text.trim()) return false;
 
@@ -186,16 +185,28 @@ function isFullSourceCode(text) {
     return matches >= 2;
 }
 
+// ★【超厳格な行判定】(ひらがな等日本語が含まれ、プログラミング予約語がない行は100%文章とみなす)
+function isPureTextLine(line) {
+    const l = line.trim();
+    if (!l) return false;
+
+    const hasJpChars = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(l);
+    const hasCodeKeywords = /\b(function|const|let|var|if|else|for|while|return|import|export|class|def|async|await)\b/.test(l);
+
+    // 日本語文字があり、かつ明確なプログラム予約語がない場合は 100% 地文テキスト！
+    return hasJpChars && !hasCodeKeywords;
+}
+
 function isCodeLine(line) {
     const l = line.trim();
     if (!l) return true;
+    if (isPureTextLine(l)) return false;
 
     if (l.startsWith('//') || l.startsWith('/*') || l.startsWith('*') || l.startsWith('#')) {
         return true;
     }
 
-    let cleanLine = l.replace(/\/\/.*$/, '');
-    cleanLine = cleanLine.replace(/#.*$/, '');
+    let cleanLine = l.replace(/\/\/.*$/, '').replace(/#.*$/, '');
     cleanLine = cleanLine.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
 
     const hasKeywords = /\b(import|export|const|let|var|function|async|await|return|class|if|else|for|while|def|console|document|window|MutationObserver|initializeApp|getAuth)\b/.test(cleanLine);
@@ -204,7 +215,7 @@ function isCodeLine(line) {
     return hasKeywords || hasSymbols;
 }
 
-// 全自動コード変身＆一括統合修正レンダラー
+// ★【全自動コード変身＆日本語完全切離し統合レンダラー】
 function updateAutoCodeRender(forceRender = false) {
     const text = noteBody.value || '';
     if (!text.trim()) {
@@ -254,15 +265,24 @@ function updateAutoCodeRender(forceRender = false) {
             html += `<p>${escapeHTML(remaining)}</p>`;
         }
     } else {
+        // 厳格な行別スキャン（日本語文章が出た瞬間にコード枠を切り離す！）
         const lines = text.split('\n');
         let currentBlock = [];
         let currentIsCode = null;
 
         lines.forEach((line) => {
-            const lineIsCode = isCodeLine(line);
+            const lineIsText = isPureTextLine(line);
+            const lineIsCode = !lineIsText && isCodeLine(line);
             const isBlank = !line.trim();
 
-            const targetType = isBlank ? (currentIsCode ?? 'TEXT') : (lineIsCode ? 'CODE' : 'TEXT');
+            let targetType = 'TEXT';
+            if (lineIsText) {
+                targetType = 'TEXT';
+            } else if (lineIsCode) {
+                targetType = 'CODE';
+            } else if (isBlank) {
+                targetType = currentIsCode ?? 'TEXT';
+            }
 
             if (currentIsCode === null) {
                 currentIsCode = targetType;
@@ -345,47 +365,41 @@ function updateAutoCodeRender(forceRender = false) {
     }
 }
 
-// ★【正確な文字位置計算 ＆ スクロールバー上ドラッグの誤作動防止】
+// ★【位置ズレ ＆ 最下部自動スクロールジャンプの完全消去】
 noteCodeView.onmouseup = (e) => {
-    // コピー・折りたたみボタン上は除外
     if (e.target.closest('.copy-code-btn') || e.target.closest('.collapse-code-btn')) return;
 
-    // 右端スクロールバー上のドラッグ操作は100%除外！
+    // 右端スクロールバー上のドラッグ操作は100%除外
     const rect = noteCodeView.getBoundingClientRect();
-    if (e.clientX >= rect.right - 12) return;
+    if (e.clientX >= rect.right - 14) return;
 
-    // テキスト範囲選択中（部分コピー中）は除外
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) {
         return;
     }
 
-    // クリックされた文字位置（オフセット）の割り出し
-    let clickCaretOffset = noteBody.value.length;
-    if (document.caretRangeFromPoint) {
-        const range = document.caretRangeFromPoint(e.clientX, e.clientY);
-        if (range && range.startContainer) {
-            const clickedTextNode = range.startContainer;
-            const clickedCharOffset = range.startOffset;
-            const fullText = noteBody.value;
-            const targetStr = clickedTextNode.textContent;
+    // 現在の閲覧スクロール量（Y位置）を正確に保持
+    const savedScrollTop = noteCodeView.scrollTop;
 
-            if (targetStr) {
-                const foundPos = fullText.indexOf(targetStr);
-                if (foundPos !== -1) {
-                    clickCaretOffset = foundPos + clickedCharOffset;
-                }
-            }
-        }
-    }
+    // クリックされた縦の画面比率から、テキスト全体の概算オフセット位置を計算
+    const clickRelativeY = (e.clientY - rect.top) + savedScrollTop;
+    const scrollHeight = noteCodeView.scrollHeight || 1;
+    const clickRatio = Math.min(1, Math.max(0, clickRelativeY / scrollHeight));
+    const targetCaretPos = Math.floor(noteBody.value.length * clickRatio);
 
-    // 切替 ＆ 正確なカーソル位置へセットしてフォーカス！
+    // 切替 ＆ 勝手なスクロール移動(preventScroll)をブロック！
     noteCodeView.classList.add('hidden');
     noteBody.classList.remove('hidden');
-    noteBody.focus();
+
+    // スクロール位置をそのまま移植！(画面が最下部に吹っ飛ぶのを防ぐ)
+    noteBody.scrollTop = savedScrollTop;
+
+    // 勝手なスクロールを禁止してフォーカス ＆ カーソル位置セット
+    noteBody.focus({ preventScroll: true });
     setTimeout(() => {
-        noteBody.setSelectionRange(clickCaretOffset, clickCaretOffset);
-    }, 20);
+        noteBody.setSelectionRange(targetCaretPos, targetCaretPos);
+        noteBody.scrollTop = savedScrollTop;
+    }, 10);
 };
 
 function buildCodeBlockHTML(lang, rawCode, index, isCollapsed) {
