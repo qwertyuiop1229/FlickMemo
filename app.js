@@ -2,13 +2,14 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithRedirect, getRedirectResult, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-    projectId: "YOUR_PROJECT",
-    storageBucket: "YOUR_PROJECT.appspot.com",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+    apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
+    authDomain: "flickmemo-qwe.firebaseapp.com",
+    databaseURL: "https://flickmemo-qwe-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "flickmemo-qwe",
+    storageBucket: "flickmemo-qwe.firebasestorage.app",
+    messagingSenderId: "998795111125",
+    appId: "1:998795111125:web:8e40535e8f2623283a105c",
+    measurementId: "G-ZDRMZ5VLY9"
 };
 
 const app = initializeApp(firebaseConfig);
