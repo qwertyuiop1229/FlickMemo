@@ -66,9 +66,6 @@
                 <button id="btn-settings-trigger" class="m3-icon-button" title="設定">
                     <span class="material-symbols-outlined">settings</span>
                 </button>
-                <button id="btn-logout-trigger" class="m3-icon-button" title="ログアウト">
-                    <span class="material-symbols-outlined">logout</span>
-                </button>
             </div>
         </header>
 
@@ -143,10 +140,8 @@
                     </div>
                 </div>
 
-                <!-- ★ メモの名前（タイトル）手動設定＆自動復帰入力欄 -->
                 <input type="text" id="note-title-input" class="m3-title-input hidden" placeholder="タイトル（未入力時は自動抽出）"
                     disabled>
-
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
 
                 <div id="date-display" class="date-display-floating hidden">--月--日</div>
@@ -194,7 +189,7 @@
         </div>
     </div>
 
-    <!-- ★ Discordスタイルの洗練設定モーダル -->
+    <!-- ★ Discordスタイルの洗練設定モーダル（PC：2カラム / スマホ：フルスクリーン） -->
     <div id="settings-modal" class="modal-overlay hidden">
         <div class="m3-dialog settings-dialog-discord">
             <div class="dialog-header">
@@ -228,7 +223,7 @@
                         <div class="discord-profile-card">
                             <div class="profile-banner"></div>
                             <div class="profile-header-content">
-                                <img id="user-avatar" class="discord-avatar" src="" alt="Avatar">
+                                <img id="user-avatar" class="discord-avatar" src="" alt="">
                                 <span id="user-provider-tag" class="provider-tag">Google</span>
                             </div>
                             <div class="profile-details">

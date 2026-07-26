@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.2";
+const APP_VERSION = "1.1.3";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -134,6 +134,13 @@ function renderAppVersion() {
     appVersionDisplay.textContent = `v${APP_VERSION}`;
 }
 
+// ★ アバター生成（フォールバック用インラインSVG）
+function getInitialsAvatar(name) {
+    const initial = (name || 'U').charAt(0).toUpperCase();
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#042f66" rx="32"/><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" fill="#a8c7fa" font-size="28" font-family="sans-serif" font-weight="bold">${initial}</text></svg>`;
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+
 // Undo / Redo 多段階スタック
 let textHistory = [];
 let historyIndex = -1;
@@ -196,16 +203,12 @@ btnRedo.onclick = () => {
     }
 };
 
-// ★【タイトル手動指定 ＆ 本文自動抽出の完璧両立ロジック】
+// ★ タイトル手動指定 ＆ 本文自動抽出
 function getNoteDisplayTitle(note) {
     if (!note) return "空のメモ";
-
-    // 手動カスタムタイトルがある場合
     if (note.title && note.title.trim()) {
         return note.title.trim();
     }
-
-    // 未入力の場合は本文の1行目を自動抽出
     const body = note.body || '';
     if (!body.trim()) return "空のメモ";
     const lines = body.split("\n").map(l => l.trim()).filter(l => l.length > 0);
@@ -422,7 +425,6 @@ function selectNote(id, autoFocus = true) {
         resetTextHistory(n.body || '');
     }
 
-    // タイトルプレースホルダーを動的に更新（未入力時に見出し表示）
     updateTitlePlaceholder(n);
 
     editorToolbar.classList.remove('hidden');
@@ -464,7 +466,6 @@ function updateTitlePlaceholder(note) {
     noteTitleInput.placeholder = autoTitle === "空のメモ" ? "タイトル（未入力時は自動抽出）" : `自動: ${autoTitle}`;
 }
 
-// ★ タイトル入力ハンドラ
 noteTitleInput.oninput = () => {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const val = noteTitleInput.value;
@@ -696,7 +697,7 @@ window.addEventListener('keydown', e => {
     }
 });
 
-// モーダル制御
+// モーダル・ログアウト
 btnLogoutTrigger.onclick = () => logoutModal.classList.remove('hidden');
 btnModalCancel.onclick = () => logoutModal.classList.add('hidden');
 btnModalConfirm.onclick = () => {
@@ -704,7 +705,7 @@ btnModalConfirm.onclick = () => {
     signOut(auth);
 };
 
-// ★ Discord風設定モーダルのタブ切り替え機能
+// ★ Discord風設定タブ切り替え
 document.querySelectorAll('.settings-tab-btn').forEach(btn => {
     btn.onclick = () => {
         document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.remove('active'));
@@ -756,7 +757,7 @@ async function loginWithProvider(provider) {
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
 document.getElementById('btn-ms').onclick = () => loginWithProvider(new OAuthProvider('microsoft.com'));
 
-// ★【ユーザーアカウント情報の高精度取得 ＆ ディスコード風表示】
+// ★【ユーザーアカウント情報の超高精度取得 ＆ 安全アバターフォールバック】
 onAuthStateChanged(auth, user => {
     splashScreen.classList.add('hidden');
     if (user) {
@@ -764,20 +765,29 @@ onAuthStateChanged(auth, user => {
         appContainer.classList.remove('hidden');
         setStatus('synced', 'クラウド同期完了');
 
-        const name = user.displayName || user.email?.split('@')[0] || 'ユーザー';
-        const email = user.email || 'メールアドレス非公開';
-        const photo = user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=a8c7fa&color=042f66`;
+        const nameText = user.displayName || user.email?.split('@')[0] || 'ユーザー';
+        const emailText = user.email || 'メールアドレス非公開';
 
+        userName.textContent = nameText;
+        userEmail.textContent = emailText;
+
+        // アバター画像の確実な読み込み＆失敗時フォールバック
+        if (user.photoURL) {
+            userAvatar.src = user.photoURL;
+            userAvatar.onerror = () => {
+                userAvatar.src = getInitialsAvatar(nameText);
+            };
+        } else {
+            userAvatar.src = getInitialsAvatar(nameText);
+        }
+
+        // プロバイダ（Google / Microsoft）判別
         let providerName = "Google";
         if (user.providerData && user.providerData[0]) {
             const pId = user.providerData[0].providerId;
             if (pId.includes('microsoft')) providerName = "Microsoft";
             if (pId.includes('google')) providerName = "Google";
         }
-
-        userName.textContent = name;
-        userEmail.textContent = email;
-        userAvatar.src = photo;
         if (userProviderTag) userProviderTag.textContent = providerName;
 
         worker.postMessage({ type: 'SET_USER', uid: user.uid });

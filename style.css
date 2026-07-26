@@ -38,14 +38,13 @@ html {
     overflow: hidden;
 }
 
-/* スクロールバーの小さな三角アローボタンを完全に消去 */
 ::-webkit-scrollbar-button {
     display: none !important;
     width: 0;
     height: 0;
 }
 
-/* メモ一覧（サイドバー）：iOS風 極細スクロールバー */
+/* メモ一覧：iOS風 極細スクロールバー */
 .list-container {
     flex: 1;
     min-height: 0;
@@ -74,7 +73,7 @@ html {
     background: rgba(255, 255, 255, 0.2);
 }
 
-/* メモ内（エディタエリア）：独自UIスクロールバー */
+/* エディタ：独自UIスクロールバー */
 .editor-area::-webkit-scrollbar,
 .m3-text-area::-webkit-scrollbar {
     width: 6px;
@@ -610,7 +609,7 @@ select {
     gap: 0.4rem;
 }
 
-/* ★ 洗練されたタイトル入力欄 */
+/* タイトル入力欄 */
 .m3-title-input {
     background: transparent;
     border: none;
@@ -762,23 +761,23 @@ select {
     background: #4a2b2b;
 }
 
-/* ★ Discordスタイルの洗練モーダル */
+/* ★【本物のDiscord風 ✕ Material 3 洗練設定モーダル】 */
 .settings-dialog-discord {
-    max-width: 520px !important;
+    max-width: 620px !important;
     width: 90vw;
+    height: 480px;
     text-align: left;
     padding: 0 !important;
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    max-height: 85vh;
 }
 
 .dialog-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 1.2rem;
+    padding: 0.8rem 1.2rem;
     border-bottom: 1px solid var(--m3-border);
     background: var(--m3-surface-container);
 }
@@ -790,7 +789,7 @@ select {
 }
 
 .dialog-title-group h3 {
-    font-size: 1.05rem;
+    font-size: 1rem;
     font-weight: 500;
 }
 
@@ -800,31 +799,33 @@ select {
     overflow: hidden;
 }
 
-/* 左ナビタブ */
+/* 左側ナビゲーション（Discordスタイル） */
 .settings-nav {
-    width: 150px;
+    width: 160px;
     background: var(--m3-surface-container);
     border-right: 1px solid var(--m3-border);
     padding: 0.8rem 0.5rem;
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
+    flex-shrink: 0;
 }
 
 .settings-tab-btn {
     background: transparent;
     border: none;
     color: var(--m3-text-muted);
-    padding: 0.6rem 0.8rem;
+    padding: 0.65rem 0.8rem;
     border-radius: var(--m3-radius-md);
     font-size: 0.82rem;
     font-weight: 500;
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.6rem;
     transition: all 0.15s;
     text-align: left;
+    width: 100%;
 }
 
 .settings-tab-btn span {
@@ -842,10 +843,10 @@ select {
     font-weight: 500;
 }
 
-/* 右コンテンツ */
+/* 右側メインコンテンツ */
 .settings-content-area {
     flex: 1;
-    padding: 1.2rem;
+    padding: 1.2rem 1.5rem;
     overflow-y: auto;
     background: var(--m3-bg);
 }
@@ -866,21 +867,21 @@ select {
 }
 
 .profile-banner {
-    height: 60px;
+    height: 64px;
     background: linear-gradient(135deg, #042f66 0%, #1a73e8 100%);
 }
 
 .profile-header-content {
     padding: 0 1rem;
-    margin-top: -24px;
+    margin-top: -26px;
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
 }
 
 .discord-avatar {
-    width: 52px;
-    height: 52px;
+    width: 56px;
+    height: 56px;
     border-radius: 50%;
     border: 3px solid var(--m3-surface);
     background: var(--m3-surface-container);
@@ -902,9 +903,10 @@ select {
 }
 
 .profile-name {
-    font-size: 1rem;
+    font-size: 1.05rem;
     font-weight: 700;
     color: var(--m3-text);
+    margin-bottom: 0.1rem;
 }
 
 .profile-email {
@@ -942,6 +944,9 @@ select {
     border-radius: var(--m3-radius-full);
     font-size: 0.8rem;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
 }
 
 .badge-active {
@@ -1009,6 +1014,7 @@ select {
     }
 }
 
+/* ★ スマホ（768px以下）：画面全域を使ったアプリ専用フルスクリーン設定画面 */
 @media (max-width: 768px) {
     .sidebar {
         width: 100%;
@@ -1037,7 +1043,18 @@ select {
         z-index: 3;
     }
 
-    /* スマホでの設定画面レスポンシブ切り替え */
+    /* スマホフルスクリーン設定ダイアログ */
+    .settings-dialog-discord {
+        position: fixed;
+        inset: 0;
+        width: 100vw !important;
+        height: 100dvh !important;
+        max-width: 100vw !important;
+        max-height: 100dvh !important;
+        border-radius: 0 !important;
+        border: none !important;
+    }
+
     .discord-settings-layout {
         flex-direction: column;
     }
@@ -1055,6 +1072,6 @@ select {
         flex: 1;
         justify-content: center;
         font-size: 0.78rem;
-        white-space: nowrap;
+        padding: 0.5rem;
     }
 }
