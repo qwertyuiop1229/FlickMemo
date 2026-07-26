@@ -1,43 +1,63 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithRedirect, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, signInWithRedirect, getRedirectResult, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-// ⚠️ ここにご自身のFirebase設定を貼り付けてください
 const firebaseConfig = {
-    apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
-    authDomain: "flickmemo-qwe.firebaseapp.com",
-    projectId: "flickmemo-qwe",
-    storageBucket: "flickmemo-qwe.firebasestorage.app",
-    messagingSenderId: "998795111125",
-    appId: "1:998795111125:web:8e40535e8f2623283a105c",
-    measurementId: "G-ZDRMZ5VLY9",
-    databaseURL: "https://flickmemo-qwe-default-rtdb.asia-southeast1.firebasedatabase.app/"
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+    projectId: "YOUR_PROJECT",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
 };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-// Web Worker (バックグラウンド同期エンジン) の起動
 const worker = new Worker('worker.js', { type: 'module' });
 worker.postMessage({ type: 'INIT_FIREBASE', config: firebaseConfig });
 
 // DOM要素
 const authContainer = document.getElementById('auth-container');
 const appContainer = document.getElementById('app-container');
+const mainLayout = document.getElementById('main-layout');
 const noteList = document.getElementById('note-list');
 const noteTitle = document.getElementById('note-title');
 const noteBody = document.getElementById('note-body');
 const statusBar = document.getElementById('status-bar');
+const btnBack = document.getElementById('btn-back');
+const searchInput = document.getElementById('search-input');
+const authLoading = document.getElementById('auth-loading');
+const authButtons = document.getElementById('auth-buttons');
 
 let currentNotes = {};
 let activeNoteId = null;
 let db = null;
 
-// --- 1. IndexedDB (ローカル高速DB) の初期化 ---
-const dbReq = indexedDB.open('FastNoteDB', 1);
+// ★【重要】リダイレクトからの復帰ログイン処理の受信
+authLoading.classList.remove('hidden');
+authButtons.classList.add('hidden');
+
+getRedirectResult(auth)
+    .then((result) => {
+        if (result?.user) {
+            console.log("Redirect login successful:", result.user);
+        }
+    })
+    .catch((error) => {
+        console.error("Redirect login error:", error);
+    })
+    .finally(() => {
+        authLoading.classList.add('hidden');
+        authButtons.classList.remove('hidden');
+    });
+
+// IndexedDB ロード
+const dbReq = indexedDB.open('FlickMemoDB', 1);
 dbReq.onupgradeneeded = e => e.target.result.createObjectStore('notes', { keyPath: 'id' });
 dbReq.onsuccess = e => {
     db = e.target.result;
-    loadLocalNotes(); // 起動時：0.01秒でローカルデータを描画
+    loadLocalNotes();
 };
 
 function loadLocalNotes() {
@@ -57,11 +77,11 @@ function saveLocalNote(note) {
     tx.objectStore('notes').put(note);
 }
 
-// --- 2. 画面のレンダリング ---
 function renderList(filter = '') {
     noteList.innerHTML = '';
     Object.values(currentNotes)
         .filter(n => (n.title || '').includes(filter) || (n.body || '').includes(filter))
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
         .forEach(n => {
             const li = document.createElement('li');
             li.className = `note-item ${n.id === activeNoteId ? 'active' : ''}`;
@@ -78,10 +98,17 @@ function selectNote(id) {
     noteBody.value = n.body || '';
     noteTitle.disabled = false;
     noteBody.disabled = false;
-    renderList();
+    renderList(searchInput.value);
+
+    mainLayout.classList.add('view-editor');
+    btnBack.classList.remove('hidden');
 }
 
-// --- 3. メモの変更検知＆Worker経由でクラウド保存 ---
+btnBack.onclick = () => {
+    mainLayout.classList.remove('view-editor');
+    btnBack.classList.add('hidden');
+};
+
 function handleInput() {
     if (!activeNoteId) return;
     const updatedNote = {
@@ -92,14 +119,13 @@ function handleInput() {
     };
     currentNotes[activeNoteId] = updatedNote;
     saveLocalNote(updatedNote);
-    renderList();
-
-    // 裏のWorkerに同期依頼（リアルタイムにFirebaseへ）
+    renderList(searchInput.value);
     worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
 }
 
 noteTitle.oninput = handleInput;
 noteBody.oninput = handleInput;
+searchInput.oninput = () => renderList(searchInput.value);
 
 document.getElementById('btn-new').onclick = () => {
     const newId = 'note_' + Date.now();
@@ -109,7 +135,7 @@ document.getElementById('btn-new').onclick = () => {
     worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[newId] });
 };
 
-// --- 4. 認証処理 ---
+// 認証アクション
 document.getElementById('btn-google').onclick = () => signInWithRedirect(auth, new GoogleAuthProvider());
 document.getElementById('btn-ms').onclick = () => signInWithRedirect(auth, new OAuthProvider('microsoft.com'));
 document.getElementById('btn-logout').onclick = () => signOut(auth);
@@ -118,7 +144,7 @@ onAuthStateChanged(auth, user => {
     if (user) {
         authContainer.classList.add('hidden');
         appContainer.classList.remove('hidden');
-        statusBar.textContent = "同期中...";
+        statusBar.textContent = "同期中";
         worker.postMessage({ type: 'SET_USER', uid: user.uid });
     } else {
         authContainer.classList.remove('hidden');
@@ -127,7 +153,6 @@ onAuthStateChanged(auth, user => {
     }
 });
 
-// Workerからの同期完了通知の受取
 worker.onmessage = e => {
     if (e.data.type === 'SYNC_NOTES') {
         const remoteNotes = e.data.notes || {};
@@ -135,15 +160,14 @@ worker.onmessage = e => {
             currentNotes[n.id] = n;
             saveLocalNote(n);
         });
-        renderList();
+        renderList(searchInput.value);
         if (activeNoteId && currentNotes[activeNoteId]) selectNote(activeNoteId);
         statusBar.textContent = "同期完了";
     }
 };
 
-// --- 5. ★ご要望の「10秒後に初期同期完了でメモリ極限解放」 ---
+// 10秒後のメモリ極限クリーンアップ
 setTimeout(() => {
-    statusBar.textContent = "⚡ 省メモリモード稼働中";
-    // 不要になった接続キャッシュや一時バッファを強制破棄（ガベージコレクション促進）
+    statusBar.textContent = "⚡ 省メモリモード";
     if (window.gc) window.gc();
 }, 10000);
