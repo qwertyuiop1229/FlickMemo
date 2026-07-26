@@ -45,7 +45,7 @@ html {
     height: 0;
 }
 
-/* ★ 全領域共通：幅6px、平常時は完全透明、操作時のみ表示され3秒後にじわっと消えるフェードスクロールバー */
+/* ★ アプリ全領域共通：幅6px、常時薄く見えてホバーやドラッグで強調される洗練スクロールバー */
 ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -56,31 +56,22 @@ html {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: transparent;
-    /* 平常時は完全透明 */
+    background: rgba(255, 255, 255, 0.15);
+    /* 常に少し見えているためドラッグで掴みやすい */
     border-radius: var(--m3-radius-full);
-    transition: background 0.6s var(--m3-motion-curve);
-    /* 消える時はじわっと0.6秒かけて滑らかにフェードアウト */
-}
-
-/* 操作中 (.is-scrolling) のみ浮かび上がる */
-.is-scrolling::-webkit-scrollbar-thumb,
-.editor-area.is-scrolling::-webkit-scrollbar-thumb,
-.m3-text-area.is-scrolling::-webkit-scrollbar-thumb,
-.m3-code-view.is-scrolling::-webkit-scrollbar-thumb,
-.list-container.is-scrolling::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.22);
+    transition: background 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover,
 ::-webkit-scrollbar-thumb:active {
-    background: rgba(255, 255, 255, 0.4) !important;
+    background: rgba(255, 255, 255, 0.35);
+    /* マウス操作・ドラッグ時 */
 }
 
 /* Firefox用 */
 * {
     scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }
 
 input,
@@ -648,6 +639,8 @@ select {
     font-size: 1rem;
     line-height: 1.7;
     cursor: text;
+    user-select: text;
+    /* 部分コピー用のドラッグ選択を確実に許可 */
 }
 
 .m3-code-view p {

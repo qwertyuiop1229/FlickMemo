@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.1.9";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -162,8 +162,8 @@ function getInitialsAvatar(name) {
 // ★【ソースコード全体一括判定エンジン】(app.jsや本格スクリプトを100%自動認識)
 function isFullSourceCode(text) {
     if (!text || !text.trim()) return false;
-    if (/```[\s\S]*?```/.test(text)) return true;
 
+    // 決定的なプログラム指標
     const indicators = [
         /\bimport\s+[\s\S]*?\s+from\s+["']/,
         /\bexport\s+(default|const|let|var|function|class)\b/,
@@ -205,8 +205,8 @@ function isCodeLine(line) {
     return hasKeywords || hasSymbols;
 }
 
-// ★【全自動コード変身＆部分コピー保護付き統合レンダラー】
-function updateAutoCodeRender() {
+// ★【全自動コード変身＆一括統合修正レンダラー】
+function updateAutoCodeRender(forceRender = false) {
     const text = noteBody.value || '';
     if (!text.trim()) {
         noteBody.classList.remove('hidden');
@@ -224,38 +224,36 @@ function updateAutoCodeRender() {
     let html = '';
     let blockIndex = 0;
 
-    if (isFullCode || hasMarkdownBlock) {
+    if (isFullCode) {
+        // app.js 等の本格コード全文の一括カード化（テンプレ文字列が含まれていても絶対に崩れない）
         hasAnyCode = true;
+        const isCollapsed = !!collapsedState[`block_0`];
+        html = buildCodeBlockHTML('javascript', text.trim(), 0, isCollapsed);
+    } else if (hasMarkdownBlock) {
+        hasAnyCode = true;
+        const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+        let lastIndex = 0;
+        let match;
 
-        if (hasMarkdownBlock) {
-            const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
-            let lastIndex = 0;
-            let match;
-
-            while ((match = codeBlockRegex.exec(text)) !== null) {
-                const plainText = text.substring(lastIndex, match.index);
-                if (plainText.trim()) {
-                    html += `<p>${escapeHTML(plainText)}</p>`;
-                }
-
-                const lang = (match[1] || 'javascript').toLowerCase();
-                const rawCode = match[2].trim();
-                const isCollapsed = !!collapsedState[`block_${blockIndex}`];
-
-                html += buildCodeBlockHTML(lang, rawCode, blockIndex, isCollapsed);
-                blockIndex++;
-
-                lastIndex = match.index + match[0].length;
+        while ((match = codeBlockRegex.exec(text)) !== null) {
+            const plainText = text.substring(lastIndex, match.index);
+            if (plainText.trim()) {
+                html += `<p>${escapeHTML(plainText)}</p>`;
             }
 
-            const remaining = text.substring(lastIndex);
-            if (remaining.trim()) {
-                html += `<p>${escapeHTML(remaining)}</p>`;
-            }
-        } else {
-            // app.js 等の本格コード全体の1括自動コードカード化
-            const isCollapsed = !!collapsedState[`block_0`];
-            html = buildCodeBlockHTML('javascript', text.trim(), 0, isCollapsed);
+            const lang = (match[1] || 'javascript').toLowerCase();
+            const rawCode = match[2].trim();
+            const isCollapsed = !!collapsedState[`block_${blockIndex}`];
+
+            html += buildCodeBlockHTML(lang, rawCode, blockIndex, isCollapsed);
+            blockIndex++;
+
+            lastIndex = match.index + match[0].length;
+        }
+
+        const remaining = text.substring(lastIndex);
+        if (remaining.trim()) {
+            html += `<p>${escapeHTML(remaining)}</p>`;
         }
     } else {
         // 行スキャン統合
@@ -306,7 +304,8 @@ function updateAutoCodeRender() {
         }
     }
 
-    if (hasAnyCode && document.activeElement !== noteBody) {
+    // ★ コピペ直後(forceRender) または フォーカスが外れたタイミングでコードカード表示
+    if (hasAnyCode && (forceRender || document.activeElement !== noteBody)) {
         noteCodeView.innerHTML = html;
         if (window.Prism) {
             Prism.highlightAllUnder(noteCodeView);
@@ -350,17 +349,15 @@ function updateAutoCodeRender() {
     }
 }
 
-// ★【部分コピー（ドラッグ選択）を保護しつつ、単クリックでスムーズ編集移行】
+// ★ 部分コピー（ドラッグ選択）を保護しつつ、単クリックでスムーズ編集移行
 noteCodeView.onmouseup = (e) => {
     if (e.target.closest('.copy-code-btn') || e.target.closest('.collapse-code-btn')) return;
 
-    // ユーザーがテキストをマウスでドラッグ（範囲選択）している場合は画面切替をキャンセル！（部分コピー可能に）
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) {
         return;
     }
 
-    // 単クリック時のみ編集モードへ切り替え
     noteCodeView.classList.add('hidden');
     noteBody.classList.remove('hidden');
     noteBody.focus();
@@ -440,7 +437,7 @@ function applyUndoRedoText(targetText) {
     saveLocalNote(updatedNote);
     updateEditorFooter();
     renderList(searchInput.value);
-    updateAutoCodeRender();
+    updateAutoCodeRender(true);
     setStatus('saving', 'クラウドに保存中...');
     worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
 }
@@ -937,6 +934,14 @@ function handleInput() {
 }
 
 noteBody.oninput = handleInput;
+
+// ★【コピペ(paste)した瞬間に即座に自動コードカード化】
+noteBody.addEventListener('paste', () => {
+    setTimeout(() => {
+        handleInput();
+        updateAutoCodeRender(true);
+    }, 50);
+});
 
 noteBody.onblur = () => {
     updateAutoCodeRender();
