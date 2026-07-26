@@ -1,8 +1,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-// ★【重要】アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.9";
+// ★【重要】このファイル(app.js)自体に直埋めされたバージョン定数
+// デプロイコマンド(npm run deploy)時に bump.js がこの行を直接書き換えます。
+const APP_VERSION = "1.3.10";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -53,7 +54,7 @@ const btnNew = document.getElementById('btn-new');
 const btnEmptyTrash = document.getElementById('btn-empty-trash');
 const trashNotice = document.getElementById('trash-notice');
 
-// モーダル・トースト
+// モーダル・ユーザー情報
 const tabNotes = document.getElementById('tab-notes');
 const tabTrash = document.getElementById('tab-trash');
 const deleteModal = document.getElementById('delete-modal');
@@ -74,6 +75,9 @@ const btnSettingsTrigger = document.getElementById('btn-settings-trigger');
 const btnSettingsClose = document.getElementById('btn-settings-close');
 const btnUpdateCheck = document.getElementById('btn-update-check');
 const appVersionDisplay = document.getElementById('app-version-display');
+const userAvatar = document.getElementById('user-avatar');
+const userName = document.getElementById('user-name');
+const userEmail = document.getElementById('user-email');
 
 const toastMsg = document.getElementById('toast-msg');
 const toastText = document.getElementById('toast-text');
@@ -87,7 +91,7 @@ let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
 
-// iOS風スクロールバーのクラス切り替え
+// iOS風スクロールバー監視
 let scrollTimer = null;
 listContainer.addEventListener('scroll', () => {
     listContainer.classList.add('is-scrolling');
@@ -123,11 +127,10 @@ function showToast(msg, actionCallback = null) {
 window.addEventListener('online', () => setStatus('saving', 'オンライン復帰・同期中...'));
 window.addEventListener('offline', () => setStatus('offline', 'オフライン (ローカル保存済み)'));
 
-// ★【直埋めバージョン表示】(キャッシュが破棄されて最新コードが届いたか一目で判定)
+// ★ 通信(fetch)は一切行わず、今ブラウザで動いているこのコードの定数APP_VERSIONのみを表示
 function renderAppVersion() {
     appVersionDisplay.textContent = `v${APP_VERSION}`;
 }
-renderAppVersion();
 
 // Undo / Redo 多段階スタック
 let textHistory = [];
@@ -649,12 +652,14 @@ btnModalConfirm.onclick = () => {
     signOut(auth);
 };
 
+// ★ 設定モーダル開いた際も通信は一切せず、純粋に画面のメモリ(APP_VERSION)を表示するだけ
 btnSettingsTrigger.onclick = () => {
     renderAppVersion();
     settingsModal.classList.remove('hidden');
 };
 btnSettingsClose.onclick = () => settingsModal.classList.add('hidden');
 
+// 強制キャッシュクリア ＆ リロード
 btnUpdateCheck.onclick = async () => {
     setStatus('saving', 'キャッシュをクリア中...');
     if ('caches' in window) {
@@ -690,6 +695,15 @@ onAuthStateChanged(auth, user => {
         authContainer.classList.add('hidden');
         appContainer.classList.remove('hidden');
         setStatus('synced', 'クラウド同期完了');
+
+        userName.textContent = user.displayName || 'ユーザー';
+        userEmail.textContent = user.email || '';
+        if (user.photoURL) {
+            userAvatar.src = user.photoURL;
+        } else {
+            userAvatar.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="%238e918f"><circle cx="12" cy="8" r="4"/><path d="M12 14c-6.1 0-8 4-8 4v2h16v-2s-1.9-4-8-4z"/></svg>';
+        }
+
         worker.postMessage({ type: 'SET_USER', uid: user.uid });
     } else {
         authContainer.classList.remove('hidden');

@@ -190,25 +190,51 @@
         </div>
     </div>
 
-    <!-- 設定ダイアログ -->
+    <!-- ★ 洗練された多機能設定ダイアログ (Google/Notion風) -->
     <div id="settings-modal" class="modal-overlay hidden">
-        <div class="m3-dialog">
-            <div class="dialog-icon"><span class="material-symbols-outlined">settings</span></div>
-            <h3>アプリ設定</h3>
-
-            <div class="settings-content">
-                <div class="settings-row">
-                    <span>現在のバージョン</span>
-                    <span id="app-version-display" class="version-badge">v...</span>
-                </div>
-                <p class="settings-desc">最新版に更新すると古いキャッシュを破棄し、常に最新のコードで起動します。</p>
-                <button id="btn-update-check" class="m3-button btn-primary-full">
-                    <span class="material-symbols-outlined">refresh</span> 最新版に更新・キャッシュクリア
+        <div class="m3-dialog settings-dialog">
+            <div class="dialog-header">
+                <h3>設定</h3>
+                <button id="btn-settings-close" class="m3-icon-button" title="閉じる">
+                    <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
 
-            <div class="dialog-actions" style="margin-top:1.2rem;">
-                <button id="btn-settings-close" class="m3-text-button">閉じる</button>
+            <div class="settings-body">
+                <!-- 1. アカウントセクション -->
+                <div class="settings-section">
+                    <div class="section-title">アカウント</div>
+                    <div class="account-card">
+                        <img id="user-avatar" class="user-avatar"
+                            src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+                            alt="ユーザー">
+                        <div class="user-info">
+                            <div id="user-name" class="user-name">ユーザー名</div>
+                            <div id="user-email" class="user-email">email@example.com</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. システムセクション -->
+                <div class="settings-section">
+                    <div class="section-title">システム</div>
+                    <div class="settings-item-row">
+                        <span>リアルタイム自動同期</span>
+                        <span class="badge-active">有効</span>
+                    </div>
+                </div>
+
+                <!-- 3. バージョン ＆ 更新確認 -->
+                <div class="settings-section">
+                    <div class="section-title">アプリ情報</div>
+                    <div class="settings-item-row">
+                        <span>現在のバージョン</span>
+                        <span id="app-version-display" class="version-badge">v...</span>
+                    </div>
+                    <button id="btn-update-check" class="m3-button btn-primary-full" style="margin-top:0.8rem;">
+                        <span class="material-symbols-outlined">refresh</span> 更新を確認
+                    </button>
+                </div>
             </div>
         </div>
     </div>
