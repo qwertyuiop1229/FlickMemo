@@ -74,7 +74,7 @@
 
         <div class="main-layout" id="main-layout">
             <!-- サイドバー -->
-            <aside class="sidebar">
+            <aside class="sidebar" id="sidebar-container">
                 <div class="sidebar-tabs">
                     <button id="tab-notes" class="tab-btn active">
                         <span class="material-symbols-outlined">description</span> メモ
@@ -85,12 +85,24 @@
                 </div>
 
                 <div class="sidebar-top">
+                    <!-- ゴミ箱モード用警告案内 -->
+                    <div id="trash-notice" class="trash-notice-banner hidden">
+                        <span class="material-symbols-outlined">info</span> 7日経過すると自動削除されます
+                    </div>
+
                     <div class="m3-search-bar">
                         <span class="material-symbols-outlined">search</span>
                         <input type="text" id="search-input" placeholder="検索...">
                     </div>
+
+                    <!-- 通常時：新しいメモボタン -->
                     <button id="btn-new" class="m3-fab-button">
                         <span class="material-symbols-outlined">add</span> 新しいメモ
+                    </button>
+
+                    <!-- ゴミ箱時：ゴミ箱を空にするボタン -->
+                    <button id="btn-empty-trash" class="m3-fab-button btn-danger-fab hidden">
+                        <span class="material-symbols-outlined">delete_sweep</span> ゴミ箱を空にする
                     </button>
                 </div>
 
@@ -132,7 +144,7 @@
         </div>
     </div>
 
-    <!-- 削除確認ダイアログ -->
+    <!-- 単一メモ削除ダイアログ -->
     <div id="delete-modal" class="modal-overlay hidden">
         <div class="m3-dialog">
             <div class="dialog-icon"><span class="material-symbols-outlined">delete</span></div>
@@ -141,6 +153,19 @@
             <div class="dialog-actions">
                 <button id="btn-delete-cancel" class="m3-text-button">キャンセル</button>
                 <button id="btn-delete-confirm" class="m3-text-button btn-danger">削除 (Enter)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ゴミ箱を空にするダイアログ -->
+    <div id="empty-trash-modal" class="modal-overlay hidden">
+        <div class="m3-dialog">
+            <div class="dialog-icon"><span class="material-symbols-outlined">delete_forever</span></div>
+            <h3>ゴミ箱を空にしますか？</h3>
+            <p>ゴミ箱内のすべてのメモが永久に消去されます。この操作は元に戻せません。</p>
+            <div class="dialog-actions">
+                <button id="btn-empty-cancel" class="m3-text-button">キャンセル</button>
+                <button id="btn-empty-confirm" class="m3-text-button btn-danger">すべて削除 (Enter)</button>
             </div>
         </div>
     </div>
@@ -169,10 +194,7 @@
                     <span>現在のバージョン</span>
                     <span id="app-version-display" class="version-badge">v...</span>
                 </div>
-                <div id="update-notice" class="update-notice hidden">
-                    <span>🆕 新しいバージョンが公開されています！</span>
-                </div>
-                <p class="settings-desc">「更新を確認」を押すと、最新のコードを取得してキャッシュを破棄し、自動再読み込みします。</p>
+                <p class="settings-desc">最新版に更新すると古いキャッシュを破棄し、常に最新のコードで起動します。</p>
                 <button id="btn-update-check" class="m3-button btn-primary-full">
                     <span class="material-symbols-outlined">refresh</span> 最新版に更新・キャッシュクリア
                 </button>

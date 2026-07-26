@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-// ⚠️ ご自身のFirebaseキーを入れてください
+// ⚠️ ご自身のFirebaseキー情報を入力してください
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
     authDomain: "flickmemo-qwe.web.app",
@@ -44,7 +44,11 @@ const btnUndo = document.getElementById('btn-undo');
 const btnRedo = document.getElementById('btn-redo');
 const btnRestoreTrash = document.getElementById('btn-restore-trash');
 
-// モーダル・タブ
+const btnNew = document.getElementById('btn-new');
+const btnEmptyTrash = document.getElementById('btn-empty-trash');
+const trashNotice = document.getElementById('trash-notice');
+
+// モーダル
 const tabNotes = document.getElementById('tab-notes');
 const tabTrash = document.getElementById('tab-trash');
 const deleteModal = document.getElementById('delete-modal');
@@ -52,6 +56,10 @@ const deleteModalTitle = document.getElementById('delete-modal-title');
 const deleteModalMsg = document.getElementById('delete-modal-msg');
 const btnDeleteCancel = document.getElementById('btn-delete-cancel');
 const btnDeleteConfirm = document.getElementById('btn-delete-confirm');
+
+const emptyTrashModal = document.getElementById('empty-trash-modal');
+const btnEmptyCancel = document.getElementById('btn-empty-cancel');
+const btnEmptyConfirm = document.getElementById('btn-empty-confirm');
 
 const logoutModal = document.getElementById('logout-modal');
 const btnLogoutTrigger = document.getElementById('btn-logout-trigger');
@@ -103,10 +111,11 @@ async function checkVersion() {
 }
 checkVersion();
 
-// Undo / Redo
+// ★【多段階 Undo / Redo 記憶スタック】（入力停止や改行でスマートに記録）
 let textHistory = [];
 let historyIndex = -1;
 let isUndoRedoAction = false;
+let historyDebounceTimer = null;
 
 function resetTextHistory(initialText = '') {
     textHistory = [initialText];
@@ -117,10 +126,15 @@ function resetTextHistory(initialText = '') {
 function pushTextHistory(text) {
     if (isUndoRedoAction) return;
     if (historyIndex >= 0 && textHistory[historyIndex] === text) return;
-    textHistory = textHistory.slice(0, historyIndex + 1);
-    textHistory.push(text);
-    historyIndex = textHistory.length - 1;
-    updateUndoRedoButtons();
+
+    clearTimeout(historyDebounceTimer);
+    historyDebounceTimer = setTimeout(() => {
+        textHistory = textHistory.slice(0, historyIndex + 1);
+        textHistory.push(text);
+        if (textHistory.length > 50) textHistory.shift(); // 最大50ステップ保持
+        historyIndex = textHistory.length - 1;
+        updateUndoRedoButtons();
+    }, 350); // 350ms入力が止まったら履歴を新しく作成
 }
 
 function updateUndoRedoButtons() {
@@ -150,12 +164,28 @@ btnRedo.onclick = () => {
     }
 };
 
+// 空のメモ（カッコなし）
 function getNoteTitle(body) {
     if (!body || !body.trim()) return "空のメモ";
     const lines = body.split("\n").map(l => l.trim()).filter(l => l.length > 0);
     if (lines.length === 0) return "空のメモ";
     const firstLine = lines[0];
     return firstLine.replace(/^([#*\-–—•>\d\.\s]+)/, '').trim() || firstLine;
+}
+
+// 日付グループ生成（今日・昨日・〇月〇日）
+function getDateGroup(timestamp) {
+    if (!timestamp) return 'それ以前';
+    const now = new Date();
+    const date = new Date(timestamp);
+
+    if (now.toDateString() === date.toDateString()) return '今日';
+
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (yesterday.toDateString() === date.toDateString()) return '昨日';
+
+    return `${date.getMonth() + 1}月${date.getDate()}日`;
 }
 
 // IndexedDB
@@ -174,7 +204,7 @@ function loadLocalNotes() {
         currentNotes = {};
         req.result.forEach(n => currentNotes[n.id] = n);
         cleanExpiredTrash();
-        renderList();
+        renderList(searchInput.value);
     };
 }
 
@@ -201,6 +231,7 @@ function cleanExpiredTrash() {
     });
 }
 
+// ★ 日付グループ表示＆ゴミ箱検索連動対応リスト描画
 function renderList(filter = '') {
     noteList.innerHTML = '';
     const now = Date.now();
@@ -221,11 +252,31 @@ function renderList(filter = '') {
     if (filtered.length === 0) {
         emptyState.textContent = currentTab === 'notes' ? "メモがありません" : "ゴミ箱は空です";
         emptyState.classList.remove('hidden');
+        return;
     } else {
         emptyState.classList.add('hidden');
     }
 
+    // ピン留めセクションと日付セクションに分類
+    let currentGroupLabel = '';
+
     filtered.forEach(n => {
+        let groupLabel = '';
+        if (currentTab === 'notes' && n.pinned) {
+            groupLabel = 'ピン留め';
+        } else {
+            groupLabel = getDateGroup(currentTab === 'notes' ? n.updatedAt : n.deletedAt);
+        }
+
+        // グループの変わり目に見出し（ヘッダー）を追加
+        if (groupLabel !== currentGroupLabel) {
+            currentGroupLabel = groupLabel;
+            const groupHeader = document.createElement('div');
+            groupHeader.className = 'date-group-header';
+            groupHeader.textContent = groupLabel;
+            noteList.appendChild(groupHeader);
+        }
+
         const li = document.createElement('li');
         li.className = `note-item ${n.id === activeNoteId ? 'active' : ''}`;
 
@@ -288,6 +339,7 @@ function selectNote(id, autoFocus = true) {
     }
 }
 
+// 単一削除モーダル
 function openDeleteModal(id) {
     pendingDeleteId = id;
     const isTrash = currentTab === 'trash';
@@ -327,10 +379,41 @@ function executeDelete() {
 btnDeleteConfirm.onclick = executeDelete;
 btnDeleteCancel.onclick = () => deleteModal.classList.add('hidden');
 
+// ★ ゴミ箱を空にする（すべて削除）
+btnEmptyTrash.onclick = () => emptyTrashModal.classList.remove('hidden');
+btnEmptyCancel.onclick = () => emptyTrashModal.classList.add('hidden');
+
+function executeEmptyTrash() {
+    emptyTrashModal.classList.add('hidden');
+    const now = Date.now();
+    Object.values(currentNotes).forEach(n => {
+        if (n.deletedAt) {
+            delete currentNotes[n.id];
+            deleteLocalNote(n.id);
+            worker.postMessage({ type: 'PERMANENT_DELETE_NOTE', id: n.id });
+        }
+    });
+    activeNoteId = null;
+    noteBody.value = '';
+    noteBody.disabled = true;
+    editorToolbar.classList.add('hidden');
+    charCount.classList.add('hidden');
+    renderList(searchInput.value);
+    showToast("ゴミ箱を空にしました");
+}
+
+btnEmptyConfirm.onclick = executeEmptyTrash;
+
+// Enterキー決定の対応
 window.addEventListener('keydown', e => {
-    if (!deleteModal.classList.contains('hidden') && e.key === 'Enter') {
-        e.preventDefault();
-        executeDelete();
+    if (e.key === 'Enter') {
+        if (!deleteModal.classList.contains('hidden')) {
+            e.preventDefault();
+            executeDelete();
+        } else if (!emptyTrashModal.classList.contains('hidden')) {
+            e.preventDefault();
+            executeEmptyTrash();
+        }
     }
 });
 
@@ -343,10 +426,14 @@ btnRestoreTrash.onclick = () => {
     selectNote(activeNoteId);
 };
 
+// タブ切り替え（メモ vs ゴミ箱）
 tabNotes.onclick = () => {
     currentTab = 'notes';
     tabNotes.classList.add('active');
     tabTrash.classList.remove('active');
+    btnNew.classList.remove('hidden');
+    btnEmptyTrash.classList.add('hidden');
+    trashNotice.classList.add('hidden');
     renderList(searchInput.value);
 };
 
@@ -354,9 +441,13 @@ tabTrash.onclick = () => {
     currentTab = 'trash';
     tabTrash.classList.add('active');
     tabNotes.classList.remove('active');
+    btnNew.classList.add('hidden'); // ゴミ箱では新規メモボタンを非表示
+    btnEmptyTrash.classList.remove('hidden');
+    trashNotice.classList.remove('hidden');
     renderList(searchInput.value);
 };
 
+// ピン留め
 btnPin.onclick = () => {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const isPinned = !currentNotes[activeNoteId].pinned;
@@ -421,10 +512,11 @@ document.getElementById('btn-new').onclick = createNewNote;
 window.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
-        createNewNote();
+        if (currentTab === 'notes') createNewNote();
     }
 });
 
+// モーダル制御
 btnLogoutTrigger.onclick = () => logoutModal.classList.remove('hidden');
 btnModalCancel.onclick = () => logoutModal.classList.add('hidden');
 btnModalConfirm.onclick = () => {
@@ -451,6 +543,7 @@ btnUpdateCheck.onclick = async () => {
     window.location.reload(true);
 };
 
+// 認証
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
@@ -482,6 +575,7 @@ onAuthStateChanged(auth, user => {
     }
 });
 
+// 同期受信
 worker.onmessage = e => {
     if (e.data.type === 'SYNC_NOTES') {
         const remoteNotes = e.data.notes || {};

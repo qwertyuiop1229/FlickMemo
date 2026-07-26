@@ -34,7 +34,6 @@ html {
     overflow: hidden;
 }
 
-/* ★ iOS Safari 16px未満の自動拡大ズームを完全防止 */
 input,
 textarea,
 select {
@@ -256,7 +255,6 @@ select {
     background: var(--m3-surface-hover);
 }
 
-/* ★ ピン留めアクティブ状態の強調表示 */
 .m3-icon-button.active {
     color: var(--m3-primary) !important;
     background: var(--m3-surface-container) !important;
@@ -317,6 +315,11 @@ select {
     background: var(--m3-surface);
 }
 
+.tab-btn#tab-trash.active {
+    color: var(--m3-danger);
+    border-bottom-color: var(--m3-danger);
+}
+
 .sidebar-top {
     padding: 0.8rem;
     display: flex;
@@ -325,13 +328,29 @@ select {
     border-bottom: 1px solid var(--m3-border);
 }
 
+/* ゴミ箱バナー */
+.trash-notice-banner {
+    background: var(--m3-danger-bg);
+    color: var(--m3-danger);
+    font-size: 0.72rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--m3-radius-sm);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.trash-notice-banner span {
+    font-size: 14px;
+}
+
 .m3-search-bar {
     display: flex;
     align-items: center;
     background: var(--m3-bg);
     border: 1px solid var(--m3-border);
     border-radius: var(--m3-radius-full);
-    padding: 0.35rem 0.8rem;
+    padding: 0.4rem 0.8rem;
     gap: 0.5rem;
 }
 
@@ -369,6 +388,12 @@ select {
     opacity: 0.9;
 }
 
+.btn-danger-fab {
+    background: var(--m3-danger-bg);
+    color: var(--m3-danger);
+    border: 1px solid var(--m3-danger);
+}
+
 .list-container {
     flex: 1;
     overflow-y: auto;
@@ -377,6 +402,15 @@ select {
 
 .note-list {
     list-style: none;
+}
+
+/* ★ 日付グループ見出し */
+.date-group-header {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--m3-text-muted);
+    padding: 0.6rem 0.8rem 0.2rem 0.8rem;
+    letter-spacing: 0.3px;
 }
 
 .note-item {
@@ -508,7 +542,7 @@ select {
     opacity: 1;
 }
 
-/* Modal & Dialogs */
+/* Dialogs */
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -578,7 +612,6 @@ select {
     border: none;
 }
 
-/* 設定ダイアログ用 */
 .settings-content {
     text-align: left;
     margin-top: 1rem;
