@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, signInWithRedirect, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // ⚠️ ここにご自身のFirebase設定を貼り付けてください
 const firebaseConfig = {
@@ -110,8 +110,8 @@ document.getElementById('btn-new').onclick = () => {
 };
 
 // --- 4. 認証処理 ---
-document.getElementById('btn-google').onclick = () => signInWithPopup(auth, new GoogleAuthProvider());
-document.getElementById('btn-ms').onclick = () => signInWithPopup(auth, new OAuthProvider('microsoft.com'));
+document.getElementById('btn-google').onclick = () => signInWithRedirect(auth, new GoogleAuthProvider());
+document.getElementById('btn-ms').onclick = () => signInWithRedirect(auth, new OAuthProvider('microsoft.com'));
 document.getElementById('btn-logout').onclick = () => signOut(auth);
 
 onAuthStateChanged(auth, user => {
