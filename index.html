@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>超軽量メモ帳</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+    <!-- ログイン前画面 -->
+    <div id="auth-container" class="center-screen">
+        <div class="auth-box">
+            <h2>⚡ 超軽量メモ帳</h2>
+            <p>ログインしてメモを同期します</p>
+            <button id="btn-google" class="btn btn-google">
+                Googleでサインイン
+            </button>
+            <button id="btn-ms" class="btn btn-ms">Microsoftでサインイン</button>
+        </div>
+    </div>
+
+    <!-- メイン画面（ログイン後） -->
+    <div id="app-container" class="hidden">
+        <header class="header">
+            <span class="logo">⚡ メモ帳</span>
+            <span id="status-bar" class="status">オフライン準備完了</span>
+            <button id="btn-logout" class="btn-sm">ログアウト</button>
+        </header>
+        <div class="main-layout">
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <input type="text" id="search-input" placeholder="メモを検索..." />
+                    <button id="btn-new" class="btn-primary">+ 新規</button>
+                </div>
+                <ul id="note-list" class="note-list"></ul>
+            </aside>
+            <main class="editor-area">
+                <input type="text" id="note-title" placeholder="タイトルを入力..." disabled />
+                <textarea id="note-body" placeholder="ここにメモを入力..." disabled></textarea>
+            </main>
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+
+</html>

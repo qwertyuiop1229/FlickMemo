@@ -1,0 +1,196 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: sans-serif;
+}
+
+body,
+html {
+    height: 100%;
+    background: #121212;
+    color: #e0e0e0;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.center-screen {
+    display: flex;
+    height: 100vh;
+    justify-content: center;
+    align-items: center;
+}
+
+.auth-box {
+    background: #1e1e1e;
+    padding: 2rem;
+    border-radius: 8px;
+    text-align: center;
+    width: 320px;
+    border: 1px solid #333;
+}
+
+.auth-box h2 {
+    margin-bottom: 0.5rem;
+}
+
+.auth-box p {
+    color: #888;
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+}
+
+.btn {
+    width: 100%;
+    padding: 0.8rem;
+    margin: 0.4rem 0;
+    border: none;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.btn-google {
+    background: #4285f4;
+    color: white;
+}
+
+.btn-ms {
+    background: #2f2f2f;
+    color: white;
+    border: 1px solid #555;
+}
+
+.btn-primary {
+    background: #007acc;
+    color: white;
+    border: none;
+    padding: 0.5rem 0.8rem;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-sm {
+    background: #333;
+    color: #ccc;
+    border: none;
+    padding: 0.3rem 0.6rem;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.header {
+    height: 45px;
+    background: #1e1e1e;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 1rem;
+    border-bottom: 1px solid #333;
+}
+
+.logo {
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+.status {
+    font-size: 0.75rem;
+    color: #888;
+}
+
+.main-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.sidebar {
+    width: 260px;
+    background: #181818;
+    border-right: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-header {
+    padding: 0.5rem;
+    display: flex;
+    gap: 0.5rem;
+    border-bottom: 1px solid #282828;
+}
+
+.sidebar-header input {
+    flex: 1;
+    background: #252525;
+    border: 1px solid #333;
+    color: #fff;
+    padding: 0.4rem;
+    border-radius: 4px;
+}
+
+.note-list {
+    list-style: none;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.note-item {
+    padding: 0.8rem;
+    border-bottom: 1px solid #222;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.note-item:hover {
+    background: #222;
+}
+
+.note-item.active {
+    background: #007acc;
+    color: white;
+}
+
+.note-item .title {
+    font-weight: bold;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.editor-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #121212;
+    padding: 1rem;
+}
+
+#note-title {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #fff;
+    font-size: 1.4rem;
+    font-weight: bold;
+    margin-bottom: 1rem;
+}
+
+#note-body {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #ddd;
+    font-size: 1rem;
+    resize: none;
+    line-height: 1.5;
+}
