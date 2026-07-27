@@ -1,9 +1,10 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-const APP_VERSION = "1.1.13";
+// ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
+const APP_VERSION = "1.3.0";
 
-// ⚠️ ご自身のキーが入っているか確認してください
+// ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
     authDomain: "flickmemo-qwe.web.app",
@@ -342,9 +343,12 @@ function updateAutoCodeRender(forceRender = false) {
                     wrapper.classList.toggle('is-collapsed', nextState);
                     btn.querySelector('span').textContent = nextState ? 'unfold_more' : 'unfold_less';
 
-                    saveLocalNote(activeNote);
-                    setStatus('saving', 'クラウドに保存中...');
-                    worker.postMessage({ type: 'SAVE_NOTE', note: activeNote });
+                    // ★ 安全な保存処理（idが含まれているか絶対確認）
+                    if (activeNote.id) {
+                        saveLocalNote(activeNote);
+                        setStatus('saving', 'クラウドに保存中...');
+                        worker.postMessage({ type: 'SAVE_NOTE', note: activeNote });
+                    }
                 }
             };
         });
@@ -418,7 +422,6 @@ function escapeHTML(str) {
         .replace(/'/g, "&#039;");
 }
 
-// Undo / Redo 多段階スタック
 let textHistory = [];
 let historyIndex = -1;
 let historyDebounceTimer = null;
@@ -448,21 +451,25 @@ function updateUndoRedoButtons() {
 
 function applyUndoRedoText(targetText) {
     noteBody.value = targetText;
-    if (!activeNoteId) return;
+    if (!activeNoteId || !currentNotes[activeNoteId]) return;
 
     const updatedNote = {
         ...currentNotes[activeNoteId],
-        id: activeNoteId,
         body: targetText,
         updatedAt: Date.now()
     };
-    currentNotes[activeNoteId] = updatedNote;
-    saveLocalNote(updatedNote);
-    updateEditorFooter();
-    renderList(searchInput.value);
-    updateAutoCodeRender(true);
-    setStatus('saving', 'クラウドに保存中...');
-    worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+
+    // ★ 絶対にIDが存在することを確認してから保存
+    if (updatedNote.id) {
+        currentNotes[activeNoteId] = updatedNote;
+        saveLocalNote(updatedNote);
+        updateTitlePlaceholder(updatedNote);
+        updateEditorFooter();
+        renderList(searchInput.value);
+        updateAutoCodeRender(true);
+        setStatus('saving', 'クラウドに保存中...');
+        worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+    }
 }
 
 btnUndo.onclick = () => {
@@ -542,18 +549,18 @@ function loadLocalNotes() {
 }
 
 function saveLocalNote(note) {
-    if (!db) return;
+    if (!db || !note.id) return; // ★ 不正データブロック
     const tx = db.transaction('notes', 'readwrite');
     tx.objectStore('notes').put(note);
 }
 
 function deleteLocalNote(id) {
-    if (!db) return;
+    if (!db || !id) return;
     const tx = db.transaction('notes', 'readwrite');
     tx.objectStore('notes').delete(id);
 }
 
-// ★ アカウント切り替え時のローカルデータを100%安全にリセット
+// アカウント切り替え時のローカルデータを100%安全にリセット
 async function clearLocalData() {
     currentNotes = {};
     activeNoteId = null;
@@ -750,7 +757,6 @@ function selectNote(id, autoFocus = true) {
 
     updateEditorFooter();
     renderList(searchInput.value);
-
     updateAutoCodeRender();
 
     if (window.innerWidth <= 768) {
@@ -777,15 +783,18 @@ noteTitleInput.oninput = () => {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const val = noteTitleInput.value;
 
-    currentNotes[activeNoteId].title = val;
-    currentNotes[activeNoteId].updatedAt = Date.now();
+    // ★ 絶対にIDが存在することを確認してから保存
+    if (currentNotes[activeNoteId].id) {
+        currentNotes[activeNoteId].title = val;
+        currentNotes[activeNoteId].updatedAt = Date.now();
 
-    saveLocalNote(currentNotes[activeNoteId]);
-    updateTitlePlaceholder(currentNotes[activeNoteId]);
-    renderList(searchInput.value);
+        saveLocalNote(currentNotes[activeNoteId]);
+        updateTitlePlaceholder(currentNotes[activeNoteId]);
+        renderList(searchInput.value);
 
-    setStatus('saving', 'クラウドに保存中...');
-    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+        setStatus('saving', 'クラウドに保存中...');
+        worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+    }
 };
 
 function moveToTrash(id) {
@@ -933,7 +942,7 @@ tabTrash.onclick = () => {
 };
 
 btnPin.onclick = () => {
-    if (!activeNoteId || !currentNotes[activeNoteId]) return;
+    if (!activeNoteId || !currentNotes[activeNoteId] || !currentNotes[activeNoteId].id) return;
     const isPinned = !currentNotes[activeNoteId].pinned;
     currentNotes[activeNoteId].pinned = isPinned;
     btnPin.classList.toggle('active', isPinned);
@@ -964,7 +973,7 @@ btnBack.onclick = () => {
 };
 
 function handleInput() {
-    if (!activeNoteId) return;
+    if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const val = noteBody.value;
     pushTextHistory(val);
 
@@ -974,14 +983,18 @@ function handleInput() {
         body: val,
         updatedAt: Date.now()
     };
-    currentNotes[activeNoteId] = updatedNote;
-    saveLocalNote(updatedNote);
-    updateTitlePlaceholder(updatedNote);
-    updateEditorFooter();
-    renderList(searchInput.value);
 
-    setStatus('saving', 'クラウドに保存中...');
-    worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+    // ★ 絶対にIDが存在することを確認してから保存（permission_denied を100%防ぐ）
+    if (updatedNote.id) {
+        currentNotes[activeNoteId] = updatedNote;
+        saveLocalNote(updatedNote);
+        updateTitlePlaceholder(updatedNote);
+        updateEditorFooter();
+        renderList(searchInput.value);
+
+        setStatus('saving', 'クラウドに保存中...');
+        worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+    }
 }
 
 noteBody.oninput = handleInput;
@@ -999,6 +1012,7 @@ noteBody.onblur = () => {
 
 searchInput.oninput = () => renderList(searchInput.value);
 
+// ★ 新規作成時も完全なデータ（IDあり）で作成する
 function createNewNote(autoFocus = true) {
     cleanupEmptyNotes();
 
@@ -1076,11 +1090,9 @@ async function loginWithProvider(provider) {
 
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
 
-// ★【ログアウト時・別アカウント時のローカルデータ完全消去保護】
 onAuthStateChanged(auth, async user => {
     splashScreen.classList.add('hidden');
     if (user) {
-        // 以前と違うアカウントならローカルデータを確実に消去して分離！
         if (currentUserId !== null && currentUserId !== user.uid) {
             await clearLocalData();
         }
@@ -1110,7 +1122,6 @@ onAuthStateChanged(auth, async user => {
 
         worker.postMessage({ type: 'SET_USER', uid: user.uid });
     } else {
-        // ログアウト時に完全にローカルデータをクリア！
         await clearLocalData();
         currentUserId = null;
 
@@ -1134,7 +1145,6 @@ worker.onmessage = e => {
         renderList(searchInput.value);
 
         if (activeNoteId && currentNotes[activeNoteId]) {
-            // ユーザーが入力中(フォーカス中)の場合は画面を上書きしない！
             if (document.activeElement !== noteBody && document.activeElement !== noteTitleInput) {
                 selectNote(activeNoteId, false);
             }
