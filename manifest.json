@@ -1,0 +1,21 @@
+{
+    "manifest_version": 3,
+    "name": "FlickMemo - 超軽量リアルタイムメモ帳",
+    "version": "1.3.0",
+    "description": "即座に書ける、リアルタイム同期の超軽量メモ帳",
+    "action": {
+        "default_popup": "index.html",
+        "default_title": "FlickMemoを開く"
+    },
+    "side_panel": {
+        "default_path": "index.html"
+    },
+    "permissions": [
+        "sidePanel",
+        "identity",
+        "storage"
+    ],
+    "content_security_policy": {
+        "extension_pages": "script-src 'self'; object-src 'self';"
+    }
+}

@@ -631,7 +631,7 @@ self.onmessage = e => {
 
 <file path="version.json">
 {
-  "version": "1.1.13"
+  "version": "1.1.14"
 }
 </file>
 
@@ -1772,6 +1772,7 @@ select {
 <file path="app.js">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getDatabase, ref, set, remove, get, update, onValue, off } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
 const APP_VERSION = "1.3.0";
@@ -1790,9 +1791,45 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const db = getDatabase(app);
+let currentDbRef = null;
 
-const worker = new Worker('worker.js', { type: 'module' });
-worker.postMessage({ type: 'INIT_FIREBASE', config: firebaseConfig });
+// 完全保存
+function syncSaveNote(note) {
+    if (!currentUserId || !note || !note.id) return;
+    const noteRef = ref(db, `users/${currentUserId}/notes/${note.id}`);
+    set(noteRef, note);
+}
+
+// 1文字単位の差分更新（RTDB通信量を最小限にする）
+function syncUpdateNoteFields(id, fields) {
+    if (!currentUserId || !id || !fields) return;
+    const noteRef = ref(db, `users/${currentUserId}/notes/${id}`);
+    update(noteRef, fields);
+}
+
+function syncDeleteNote(id) {
+    if (!currentUserId || !id) return;
+    const noteRef = ref(db, `users/${currentUserId}/notes/${id}`);
+    remove(noteRef);
+}
+
+function syncClearTrash() {
+    if (!currentUserId) return;
+    const notesRef = ref(db, `users/${currentUserId}/notes`);
+    get(notesRef).then(snapshot => {
+        const data = snapshot.val();
+        if (data) {
+            const updates = {};
+            Object.keys(data).forEach(key => {
+                if (data[key].deletedAt) {
+                    updates[key] = null;
+                }
+            });
+            update(notesRef, updates);
+        }
+    }).catch(err => console.error("Clear trash error:", err));
+}
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -1866,7 +1903,6 @@ let pendingDeleteId = null;
 let lastMovedToTrashNote = null;
 let currentTab = 'notes';
 let toastTimer = null;
-let db = null;
 let currentUserId = null;
 
 function setupScrollFade(element) {
@@ -2120,7 +2156,7 @@ function updateAutoCodeRender(forceRender = false) {
                     if (activeNote.id) {
                         saveLocalNote(activeNote);
                         setStatus('saving', 'クラウドに保存中...');
-                        worker.postMessage({ type: 'SAVE_NOTE', note: activeNote });
+                        syncUpdateNoteFields(activeNote.id, { codeCollapsed: activeNote.codeCollapsed });
                     }
                 }
             };
@@ -2245,7 +2281,7 @@ function applyUndoRedoText(targetText) {
         renderList(searchInput.value);
         updateAutoCodeRender(true);
         setStatus('saving', 'クラウドに保存中...');
-        worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+        syncUpdateNoteFields(activeNoteId, { body: targetText, updatedAt: updatedNote.updatedAt });
     }
 }
 
@@ -2303,17 +2339,18 @@ function getDaysRemaining(deletedAt) {
     return Math.max(0, days);
 }
 
-// IndexedDB
+// IndexedDB (ローカル高速読み書き用)
+let idb = null;
 const dbReq = indexedDB.open('FlickMemoDB', 1);
 dbReq.onupgradeneeded = e => e.target.result.createObjectStore('notes', { keyPath: 'id' });
 dbReq.onsuccess = e => {
-    db = e.target.result;
+    idb = e.target.result;
     loadLocalNotes();
 };
 
 function loadLocalNotes() {
-    if (!db) return;
-    const tx = db.transaction('notes', 'readonly');
+    if (!idb) return;
+    const tx = idb.transaction('notes', 'readonly');
     const req = tx.objectStore('notes').getAll();
     req.onsuccess = () => {
         currentNotes = {};
@@ -2326,14 +2363,14 @@ function loadLocalNotes() {
 }
 
 function saveLocalNote(note) {
-    if (!db || !note.id) return;
-    const tx = db.transaction('notes', 'readwrite');
+    if (!idb || !note.id) return;
+    const tx = idb.transaction('notes', 'readwrite');
     tx.objectStore('notes').put(note);
 }
 
 function deleteLocalNote(id) {
-    if (!db || !id) return;
-    const tx = db.transaction('notes', 'readwrite');
+    if (!idb || !id) return;
+    const tx = idb.transaction('notes', 'readwrite');
     tx.objectStore('notes').delete(id);
 }
 
@@ -2355,9 +2392,9 @@ async function clearLocalData() {
 
     renderList('');
 
-    if (db) {
+    if (idb) {
         return new Promise((resolve) => {
-            const tx = db.transaction('notes', 'readwrite');
+            const tx = idb.transaction('notes', 'readwrite');
             tx.objectStore('notes').clear();
             tx.oncomplete = () => resolve();
         });
@@ -2370,7 +2407,7 @@ function cleanupEmptyNotes(exceptId = null) {
         if (n.id !== exceptId && !n.deletedAt && (!n.body || !n.body.trim()) && (!n.title || !n.title.trim())) {
             delete currentNotes[n.id];
             deleteLocalNote(n.id);
-            worker.postMessage({ type: 'PERMANENT_DELETE_NOTE', id: n.id });
+            syncDeleteNote(n.id);
             changed = true;
         }
     });
@@ -2397,7 +2434,7 @@ function cleanExpiredTrash() {
         if (n.deletedAt && (now - n.deletedAt > SEVEN_DAYS_MS)) {
             delete currentNotes[n.id];
             deleteLocalNote(n.id);
-            worker.postMessage({ type: 'PERMANENT_DELETE_NOTE', id: n.id });
+            syncDeleteNote(n.id);
         }
     });
 }
@@ -2496,8 +2533,8 @@ function renderList(filter = '') {
     });
 }
 
-function selectNote(id, autoFocus = true) {
-    cleanupEmptyNotes(id);
+function selectNote(id, autoFocus = true, isRemoteSync = false) {
+    if (!isRemoteSync) cleanupEmptyNotes(id);
 
     const isSameNote = (activeNoteId === id);
     activeNoteId = id;
@@ -2507,10 +2544,30 @@ function selectNote(id, autoFocus = true) {
     noteBody.disabled = isTrashNote;
     noteTitleInput.disabled = isTrashNote;
 
-    if (!isSameNote) {
+    // ★ バグ修正：同じノートが開かれていても他端末での編集をリアルタイムに画面へ反映（フォーカス中のキャレット保護）
+    if (document.activeElement === noteTitleInput) {
+        if (noteTitleInput.value !== (n.title || '')) {
+            const start = noteTitleInput.selectionStart;
+            const end = noteTitleInput.selectionEnd;
+            noteTitleInput.value = n.title || '';
+            noteTitleInput.setSelectionRange(start, end);
+        }
+    } else {
         noteTitleInput.value = n.title || '';
+    }
+
+    if (document.activeElement === noteBody) {
+        if (noteBody.value !== (n.body || '')) {
+            const start = noteBody.selectionStart;
+            const end = noteBody.selectionEnd;
+            noteBody.value = n.body || '';
+            noteBody.setSelectionRange(start, end);
+        }
+    } else {
         noteBody.value = n.body || '';
-        resetTextHistory(n.body || '');
+        if (!isSameNote) {
+            resetTextHistory(n.body || '');
+        }
     }
 
     updateTitlePlaceholder(n);
@@ -2569,7 +2626,7 @@ noteTitleInput.oninput = () => {
         renderList(searchInput.value);
 
         setStatus('saving', 'クラウドに保存中...');
-        worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+        syncUpdateNoteFields(activeNoteId, { title: val, updatedAt: currentNotes[activeNoteId].updatedAt });
     }
 };
 
@@ -2579,7 +2636,7 @@ function moveToTrash(id) {
 
     currentNotes[id].deletedAt = Date.now();
     saveLocalNote(currentNotes[id]);
-    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[id] });
+    syncUpdateNoteFields(id, { deletedAt: currentNotes[id].deletedAt });
 
     if (activeNoteId === id) {
         activeNoteId = null;
@@ -2600,7 +2657,7 @@ function moveToTrash(id) {
         if (lastMovedToTrashNote) {
             delete currentNotes[lastMovedToTrashNote.id].deletedAt;
             saveLocalNote(currentNotes[lastMovedToTrashNote.id]);
-            worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[lastMovedToTrashNote.id] });
+            syncSaveNote(currentNotes[lastMovedToTrashNote.id]);
             selectNote(lastMovedToTrashNote.id);
             showToast("メモを復元しました");
             lastMovedToTrashNote = null;
@@ -2620,7 +2677,7 @@ function executeDelete() {
 
     delete currentNotes[id];
     deleteLocalNote(id);
-    worker.postMessage({ type: 'PERMANENT_DELETE_NOTE', id });
+    syncDeleteNote(id);
     showToast("メモを完全削除しました");
 
     if (activeNoteId === id) {
@@ -2655,7 +2712,7 @@ function executeEmptyTrash() {
         }
     });
 
-    worker.postMessage({ type: 'CLEAR_ALL_TRASH' });
+    syncClearTrash();
 
     if (activeNoteId && (!currentNotes[activeNoteId] || currentNotes[activeNoteId].deletedAt)) {
         activeNoteId = null;
@@ -2692,7 +2749,7 @@ btnRestoreTrash.onclick = () => {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     delete currentNotes[activeNoteId].deletedAt;
     saveLocalNote(currentNotes[activeNoteId]);
-    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+    syncSaveNote(currentNotes[activeNoteId]);
     showToast("メモを復元しました");
     selectNote(activeNoteId);
 };
@@ -2725,7 +2782,7 @@ btnPin.onclick = () => {
     saveLocalNote(currentNotes[activeNoteId]);
     renderList(searchInput.value);
     setStatus('saving', '保存中...');
-    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+    syncUpdateNoteFields(activeNoteId, { pinned: isPinned, updatedAt: Date.now() });
     showToast(isPinned ? "メモをピン留めしました" : "ピン留めを解除しました");
 };
 
@@ -2773,7 +2830,7 @@ function handleInput() {
         renderList(searchInput.value);
 
         setStatus('saving', 'クラウドに保存中...');
-        worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+        syncUpdateNoteFields(activeNoteId, { body: val, updatedAt: updatedNote.updatedAt });
     }
 }
 
@@ -2800,7 +2857,7 @@ function createNewNote(autoFocus = true) {
     saveLocalNote(currentNotes[newId]);
     selectNote(newId, autoFocus);
     setStatus('saving', '新規作成中...');
-    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[newId] });
+    syncSaveNote(currentNotes[newId]);
 }
 
 document.getElementById('btn-new').onclick = () => createNewNote(true);
@@ -2879,7 +2936,6 @@ onAuthStateChanged(auth, async user => {
 
         authContainer.classList.add('hidden');
         appContainer.classList.remove('hidden');
-        setStatus('synced', 'クラウド同期完了');
 
         const nameText = user.displayName || user.email?.split('@')[0] || 'ユーザー';
         const emailText = user.email || 'メールアドレス非公開';
@@ -2899,41 +2955,73 @@ onAuthStateChanged(auth, async user => {
 
         if (userProviderTag) userProviderTag.textContent = "Google";
 
-        worker.postMessage({ type: 'SET_USER', uid: user.uid });
+        // ★ Firebase Realtime Database リアルタイム同期（複数デバイス1文字単位の即時反映＆ループ完全防止）
+        if (currentDbRef) {
+            off(currentDbRef);
+        }
+        currentDbRef = ref(db, `users/${user.uid}/notes`);
+        onValue(currentDbRef, snapshot => {
+            const remoteNotes = snapshot.val() || {};
+
+            // 他端末で完全削除されたノートをローカルから同期削除
+            Object.keys(currentNotes).forEach(id => {
+                if (!remoteNotes[id]) {
+                    delete currentNotes[id];
+                    deleteLocalNote(id);
+                    if (activeNoteId === id) {
+                        activeNoteId = null;
+                        noteTitleInput.value = '';
+                        noteBody.value = '';
+                        noteBody.disabled = true;
+                        noteTitleInput.disabled = true;
+                        editorToolbar.classList.add('hidden');
+                        noteTitleInput.classList.add('hidden');
+                        charCount.classList.add('hidden');
+                        dateDisplay.classList.add('hidden');
+                        noteCodeView.classList.add('hidden');
+                    }
+                }
+            });
+
+            // リモートの最新ノートデータでローカルマップとIndexedDBを更新
+            Object.values(remoteNotes).forEach(n => {
+                currentNotes[n.id] = n;
+                saveLocalNote(n);
+            });
+
+            cleanExpiredTrash();
+            renderList(searchInput.value);
+
+            // ★ 同期ループ防止：受信ハンドラ内で createNewNote / cleanupEmptyNotes 等の自動書き込み処理を直接呼ばない
+            if (activeNoteId && currentNotes[activeNoteId]) {
+                selectNote(activeNoteId, false, true);
+            } else {
+                const validNotes = Object.values(currentNotes)
+                    .filter(n => !n.deletedAt)
+                    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+                if (validNotes.length > 0) {
+                    selectNote(validNotes[0].id, false, true);
+                }
+            }
+            setStatus('synced', 'クラウド同期完了');
+        }, error => {
+            console.error("Sync Error:", error);
+        });
     } else {
         await clearLocalData();
+        if (currentDbRef) {
+            off(currentDbRef);
+            currentDbRef = null;
+        }
         currentUserId = null;
 
         authContainer.classList.remove('hidden');
         appContainer.classList.add('hidden');
         authLoading.classList.add('hidden');
         authButtons.classList.remove('hidden');
-        worker.postMessage({ type: 'CLEAR_USER' });
     }
 });
-
-// クラウド同期受信
-worker.onmessage = e => {
-    if (e.data.type === 'SYNC_NOTES') {
-        const remoteNotes = e.data.notes || {};
-        Object.values(remoteNotes).forEach(n => {
-            currentNotes[n.id] = n;
-            saveLocalNote(n);
-        });
-        cleanExpiredTrash();
-        renderList(searchInput.value);
-
-        if (activeNoteId && currentNotes[activeNoteId]) {
-            // ユーザーが入力中でない場合のみUI更新
-            if (document.activeElement !== noteBody && document.activeElement !== noteTitleInput) {
-                selectNote(activeNoteId, false);
-            }
-        } else {
-            initAutoNote();
-        }
-        setStatus('synced', 'クラウド同期完了');
-    }
-};
 </file>
 
 </files>

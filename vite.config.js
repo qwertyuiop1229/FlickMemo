@@ -1,0 +1,33 @@
+import { defineConfig } from 'vite';
+import { resolve } from 'path';
+import fs from 'fs';
+
+const copyExtensionFiles = () => ({
+    name: 'copy-extension-files',
+    closeBundle() {
+        if (!fs.existsSync('dist/icons')) fs.mkdirSync('dist/icons', { recursive: true });
+        if (fs.existsSync('manifest.json')) fs.copyFileSync('manifest.json', 'dist/manifest.json');
+        if (fs.existsSync('icons')) {
+            fs.readdirSync('icons').forEach(file => {
+                fs.copyFileSync(`icons/${file}`, `dist/icons/${file}`);
+            });
+        }
+    }
+});
+
+export default defineConfig({
+    build: {
+        outDir: 'dist',
+        rollupOptions: {
+            input: {
+                popup: resolve(__dirname, 'index.html')
+            },
+            output: {
+                entryFileNames: 'assets/[name].js',
+                chunkFileNames: 'assets/[name].js',
+                assetFileNames: 'assets/[name].[ext]'
+            }
+        }
+    },
+    plugins: [copyExtensionFiles()]
+});

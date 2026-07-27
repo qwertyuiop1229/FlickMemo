@@ -1,9 +1,26 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getDatabase, ref, set, remove, get, update, onValue, off } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { initializeApp } from "firebase/app";
+import {
+    getAuth,
+    signInWithPopup,
+    GoogleAuthProvider,
+    signInWithCredential,
+    OAuthProvider,
+    signOut,
+    onAuthStateChanged
+} from "firebase/auth";
+import {
+    getDatabase,
+    ref,
+    set,
+    remove,
+    get,
+    update,
+    onValue,
+    off
+} from "firebase/database";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.1.15";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1139,12 +1156,28 @@ btnUpdateCheck.onclick = async () => {
     window.location.reload(true);
 };
 
-// 認証
+// 認証（Webアプリ / Chrome拡張機能 自動両対応）
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
-        await signInWithPopup(auth, provider);
+
+        // ★ Chrome 拡張機能環境で chrome.identity が利用可能な場合
+        if (typeof chrome !== 'undefined' && chrome?.identity?.getAuthToken) {
+            chrome.identity.getAuthToken({ interactive: true }, (token) => {
+                if (chrome.runtime.lastError || !token) {
+                    alert("ログイン認証に失敗しました: " + (chrome.runtime.lastError?.message || "トークン取得不可"));
+                    authLoading.classList.add('hidden');
+                    authButtons.classList.remove('hidden');
+                    return;
+                }
+                const credential = GoogleAuthProvider.credential(null, token);
+                signInWithCredential(auth, credential);
+            });
+        } else {
+            // ★ 通常の Web アプリ環境（Firebase Hosting等）
+            await signInWithPopup(auth, provider);
+        }
     } catch (error) {
         alert("ログインに失敗しました: " + error.message);
         authLoading.classList.add('hidden');
