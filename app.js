@@ -1,9 +1,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-const APP_VERSION = "1.1.12";
+const APP_VERSION = "1.1.13";
 
-// ⚠️ キーが入っているか確認してください
+// ⚠️ ご自身のキーが入っているか確認してください
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
     authDomain: "flickmemo-qwe.web.app",
@@ -55,7 +55,6 @@ const btnNew = document.getElementById('btn-new');
 const btnEmptyTrash = document.getElementById('btn-empty-trash');
 const trashNotice = document.getElementById('trash-notice');
 
-// モーダル・ユーザー情報
 const tabNotes = document.getElementById('tab-notes');
 const tabTrash = document.getElementById('tab-trash');
 const deleteModal = document.getElementById('delete-modal');
@@ -95,6 +94,32 @@ let toastTimer = null;
 let db = null;
 let currentUserId = null;
 
+function setupScrollFade(element) {
+    if (!element) return;
+    let timer = null;
+
+    const triggerShow = () => {
+        element.classList.add('is-scrolling');
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            element.classList.remove('is-scrolling');
+        }, 3000);
+    };
+
+    element.addEventListener('scroll', triggerShow);
+    element.addEventListener('mousemove', triggerShow);
+    element.addEventListener('mouseleave', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            element.classList.remove('is-scrolling');
+        }, 1000);
+    });
+}
+
+setupScrollFade(listContainer);
+setupScrollFade(noteBody);
+setupScrollFade(noteCodeView);
+
 function setStatus(type, text) {
     statusBar.className = `m3-badge status-${type}`;
     statusText.textContent = text;
@@ -133,6 +158,7 @@ function getInitialsAvatar(name) {
 
 function isFullSourceCode(text) {
     if (!text || !text.trim()) return false;
+
     const indicators = [
         /\bimport\s+[\s\S]*?\s+from\s+["']/,
         /\bexport\s+(default|const|let|var|function|class)\b/,
@@ -155,7 +181,6 @@ function isFullSourceCode(text) {
     return matches >= 2;
 }
 
-// ★【超厳格な行判定】(日本語が含まれていたら絶対にコードとして巻き込まない)
 function isPureTextLine(line) {
     const l = line.trim();
     if (!l) return false;
@@ -169,7 +194,7 @@ function isPureTextLine(line) {
 function isCodeLine(line) {
     const l = line.trim();
     if (!l) return true;
-    if (isPureTextLine(l)) return false; // 日本語なら絶対にコード行ではない
+    if (isPureTextLine(l)) return false;
 
     if (l.startsWith('//') || l.startsWith('/*') || l.startsWith('*') || l.startsWith('#')) {
         return true;
@@ -332,23 +357,33 @@ function updateAutoCodeRender(forceRender = false) {
     }
 }
 
-// ★【クリックした直後のテキスト末尾フォーカス＆位置ズレ防止】
-noteCodeView.onclick = (e) => {
+noteCodeView.onmouseup = (e) => {
     if (e.target.closest('.copy-code-btn') || e.target.closest('.collapse-code-btn')) return;
+
+    const rect = noteCodeView.getBoundingClientRect();
+    if (e.clientX >= rect.right - 14) return;
 
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) {
         return;
     }
 
+    const savedScrollTop = noteCodeView.scrollTop;
+    const clickRelativeY = (e.clientY - rect.top) + savedScrollTop;
+    const scrollHeight = noteCodeView.scrollHeight || 1;
+    const clickRatio = Math.min(1, Math.max(0, clickRelativeY / scrollHeight));
+    const targetCaretPos = Math.floor(noteBody.value.length * clickRatio);
+
     noteCodeView.classList.add('hidden');
     noteBody.classList.remove('hidden');
 
-    // 画面が吹っ飛ばないように現在のスクロール位置を完全に維持してフォーカス！
-    const savedScrollTop = noteCodeView.scrollTop;
-    noteBody.focus({ preventScroll: true });
-    noteBody.setSelectionRange(noteBody.value.length, noteBody.value.length);
     noteBody.scrollTop = savedScrollTop;
+
+    noteBody.focus({ preventScroll: true });
+    setTimeout(() => {
+        noteBody.setSelectionRange(targetCaretPos, targetCaretPos);
+        noteBody.scrollTop = savedScrollTop;
+    }, 10);
 };
 
 function buildCodeBlockHTML(lang, rawCode, index, isCollapsed) {
@@ -383,6 +418,7 @@ function escapeHTML(str) {
         .replace(/'/g, "&#039;");
 }
 
+// Undo / Redo 多段階スタック
 let textHistory = [];
 let historyIndex = -1;
 let historyDebounceTimer = null;
@@ -422,7 +458,6 @@ function applyUndoRedoText(targetText) {
     };
     currentNotes[activeNoteId] = updatedNote;
     saveLocalNote(updatedNote);
-    updateTitlePlaceholder(updatedNote);
     updateEditorFooter();
     renderList(searchInput.value);
     updateAutoCodeRender(true);
@@ -518,10 +553,13 @@ function deleteLocalNote(id) {
     tx.objectStore('notes').delete(id);
 }
 
-// ★【ログアウト時・別アカウント時のローカルデータ完全消去保護】
-function clearLocalData() {
+// ★ アカウント切り替え時のローカルデータを100%安全にリセット
+async function clearLocalData() {
     currentNotes = {};
     activeNoteId = null;
+    pendingDeleteId = null;
+    lastMovedToTrashNote = null;
+
     noteBody.value = '';
     noteTitleInput.value = '';
     noteBody.disabled = true;
@@ -535,8 +573,11 @@ function clearLocalData() {
     renderList('');
 
     if (db) {
-        const tx = db.transaction('notes', 'readwrite');
-        tx.objectStore('notes').clear();
+        return new Promise((resolve) => {
+            const tx = db.transaction('notes', 'readwrite');
+            tx.objectStore('notes').clear();
+            tx.oncomplete = () => resolve();
+        });
     }
 }
 
@@ -630,8 +671,6 @@ function renderList(filter = '') {
 
         const li = document.createElement('li');
         li.className = `note-item ${n.id === activeNoteId ? 'active' : ''}`;
-
-        // ★ 枠全体クリックで確実に開く
         li.onclick = () => selectNote(n.id);
 
         const contentDiv = document.createElement('div');
@@ -711,6 +750,7 @@ function selectNote(id, autoFocus = true) {
 
     updateEditorFooter();
     renderList(searchInput.value);
+
     updateAutoCodeRender();
 
     if (window.innerWidth <= 768) {
@@ -820,7 +860,6 @@ btnDeleteCancel.onclick = () => deleteModal.classList.add('hidden');
 btnEmptyTrash.onclick = () => emptyTrashModal.classList.remove('hidden');
 btnEmptyCancel.onclick = () => emptyTrashModal.classList.add('hidden');
 
-// ★ 【バグ修正】ゴミ箱を一括で空にした時、通常メモが勝手に閉じないように修正
 function executeEmptyTrash() {
     emptyTrashModal.classList.add('hidden');
 
@@ -833,7 +872,6 @@ function executeEmptyTrash() {
 
     worker.postMessage({ type: 'CLEAR_ALL_TRASH' });
 
-    // 閲覧中のメモがゴミ箱のものだった場合のみエディタを閉じる
     if (activeNoteId && (!currentNotes[activeNoteId] || currentNotes[activeNoteId].deletedAt)) {
         activeNoteId = null;
         noteTitleInput.value = '';
@@ -1038,12 +1076,13 @@ async function loginWithProvider(provider) {
 
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
 
-onAuthStateChanged(auth, user => {
+// ★【ログアウト時・別アカウント時のローカルデータ完全消去保護】
+onAuthStateChanged(auth, async user => {
     splashScreen.classList.add('hidden');
     if (user) {
-        // ★ ログイン時、以前と違うアカウントならローカルデータを消去して分離！
+        // 以前と違うアカウントならローカルデータを確実に消去して分離！
         if (currentUserId !== null && currentUserId !== user.uid) {
-            clearLocalData();
+            await clearLocalData();
         }
         currentUserId = user.uid;
 
@@ -1071,8 +1110,8 @@ onAuthStateChanged(auth, user => {
 
         worker.postMessage({ type: 'SET_USER', uid: user.uid });
     } else {
-        // ★ ログアウト時に完全にローカルデータをクリア！
-        clearLocalData();
+        // ログアウト時に完全にローカルデータをクリア！
+        await clearLocalData();
         currentUserId = null;
 
         authContainer.classList.remove('hidden');
@@ -1095,7 +1134,7 @@ worker.onmessage = e => {
         renderList(searchInput.value);
 
         if (activeNoteId && currentNotes[activeNoteId]) {
-            // ユーザーが入力中(フォーカス中)の場合は画面を上書きしない！(Undo履歴保護)
+            // ユーザーが入力中(フォーカス中)の場合は画面を上書きしない！
             if (document.activeElement !== noteBody && document.activeElement !== noteTitleInput) {
                 selectNote(activeNoteId, false);
             }
