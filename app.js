@@ -1,8 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-// ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.11";
+const APP_VERSION = "1.1.12";
 
 // ⚠️ キーが入っているか確認してください
 const firebaseConfig = {
@@ -72,7 +71,6 @@ const btnLogoutTrigger = document.getElementById('btn-logout-trigger');
 const btnModalCancel = document.getElementById('btn-modal-cancel');
 const btnModalConfirm = document.getElementById('btn-modal-confirm');
 
-// 設定画面
 const settingsModal = document.getElementById('settings-modal');
 const btnSettingsTrigger = document.getElementById('btn-settings-trigger');
 const btnSettingsClose = document.getElementById('btn-settings-close');
@@ -95,33 +93,7 @@ let lastMovedToTrashNote = null;
 let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
-
-// ★【3秒自動消去機能付きスクロールバー監視】
-function setupScrollFade(element) {
-    if (!element) return;
-    let timer = null;
-
-    const triggerShow = () => {
-        element.classList.add('is-scrolling');
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-            element.classList.remove('is-scrolling');
-        }, 3000); // ピッタリ3秒で消去
-    };
-
-    element.addEventListener('scroll', triggerShow);
-    element.addEventListener('mousemove', triggerShow);
-    element.addEventListener('mouseleave', () => {
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-            element.classList.remove('is-scrolling');
-        }, 1000);
-    });
-}
-
-setupScrollFade(listContainer);
-setupScrollFade(noteBody);
-setupScrollFade(noteCodeView);
+let currentUserId = null;
 
 function setStatus(type, text) {
     statusBar.className = `m3-badge status-${type}`;
@@ -159,10 +131,8 @@ function getInitialsAvatar(name) {
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
-// ソースコード全体一括判定エンジン
 function isFullSourceCode(text) {
     if (!text || !text.trim()) return false;
-
     const indicators = [
         /\bimport\s+[\s\S]*?\s+from\s+["']/,
         /\bexport\s+(default|const|let|var|function|class)\b/,
@@ -185,7 +155,7 @@ function isFullSourceCode(text) {
     return matches >= 2;
 }
 
-// ★【超厳格な行判定】(ひらがな等日本語が含まれ、プログラミング予約語がない行は100%文章とみなす)
+// ★【超厳格な行判定】(日本語が含まれていたら絶対にコードとして巻き込まない)
 function isPureTextLine(line) {
     const l = line.trim();
     if (!l) return false;
@@ -193,14 +163,13 @@ function isPureTextLine(line) {
     const hasJpChars = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(l);
     const hasCodeKeywords = /\b(function|const|let|var|if|else|for|while|return|import|export|class|def|async|await)\b/.test(l);
 
-    // 日本語文字があり、かつ明確なプログラム予約語がない場合は 100% 地文テキスト！
     return hasJpChars && !hasCodeKeywords;
 }
 
 function isCodeLine(line) {
     const l = line.trim();
     if (!l) return true;
-    if (isPureTextLine(l)) return false;
+    if (isPureTextLine(l)) return false; // 日本語なら絶対にコード行ではない
 
     if (l.startsWith('//') || l.startsWith('/*') || l.startsWith('*') || l.startsWith('#')) {
         return true;
@@ -215,7 +184,6 @@ function isCodeLine(line) {
     return hasKeywords || hasSymbols;
 }
 
-// ★【全自動コード変身＆日本語完全切離し統合レンダラー】
 function updateAutoCodeRender(forceRender = false) {
     const text = noteBody.value || '';
     if (!text.trim()) {
@@ -265,7 +233,6 @@ function updateAutoCodeRender(forceRender = false) {
             html += `<p>${escapeHTML(remaining)}</p>`;
         }
     } else {
-        // 厳格な行別スキャン（日本語文章が出た瞬間にコード枠を切り離す！）
         const lines = text.split('\n');
         let currentBlock = [];
         let currentIsCode = null;
@@ -365,41 +332,23 @@ function updateAutoCodeRender(forceRender = false) {
     }
 }
 
-// ★【位置ズレ ＆ 最下部自動スクロールジャンプの完全消去】
-noteCodeView.onmouseup = (e) => {
+// ★【クリックした直後のテキスト末尾フォーカス＆位置ズレ防止】
+noteCodeView.onclick = (e) => {
     if (e.target.closest('.copy-code-btn') || e.target.closest('.collapse-code-btn')) return;
-
-    // 右端スクロールバー上のドラッグ操作は100%除外
-    const rect = noteCodeView.getBoundingClientRect();
-    if (e.clientX >= rect.right - 14) return;
 
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) {
         return;
     }
 
-    // 現在の閲覧スクロール量（Y位置）を正確に保持
-    const savedScrollTop = noteCodeView.scrollTop;
-
-    // クリックされた縦の画面比率から、テキスト全体の概算オフセット位置を計算
-    const clickRelativeY = (e.clientY - rect.top) + savedScrollTop;
-    const scrollHeight = noteCodeView.scrollHeight || 1;
-    const clickRatio = Math.min(1, Math.max(0, clickRelativeY / scrollHeight));
-    const targetCaretPos = Math.floor(noteBody.value.length * clickRatio);
-
-    // 切替 ＆ 勝手なスクロール移動(preventScroll)をブロック！
     noteCodeView.classList.add('hidden');
     noteBody.classList.remove('hidden');
 
-    // スクロール位置をそのまま移植！(画面が最下部に吹っ飛ぶのを防ぐ)
-    noteBody.scrollTop = savedScrollTop;
-
-    // 勝手なスクロールを禁止してフォーカス ＆ カーソル位置セット
+    // 画面が吹っ飛ばないように現在のスクロール位置を完全に維持してフォーカス！
+    const savedScrollTop = noteCodeView.scrollTop;
     noteBody.focus({ preventScroll: true });
-    setTimeout(() => {
-        noteBody.setSelectionRange(targetCaretPos, targetCaretPos);
-        noteBody.scrollTop = savedScrollTop;
-    }, 10);
+    noteBody.setSelectionRange(noteBody.value.length, noteBody.value.length);
+    noteBody.scrollTop = savedScrollTop;
 };
 
 function buildCodeBlockHTML(lang, rawCode, index, isCollapsed) {
@@ -434,7 +383,6 @@ function escapeHTML(str) {
         .replace(/'/g, "&#039;");
 }
 
-// Undo / Redo 多段階スタック
 let textHistory = [];
 let historyIndex = -1;
 let historyDebounceTimer = null;
@@ -474,6 +422,7 @@ function applyUndoRedoText(targetText) {
     };
     currentNotes[activeNoteId] = updatedNote;
     saveLocalNote(updatedNote);
+    updateTitlePlaceholder(updatedNote);
     updateEditorFooter();
     renderList(searchInput.value);
     updateAutoCodeRender(true);
@@ -569,6 +518,28 @@ function deleteLocalNote(id) {
     tx.objectStore('notes').delete(id);
 }
 
+// ★【ログアウト時・別アカウント時のローカルデータ完全消去保護】
+function clearLocalData() {
+    currentNotes = {};
+    activeNoteId = null;
+    noteBody.value = '';
+    noteTitleInput.value = '';
+    noteBody.disabled = true;
+    noteTitleInput.disabled = true;
+    editorToolbar.classList.add('hidden');
+    noteTitleInput.classList.add('hidden');
+    charCount.classList.add('hidden');
+    dateDisplay.classList.add('hidden');
+    noteCodeView.classList.add('hidden');
+
+    renderList('');
+
+    if (db) {
+        const tx = db.transaction('notes', 'readwrite');
+        tx.objectStore('notes').clear();
+    }
+}
+
 function cleanupEmptyNotes(exceptId = null) {
     let changed = false;
     Object.values(currentNotes).forEach(n => {
@@ -659,6 +630,8 @@ function renderList(filter = '') {
 
         const li = document.createElement('li');
         li.className = `note-item ${n.id === activeNoteId ? 'active' : ''}`;
+
+        // ★ 枠全体クリックで確実に開く
         li.onclick = () => selectNote(n.id);
 
         const contentDiv = document.createElement('div');
@@ -738,7 +711,6 @@ function selectNote(id, autoFocus = true) {
 
     updateEditorFooter();
     renderList(searchInput.value);
-
     updateAutoCodeRender();
 
     if (window.innerWidth <= 768) {
@@ -848,6 +820,7 @@ btnDeleteCancel.onclick = () => deleteModal.classList.add('hidden');
 btnEmptyTrash.onclick = () => emptyTrashModal.classList.remove('hidden');
 btnEmptyCancel.onclick = () => emptyTrashModal.classList.add('hidden');
 
+// ★ 【バグ修正】ゴミ箱を一括で空にした時、通常メモが勝手に閉じないように修正
 function executeEmptyTrash() {
     emptyTrashModal.classList.add('hidden');
 
@@ -860,6 +833,7 @@ function executeEmptyTrash() {
 
     worker.postMessage({ type: 'CLEAR_ALL_TRASH' });
 
+    // 閲覧中のメモがゴミ箱のものだった場合のみエディタを閉じる
     if (activeNoteId && (!currentNotes[activeNoteId] || currentNotes[activeNoteId].deletedAt)) {
         activeNoteId = null;
         noteTitleInput.value = '';
@@ -1067,6 +1041,12 @@ document.getElementById('btn-google').onclick = () => loginWithProvider(new Goog
 onAuthStateChanged(auth, user => {
     splashScreen.classList.add('hidden');
     if (user) {
+        // ★ ログイン時、以前と違うアカウントならローカルデータを消去して分離！
+        if (currentUserId !== null && currentUserId !== user.uid) {
+            clearLocalData();
+        }
+        currentUserId = user.uid;
+
         authContainer.classList.add('hidden');
         appContainer.classList.remove('hidden');
         setStatus('synced', 'クラウド同期完了');
@@ -1091,6 +1071,10 @@ onAuthStateChanged(auth, user => {
 
         worker.postMessage({ type: 'SET_USER', uid: user.uid });
     } else {
+        // ★ ログアウト時に完全にローカルデータをクリア！
+        clearLocalData();
+        currentUserId = null;
+
         authContainer.classList.remove('hidden');
         appContainer.classList.add('hidden');
         authLoading.classList.add('hidden');
@@ -1111,6 +1095,7 @@ worker.onmessage = e => {
         renderList(searchInput.value);
 
         if (activeNoteId && currentNotes[activeNoteId]) {
+            // ユーザーが入力中(フォーカス中)の場合は画面を上書きしない！(Undo履歴保護)
             if (document.activeElement !== noteBody && document.activeElement !== noteTitleInput) {
                 selectNote(activeNoteId, false);
             }
