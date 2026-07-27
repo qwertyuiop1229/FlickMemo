@@ -4,7 +4,7 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, o
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
 const APP_VERSION = "1.3.0";
 
-// ⚠️ キーが入っているか確認してください
+// ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
     authDomain: "flickmemo-qwe.web.app",
@@ -56,6 +56,7 @@ const btnNew = document.getElementById('btn-new');
 const btnEmptyTrash = document.getElementById('btn-empty-trash');
 const trashNotice = document.getElementById('trash-notice');
 
+// モーダル・ユーザー情報
 const tabNotes = document.getElementById('tab-notes');
 const tabTrash = document.getElementById('tab-trash');
 const deleteModal = document.getElementById('delete-modal');
@@ -71,6 +72,7 @@ const btnLogoutTrigger = document.getElementById('btn-logout-trigger');
 const btnModalCancel = document.getElementById('btn-modal-cancel');
 const btnModalConfirm = document.getElementById('btn-modal-confirm');
 
+// 設定画面
 const settingsModal = document.getElementById('settings-modal');
 const btnSettingsTrigger = document.getElementById('btn-settings-trigger');
 const btnSettingsClose = document.getElementById('btn-settings-close');
@@ -343,7 +345,6 @@ function updateAutoCodeRender(forceRender = false) {
                     wrapper.classList.toggle('is-collapsed', nextState);
                     btn.querySelector('span').textContent = nextState ? 'unfold_more' : 'unfold_less';
 
-                    // ★ 安全な保存処理（idが含まれているか絶対確認）
                     if (activeNote.id) {
                         saveLocalNote(activeNote);
                         setStatus('saving', 'クラウドに保存中...');
@@ -453,13 +454,17 @@ function applyUndoRedoText(targetText) {
     noteBody.value = targetText;
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
 
+    // ★ 履歴復元時も完全なデータ構造で保存（エラー防止）
     const updatedNote = {
         ...currentNotes[activeNoteId],
+        id: activeNoteId,
+        title: currentNotes[activeNoteId].title || '',
         body: targetText,
+        pinned: currentNotes[activeNoteId].pinned || false,
+        codeCollapsed: currentNotes[activeNoteId].codeCollapsed || {},
         updatedAt: Date.now()
     };
 
-    // ★ 絶対にIDが存在することを確認してから保存
     if (updatedNote.id) {
         currentNotes[activeNoteId] = updatedNote;
         saveLocalNote(updatedNote);
@@ -549,7 +554,7 @@ function loadLocalNotes() {
 }
 
 function saveLocalNote(note) {
-    if (!db || !note.id) return; // ★ 不正データブロック
+    if (!db || !note.id) return;
     const tx = db.transaction('notes', 'readwrite');
     tx.objectStore('notes').put(note);
 }
@@ -560,7 +565,6 @@ function deleteLocalNote(id) {
     tx.objectStore('notes').delete(id);
 }
 
-// アカウント切り替え時のローカルデータを100%安全にリセット
 async function clearLocalData() {
     currentNotes = {};
     activeNoteId = null;
@@ -757,6 +761,7 @@ function selectNote(id, autoFocus = true) {
 
     updateEditorFooter();
     renderList(searchInput.value);
+
     updateAutoCodeRender();
 
     if (window.innerWidth <= 768) {
@@ -783,7 +788,6 @@ noteTitleInput.oninput = () => {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const val = noteTitleInput.value;
 
-    // ★ 絶対にIDが存在することを確認してから保存
     if (currentNotes[activeNoteId].id) {
         currentNotes[activeNoteId].title = val;
         currentNotes[activeNoteId].updatedAt = Date.now();
@@ -972,6 +976,7 @@ btnBack.onclick = () => {
     btnBack.classList.add('hidden');
 };
 
+// ★ 文字タイピング処理（完全なデータのみ送信して無限ループを防止）
 function handleInput() {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const val = noteBody.value;
@@ -980,11 +985,14 @@ function handleInput() {
     const updatedNote = {
         ...currentNotes[activeNoteId],
         id: activeNoteId,
+        title: currentNotes[activeNoteId].title || '',
         body: val,
+        pinned: currentNotes[activeNoteId].pinned || false,
+        codeCollapsed: currentNotes[activeNoteId].codeCollapsed || {},
         updatedAt: Date.now()
     };
 
-    // ★ 絶対にIDが存在することを確認してから保存（permission_denied を100%防ぐ）
+    // ★ IDがセットされていることを絶対保証
     if (updatedNote.id) {
         currentNotes[activeNoteId] = updatedNote;
         saveLocalNote(updatedNote);
@@ -1012,7 +1020,6 @@ noteBody.onblur = () => {
 
 searchInput.oninput = () => renderList(searchInput.value);
 
-// ★ 新規作成時も完全なデータ（IDあり）で作成する
 function createNewNote(autoFocus = true) {
     cleanupEmptyNotes();
 
@@ -1145,6 +1152,7 @@ worker.onmessage = e => {
         renderList(searchInput.value);
 
         if (activeNoteId && currentNotes[activeNoteId]) {
+            // ユーザーが入力中でない場合のみUI更新
             if (document.activeElement !== noteBody && document.activeElement !== noteTitleInput) {
                 selectNote(activeNoteId, false);
             }
