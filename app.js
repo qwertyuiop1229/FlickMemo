@@ -20,7 +20,7 @@ import {
 } from "firebase/database";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.15";
+const APP_VERSION = "1.1.16";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
