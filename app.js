@@ -22,13 +22,14 @@ const auth = getAuth(app);
 const db = getDatabase(app);
 let currentDbRef = null;
 
+// 完全保存
 function syncSaveNote(note) {
     if (!currentUserId || !note || !note.id) return;
     const noteRef = ref(db, `users/${currentUserId}/notes/${note.id}`);
     set(noteRef, note);
 }
 
-// 1文字単位の同期用：変更部分のみ送信してRTDB通信量を最小化
+// 1文字単位の差分更新（RTDB通信量を最小限にする）
 function syncUpdateNoteFields(id, fields) {
     if (!currentUserId || !id || !fields) return;
     const noteRef = ref(db, `users/${currentUserId}/notes/${id}`);
@@ -760,8 +761,8 @@ function renderList(filter = '') {
     });
 }
 
-function selectNote(id, autoFocus = true) {
-    cleanupEmptyNotes(id);
+function selectNote(id, autoFocus = true, isRemoteSync = false) {
+    if (!isRemoteSync) cleanupEmptyNotes(id);
 
     const isSameNote = (activeNoteId === id);
     activeNoteId = id;
@@ -771,10 +772,30 @@ function selectNote(id, autoFocus = true) {
     noteBody.disabled = isTrashNote;
     noteTitleInput.disabled = isTrashNote;
 
-    if (!isSameNote) {
+    // ★ バグ修正：同じノートが開かれていても他端末での編集をリアルタイムに画面へ反映（フォーカス中のキャレット保護）
+    if (document.activeElement === noteTitleInput) {
+        if (noteTitleInput.value !== (n.title || '')) {
+            const start = noteTitleInput.selectionStart;
+            const end = noteTitleInput.selectionEnd;
+            noteTitleInput.value = n.title || '';
+            noteTitleInput.setSelectionRange(start, end);
+        }
+    } else {
         noteTitleInput.value = n.title || '';
+    }
+
+    if (document.activeElement === noteBody) {
+        if (noteBody.value !== (n.body || '')) {
+            const start = noteBody.selectionStart;
+            const end = noteBody.selectionEnd;
+            noteBody.value = n.body || '';
+            noteBody.setSelectionRange(start, end);
+        }
+    } else {
         noteBody.value = n.body || '';
-        resetTextHistory(n.body || '');
+        if (!isSameNote) {
+            resetTextHistory(n.body || '');
+        }
     }
 
     updateTitlePlaceholder(n);
@@ -1162,7 +1183,7 @@ onAuthStateChanged(auth, async user => {
 
         if (userProviderTag) userProviderTag.textContent = "Google";
 
-        // ★ Firebase Realtime Database リアルタイム同期（複数デバイス1文字単位の即時反映＆通信量最小化）
+        // ★ Firebase Realtime Database リアルタイム同期（複数デバイス1文字単位の即時反映＆ループ完全防止）
         if (currentDbRef) {
             off(currentDbRef);
         }
@@ -1190,7 +1211,7 @@ onAuthStateChanged(auth, async user => {
                 }
             });
 
-            // リモートの最新ノートデータで更新
+            // リモートの最新ノートデータでローカルマップとIndexedDBを更新
             Object.values(remoteNotes).forEach(n => {
                 currentNotes[n.id] = n;
                 saveLocalNote(n);
@@ -1199,32 +1220,17 @@ onAuthStateChanged(auth, async user => {
             cleanExpiredTrash();
             renderList(searchInput.value);
 
+            // ★ 同期ループ防止：受信ハンドラ内で createNewNote / cleanupEmptyNotes 等の自動書き込み処理を直接呼ばない
             if (activeNoteId && currentNotes[activeNoteId]) {
-                const activeNote = currentNotes[activeNoteId];
-
-                // 現在フォーカスがある入力欄のテキストを、入力カーソル位置を保持したまま1文字単位で即座にリアルタイム同期
-                if (document.activeElement === noteBody) {
-                    if (noteBody.value !== (activeNote.body || '')) {
-                        const start = noteBody.selectionStart;
-                        const end = noteBody.selectionEnd;
-                        noteBody.value = activeNote.body || '';
-                        noteBody.setSelectionRange(start, end);
-                        updateEditorFooter();
-                        updateTitlePlaceholder(activeNote);
-                    }
-                } else if (document.activeElement === noteTitleInput) {
-                    if (noteTitleInput.value !== (activeNote.title || '')) {
-                        const start = noteTitleInput.selectionStart;
-                        const end = noteTitleInput.selectionEnd;
-                        noteTitleInput.value = activeNote.title || '';
-                        noteTitleInput.setSelectionRange(start, end);
-                        updateEditorFooter();
-                    }
-                } else {
-                    selectNote(activeNoteId, false);
-                }
+                selectNote(activeNoteId, false, true);
             } else {
-                initAutoNote();
+                const validNotes = Object.values(currentNotes)
+                    .filter(n => !n.deletedAt)
+                    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+                if (validNotes.length > 0) {
+                    selectNote(validNotes[0].id, false, true);
+                }
             }
             setStatus('synced', 'クラウド同期完了');
         }, error => {
