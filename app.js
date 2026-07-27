@@ -1,8 +1,25 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {
+    getAuth,
+    signInWithPopup,
+    GoogleAuthProvider,
+    OAuthProvider,
+    signOut,
+    onAuthStateChanged,
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {
+    getDatabase,
+    ref,
+    set,
+    remove,
+    get,
+    update,
+    onValue,
+    off,
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.1.14";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -18,83 +35,114 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const db = getDatabase(app);
+let currentDbRef = null;
 
-const worker = new Worker('worker.js', { type: 'module' });
-worker.postMessage({ type: 'INIT_FIREBASE', config: firebaseConfig });
+function syncSaveNote(note) {
+    if (!currentUserId || !note || !note.id) return;
+    const noteRef = ref(db, `users/${currentUserId}/notes/${note.id}`);
+    set(noteRef, note);
+}
+
+function syncDeleteNote(id) {
+    if (!currentUserId || !id) return;
+    const noteRef = ref(db, `users/${currentUserId}/notes/${id}`);
+    remove(noteRef);
+}
+
+function syncClearTrash() {
+    if (!currentUserId) return;
+    const notesRef = ref(db, `users/${currentUserId}/notes`);
+    get(notesRef)
+        .then((snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                const updates = {};
+                Object.keys(data).forEach((key) => {
+                    if (data[key].deletedAt) {
+                        updates[key] = null;
+                    }
+                });
+                update(notesRef, updates);
+            }
+        })
+        .catch((err) => console.error("Clear trash error:", err));
+}
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 // DOM要素
-const splashScreen = document.getElementById('splash-screen');
-const authContainer = document.getElementById('auth-container');
-const appContainer = document.getElementById('app-container');
-const mainLayout = document.getElementById('main-layout');
-const listContainer = document.getElementById('list-container');
-const noteList = document.getElementById('note-list');
-const emptyState = document.getElementById('empty-state');
-const noteTitleInput = document.getElementById('note-title-input');
-const noteBody = document.getElementById('note-body');
-const noteCodeView = document.getElementById('note-code-view');
+const splashScreen = document.getElementById("splash-screen");
+const authContainer = document.getElementById("auth-container");
+const appContainer = document.getElementById("app-container");
+const mainLayout = document.getElementById("main-layout");
+const listContainer = document.getElementById("list-container");
+const noteList = document.getElementById("note-list");
+const emptyState = document.getElementById("empty-state");
+const noteTitleInput = document.getElementById("note-title-input");
+const noteBody = document.getElementById("note-body");
+const noteCodeView = document.getElementById("note-code-view");
 
-const statusBar = document.getElementById('status-bar');
-const statusText = document.getElementById('status-text');
-const btnBack = document.getElementById('btn-back');
-const searchInput = document.getElementById('search-input');
-const authLoading = document.getElementById('auth-loading');
-const authButtons = document.getElementById('auth-buttons');
-const editorToolbar = document.getElementById('editor-toolbar');
-const charCount = document.getElementById('char-count');
-const dateDisplay = document.getElementById('date-display');
-const btnPin = document.getElementById('btn-pin');
-const btnTrashIndicator = document.getElementById('btn-trash-indicator');
-const btnCopy = document.getElementById('btn-copy');
-const btnUndo = document.getElementById('btn-undo');
-const btnRedo = document.getElementById('btn-redo');
-const btnRestoreTrash = document.getElementById('btn-restore-trash');
+const statusBar = document.getElementById("status-bar");
+const statusText = document.getElementById("status-text");
+const btnBack = document.getElementById("btn-back");
+const searchInput = document.getElementById("search-input");
+const authLoading = document.getElementById("auth-loading");
+const authButtons = document.getElementById("auth-buttons");
+const editorToolbar = document.getElementById("editor-toolbar");
+const charCount = document.getElementById("char-count");
+const dateDisplay = document.getElementById("date-display");
+const btnPin = document.getElementById("btn-pin");
+const btnTrashIndicator = document.getElementById("btn-trash-indicator");
+const btnCopy = document.getElementById("btn-copy");
+const btnUndo = document.getElementById("btn-undo");
+const btnRedo = document.getElementById("btn-redo");
+const btnRestoreTrash = document.getElementById("btn-restore-trash");
 
-const btnNew = document.getElementById('btn-new');
-const btnEmptyTrash = document.getElementById('btn-empty-trash');
-const trashNotice = document.getElementById('trash-notice');
+const btnNew = document.getElementById("btn-new");
+const btnEmptyTrash = document.getElementById("btn-empty-trash");
+const trashNotice = document.getElementById("trash-notice");
 
 // モーダル・ユーザー情報
-const tabNotes = document.getElementById('tab-notes');
-const tabTrash = document.getElementById('tab-trash');
-const deleteModal = document.getElementById('delete-modal');
-const btnDeleteCancel = document.getElementById('btn-delete-cancel');
-const btnDeleteConfirm = document.getElementById('btn-delete-confirm');
+const tabNotes = document.getElementById("tab-notes");
+const tabTrash = document.getElementById("tab-trash");
+const deleteModal = document.getElementById("delete-modal");
+const btnDeleteCancel = document.getElementById("btn-delete-cancel");
+const btnDeleteConfirm = document.getElementById("btn-delete-confirm");
 
-const emptyTrashModal = document.getElementById('empty-trash-modal');
-const btnEmptyCancel = document.getElementById('btn-empty-cancel');
-const btnEmptyConfirm = document.getElementById('btn-empty-confirm');
+const emptyTrashModal = document.getElementById("empty-trash-modal");
+const btnEmptyCancel = document.getElementById("btn-empty-cancel");
+const btnEmptyConfirm = document.getElementById("btn-empty-confirm");
 
-const logoutModal = document.getElementById('logout-modal');
-const btnLogoutTrigger = document.getElementById('btn-logout-trigger');
-const btnModalCancel = document.getElementById('btn-modal-cancel');
-const btnModalConfirm = document.getElementById('btn-modal-confirm');
+const logoutModal = document.getElementById("logout-modal");
+const btnLogoutTrigger = document.getElementById("btn-logout-trigger");
+const btnModalCancel = document.getElementById("btn-modal-cancel");
+const btnModalConfirm = document.getElementById("btn-modal-confirm");
 
 // 設定画面
-const settingsModal = document.getElementById('settings-modal');
-const btnSettingsTrigger = document.getElementById('btn-settings-trigger');
-const btnSettingsClose = document.getElementById('btn-settings-close');
-const btnUpdateCheck = document.getElementById('btn-update-check');
-const appVersionDisplay = document.getElementById('app-version-display');
-const userAvatar = document.getElementById('user-avatar');
-const userName = document.getElementById('user-name');
-const userEmail = document.getElementById('user-email');
-const userProviderTag = document.getElementById('user-provider-tag');
-const btnSettingsLogoutAction = document.getElementById('btn-settings-logout-action');
+const settingsModal = document.getElementById("settings-modal");
+const btnSettingsTrigger = document.getElementById("btn-settings-trigger");
+const btnSettingsClose = document.getElementById("btn-settings-close");
+const btnUpdateCheck = document.getElementById("btn-update-check");
+const appVersionDisplay = document.getElementById("app-version-display");
+const userAvatar = document.getElementById("user-avatar");
+const userName = document.getElementById("user-name");
+const userEmail = document.getElementById("user-email");
+const userProviderTag = document.getElementById("user-provider-tag");
+const btnSettingsLogoutAction = document.getElementById(
+    "btn-settings-logout-action",
+);
 
-const toastMsg = document.getElementById('toast-msg');
-const toastText = document.getElementById('toast-text');
-const btnToastAction = document.getElementById('btn-toast-action');
+const toastMsg = document.getElementById("toast-msg");
+const toastText = document.getElementById("toast-text");
+const btnToastAction = document.getElementById("btn-toast-action");
 
 let currentNotes = {};
 let activeNoteId = null;
 let pendingDeleteId = null;
 let lastMovedToTrashNote = null;
-let currentTab = 'notes';
+let currentTab = "notes";
 let toastTimer = null;
-let db = null;
 let currentUserId = null;
 
 function setupScrollFade(element) {
@@ -102,19 +150,19 @@ function setupScrollFade(element) {
     let timer = null;
 
     const triggerShow = () => {
-        element.classList.add('is-scrolling');
+        element.classList.add("is-scrolling");
         clearTimeout(timer);
         timer = setTimeout(() => {
-            element.classList.remove('is-scrolling');
+            element.classList.remove("is-scrolling");
         }, 3000);
     };
 
-    element.addEventListener('scroll', triggerShow);
-    element.addEventListener('mousemove', triggerShow);
-    element.addEventListener('mouseleave', () => {
+    element.addEventListener("scroll", triggerShow);
+    element.addEventListener("mousemove", triggerShow);
+    element.addEventListener("mouseleave", () => {
         clearTimeout(timer);
         timer = setTimeout(() => {
-            element.classList.remove('is-scrolling');
+            element.classList.remove("is-scrolling");
         }, 1000);
     });
 }
@@ -130,33 +178,37 @@ function setStatus(type, text) {
 
 function showToast(msg, actionCallback = null) {
     toastText.textContent = msg;
-    toastMsg.classList.remove('hidden');
+    toastMsg.classList.remove("hidden");
 
     if (actionCallback) {
-        btnToastAction.classList.remove('hidden');
+        btnToastAction.classList.remove("hidden");
         btnToastAction.onclick = () => {
             actionCallback();
-            toastMsg.classList.add('hidden');
+            toastMsg.classList.add("hidden");
         };
     } else {
-        btnToastAction.classList.add('hidden');
+        btnToastAction.classList.add("hidden");
     }
 
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastMsg.classList.add('hidden'), 4000);
+    toastTimer = setTimeout(() => toastMsg.classList.add("hidden"), 4000);
 }
 
-window.addEventListener('online', () => setStatus('saving', 'オンライン復帰・同期中...'));
-window.addEventListener('offline', () => setStatus('offline', 'ローカル保存済み'));
+window.addEventListener("online", () =>
+    setStatus("saving", "オンライン復帰・同期中..."),
+);
+window.addEventListener("offline", () =>
+    setStatus("offline", "ローカル保存済み"),
+);
 
 function renderAppVersion() {
     appVersionDisplay.textContent = `v${APP_VERSION}`;
 }
 
 function getInitialsAvatar(name) {
-    const initial = (name || 'U').charAt(0).toUpperCase();
+    const initial = (name || "U").charAt(0).toUpperCase();
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#042f66" rx="32"/><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" fill="#a8c7fa" font-size="28" font-family="sans-serif" font-weight="bold">${initial}</text></svg>`;
-    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+    return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }
 
 function isFullSourceCode(text) {
@@ -174,7 +226,7 @@ function isFullSourceCode(text) {
         /\bconst\s+\w+\s*=\s*/,
         /\blet\s+\w+\s*=\s*/,
         /\bclass\s+\w+/,
-        /\bdef\s+\w+\s*\(/
+        /\bdef\s+\w+\s*\(/,
     ];
 
     let matches = 0;
@@ -189,7 +241,10 @@ function isPureTextLine(line) {
     if (!l) return false;
 
     const hasJpChars = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(l);
-    const hasCodeKeywords = /\b(function|const|let|var|if|else|for|while|return|import|export|class|def|async|await)\b/.test(l);
+    const hasCodeKeywords =
+        /\b(function|const|let|var|if|else|for|while|return|import|export|class|def|async|await)\b/.test(
+            l,
+        );
 
     return hasJpChars && !hasCodeKeywords;
 }
@@ -199,41 +254,50 @@ function isCodeLine(line) {
     if (!l) return true;
     if (isPureTextLine(l)) return false;
 
-    if (l.startsWith('//') || l.startsWith('/*') || l.startsWith('*') || l.startsWith('#')) {
+    if (
+        l.startsWith("//") ||
+        l.startsWith("/*") ||
+        l.startsWith("*") ||
+        l.startsWith("#")
+    ) {
         return true;
     }
 
-    let cleanLine = l.replace(/\/\/.*$/, '').replace(/#.*$/, '');
+    let cleanLine = l.replace(/\/\/.*$/, "").replace(/#.*$/, "");
     cleanLine = cleanLine.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
 
-    const hasKeywords = /\b(import|export|const|let|var|function|async|await|return|class|if|else|for|while|def|console|document|window|MutationObserver|initializeApp|getAuth)\b/.test(cleanLine);
+    const hasKeywords =
+        /\b(import|export|const|let|var|function|async|await|return|class|if|else|for|while|def|console|document|window|MutationObserver|initializeApp|getAuth)\b/.test(
+            cleanLine,
+        );
     const hasSymbols = /[\{\}\(\)\[\];=><\+\-\*\/]/.test(cleanLine);
 
     return hasKeywords || hasSymbols;
 }
 
 function updateAutoCodeRender(forceRender = false) {
-    const text = noteBody.value || '';
+    const text = noteBody.value || "";
     if (!text.trim()) {
-        noteBody.classList.remove('hidden');
-        noteCodeView.classList.add('hidden');
+        noteBody.classList.remove("hidden");
+        noteCodeView.classList.add("hidden");
         return;
     }
 
     const activeNote = activeNoteId ? currentNotes[activeNoteId] : null;
-    const collapsedState = (activeNote && activeNote.codeCollapsed) ? activeNote.codeCollapsed : {};
+    const collapsedState =
+        activeNote && activeNote.codeCollapsed ? activeNote.codeCollapsed : {};
 
     const isFullCode = isFullSourceCode(text);
     const hasMarkdownBlock = /```[\s\S]*?```/.test(text);
 
     let hasAnyCode = false;
-    let html = '';
+    let html = "";
     let blockIndex = 0;
 
     if (isFullCode) {
         hasAnyCode = true;
         const isCollapsed = !!collapsedState[`block_0`];
-        html = buildCodeBlockHTML('javascript', text.trim(), 0, isCollapsed);
+        html = buildCodeBlockHTML("javascript", text.trim(), 0, isCollapsed);
     } else if (hasMarkdownBlock) {
         hasAnyCode = true;
         const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
@@ -246,7 +310,7 @@ function updateAutoCodeRender(forceRender = false) {
                 html += `<p>${escapeHTML(plainText)}</p>`;
             }
 
-            const lang = (match[1] || 'javascript').toLowerCase();
+            const lang = (match[1] || "javascript").toLowerCase();
             const rawCode = match[2].trim();
             const isCollapsed = !!collapsedState[`block_${blockIndex}`];
 
@@ -261,7 +325,7 @@ function updateAutoCodeRender(forceRender = false) {
             html += `<p>${escapeHTML(remaining)}</p>`;
         }
     } else {
-        const lines = text.split('\n');
+        const lines = text.split("\n");
         let currentBlock = [];
         let currentIsCode = null;
 
@@ -270,13 +334,13 @@ function updateAutoCodeRender(forceRender = false) {
             const lineIsCode = !lineIsText && isCodeLine(line);
             const isBlank = !line.trim();
 
-            let targetType = 'TEXT';
+            let targetType = "TEXT";
             if (lineIsText) {
-                targetType = 'TEXT';
+                targetType = "TEXT";
             } else if (lineIsCode) {
-                targetType = 'CODE';
+                targetType = "CODE";
             } else if (isBlank) {
-                targetType = currentIsCode ?? 'TEXT';
+                targetType = currentIsCode ?? "TEXT";
             }
 
             if (currentIsCode === null) {
@@ -285,12 +349,17 @@ function updateAutoCodeRender(forceRender = false) {
             } else if (currentIsCode === targetType) {
                 currentBlock.push(line);
             } else {
-                const blockContent = currentBlock.join('\n').trim();
+                const blockContent = currentBlock.join("\n").trim();
                 if (blockContent) {
-                    if (currentIsCode === 'CODE') {
+                    if (currentIsCode === "CODE") {
                         hasAnyCode = true;
                         const isCollapsed = !!collapsedState[`block_${blockIndex}`];
-                        html += buildCodeBlockHTML('javascript', blockContent, blockIndex, isCollapsed);
+                        html += buildCodeBlockHTML(
+                            "javascript",
+                            blockContent,
+                            blockIndex,
+                            isCollapsed,
+                        );
                         blockIndex++;
                     } else {
                         html += `<p>${escapeHTML(blockContent)}</p>`;
@@ -302,12 +371,17 @@ function updateAutoCodeRender(forceRender = false) {
         });
 
         if (currentBlock.length > 0) {
-            const blockContent = currentBlock.join('\n').trim();
+            const blockContent = currentBlock.join("\n").trim();
             if (blockContent) {
-                if (currentIsCode === 'CODE') {
+                if (currentIsCode === "CODE") {
                     hasAnyCode = true;
                     const isCollapsed = !!collapsedState[`block_${blockIndex}`];
-                    html += buildCodeBlockHTML('javascript', blockContent, blockIndex, isCollapsed);
+                    html += buildCodeBlockHTML(
+                        "javascript",
+                        blockContent,
+                        blockIndex,
+                        isCollapsed,
+                    );
                     blockIndex++;
                 } else {
                     html += `<p>${escapeHTML(blockContent)}</p>`;
@@ -322,48 +396,56 @@ function updateAutoCodeRender(forceRender = false) {
             Prism.highlightAllUnder(noteCodeView);
         }
 
-        noteCodeView.querySelectorAll('.copy-code-btn').forEach(btn => {
+        noteCodeView.querySelectorAll(".copy-code-btn").forEach((btn) => {
             btn.onclick = (e) => {
                 e.stopPropagation();
-                const code = decodeURIComponent(btn.getAttribute('data-code'));
+                const code = decodeURIComponent(btn.getAttribute("data-code"));
                 navigator.clipboard.writeText(code);
                 showToast("コードをコピーしました");
             };
         });
 
-        noteCodeView.querySelectorAll('.collapse-code-btn').forEach(btn => {
+        noteCodeView.querySelectorAll(".collapse-code-btn").forEach((btn) => {
             btn.onclick = (e) => {
                 e.stopPropagation();
-                const idx = btn.getAttribute('data-index');
-                const wrapper = noteCodeView.querySelector(`.code-block-wrapper[data-index="${idx}"]`);
+                const idx = btn.getAttribute("data-index");
+                const wrapper = noteCodeView.querySelector(
+                    `.code-block-wrapper[data-index="${idx}"]`,
+                );
 
                 if (activeNote) {
                     activeNote.codeCollapsed = activeNote.codeCollapsed || {};
-                    const nextState = !wrapper.classList.contains('is-collapsed');
+                    const nextState = !wrapper.classList.contains("is-collapsed");
                     activeNote.codeCollapsed[`block_${idx}`] = nextState;
 
-                    wrapper.classList.toggle('is-collapsed', nextState);
-                    btn.querySelector('span').textContent = nextState ? 'unfold_more' : 'unfold_less';
+                    wrapper.classList.toggle("is-collapsed", nextState);
+                    btn.querySelector("span").textContent = nextState
+                        ? "unfold_more"
+                        : "unfold_less";
 
                     if (activeNote.id) {
                         saveLocalNote(activeNote);
-                        setStatus('saving', 'クラウドに保存中...');
-                        worker.postMessage({ type: 'SAVE_NOTE', note: activeNote });
+                        setStatus("saving", "クラウドに保存中...");
+                        syncSaveNote(activeNote);
                     }
                 }
             };
         });
 
-        noteBody.classList.add('hidden');
-        noteCodeView.classList.remove('hidden');
+        noteBody.classList.add("hidden");
+        noteCodeView.classList.remove("hidden");
     } else {
-        noteBody.classList.remove('hidden');
-        noteCodeView.classList.add('hidden');
+        noteBody.classList.remove("hidden");
+        noteCodeView.classList.add("hidden");
     }
 }
 
 noteCodeView.onmouseup = (e) => {
-    if (e.target.closest('.copy-code-btn') || e.target.closest('.collapse-code-btn')) return;
+    if (
+        e.target.closest(".copy-code-btn") ||
+        e.target.closest(".collapse-code-btn")
+    )
+        return;
 
     const rect = noteCodeView.getBoundingClientRect();
     if (e.clientX >= rect.right - 14) return;
@@ -374,13 +456,13 @@ noteCodeView.onmouseup = (e) => {
     }
 
     const savedScrollTop = noteCodeView.scrollTop;
-    const clickRelativeY = (e.clientY - rect.top) + savedScrollTop;
+    const clickRelativeY = e.clientY - rect.top + savedScrollTop;
     const scrollHeight = noteCodeView.scrollHeight || 1;
     const clickRatio = Math.min(1, Math.max(0, clickRelativeY / scrollHeight));
     const targetCaretPos = Math.floor(noteBody.value.length * clickRatio);
 
-    noteCodeView.classList.add('hidden');
-    noteBody.classList.remove('hidden');
+    noteCodeView.classList.add("hidden");
+    noteBody.classList.remove("hidden");
 
     noteBody.scrollTop = savedScrollTop;
 
@@ -393,8 +475,8 @@ noteCodeView.onmouseup = (e) => {
 
 function buildCodeBlockHTML(lang, rawCode, index, isCollapsed) {
     const escapedCode = escapeHTML(rawCode);
-    const iconName = isCollapsed ? 'unfold_more' : 'unfold_less';
-    const collapseClass = isCollapsed ? 'is-collapsed' : '';
+    const iconName = isCollapsed ? "unfold_more" : "unfold_less";
+    const collapseClass = isCollapsed ? "is-collapsed" : "";
 
     return `
     <div class="code-block-wrapper ${collapseClass}" data-index="${index}">
@@ -427,7 +509,7 @@ let textHistory = [];
 let historyIndex = -1;
 let historyDebounceTimer = null;
 
-function resetTextHistory(initialText = '') {
+function resetTextHistory(initialText = "") {
     textHistory = [initialText];
     historyIndex = 0;
     updateUndoRedoButtons();
@@ -458,11 +540,11 @@ function applyUndoRedoText(targetText) {
     const updatedNote = {
         ...currentNotes[activeNoteId],
         id: activeNoteId,
-        title: currentNotes[activeNoteId].title || '',
+        title: currentNotes[activeNoteId].title || "",
         body: targetText,
         pinned: currentNotes[activeNoteId].pinned || false,
         codeCollapsed: currentNotes[activeNoteId].codeCollapsed || {},
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
     };
 
     if (updatedNote.id) {
@@ -472,8 +554,8 @@ function applyUndoRedoText(targetText) {
         updateEditorFooter();
         renderList(searchInput.value);
         updateAutoCodeRender(true);
-        setStatus('saving', 'クラウドに保存中...');
-        worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+        setStatus("saving", "クラウドに保存中...");
+        syncSaveNote(updatedNote);
     }
 }
 
@@ -498,27 +580,30 @@ function getNoteDisplayTitle(note) {
     if (note.title && note.title.trim()) {
         return note.title.trim();
     }
-    const body = note.body || '';
+    const body = note.body || "";
     if (!body.trim()) return "空のメモ";
-    const lines = body.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    const lines = body
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
     if (lines.length === 0) return "空のメモ";
     const firstLine = lines[0];
-    return firstLine.replace(/^([#*\-–—•>\d\.\s]+)/, '').trim() || firstLine;
+    return firstLine.replace(/^([#*\-–—•>\d\.\s]+)/, "").trim() || firstLine;
 }
 
 function getDateGroup(timestamp) {
-    if (!timestamp) return 'それ以前';
+    if (!timestamp) return "それ以前";
     const now = new Date();
     const date = new Date(timestamp);
-    if (now.toDateString() === date.toDateString()) return '今日';
+    if (now.toDateString() === date.toDateString()) return "今日";
     const yesterday = new Date(now);
     yesterday.setDate(now.getDate() - 1);
-    if (yesterday.toDateString() === date.toDateString()) return '昨日';
+    if (yesterday.toDateString() === date.toDateString()) return "昨日";
     return `${date.getMonth() + 1}月${date.getDate()}日`;
 }
 
 function formatDateOnly(timestamp) {
-    if (!timestamp) return '';
+    if (!timestamp) return "";
     const d = new Date(timestamp);
     return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }
@@ -532,20 +617,22 @@ function getDaysRemaining(deletedAt) {
 }
 
 // IndexedDB
-const dbReq = indexedDB.open('FlickMemoDB', 1);
-dbReq.onupgradeneeded = e => e.target.result.createObjectStore('notes', { keyPath: 'id' });
-dbReq.onsuccess = e => {
-    db = e.target.result;
+let idb = null;
+const dbReq = indexedDB.open("FlickMemoDB", 1);
+dbReq.onupgradeneeded = (e) =>
+    e.target.result.createObjectStore("notes", { keyPath: "id" });
+dbReq.onsuccess = (e) => {
+    idb = e.target.result;
     loadLocalNotes();
 };
 
 function loadLocalNotes() {
-    if (!db) return;
-    const tx = db.transaction('notes', 'readonly');
-    const req = tx.objectStore('notes').getAll();
+    if (!idb) return;
+    const tx = idb.transaction("notes", "readonly");
+    const req = tx.objectStore("notes").getAll();
     req.onsuccess = () => {
         currentNotes = {};
-        req.result.forEach(n => currentNotes[n.id] = n);
+        req.result.forEach((n) => (currentNotes[n.id] = n));
         cleanExpiredTrash();
         cleanupEmptyNotes();
         renderList(searchInput.value);
@@ -554,15 +641,15 @@ function loadLocalNotes() {
 }
 
 function saveLocalNote(note) {
-    if (!db || !note.id) return;
-    const tx = db.transaction('notes', 'readwrite');
-    tx.objectStore('notes').put(note);
+    if (!idb || !note.id) return;
+    const tx = idb.transaction("notes", "readwrite");
+    tx.objectStore("notes").put(note);
 }
 
 function deleteLocalNote(id) {
-    if (!db || !id) return;
-    const tx = db.transaction('notes', 'readwrite');
-    tx.objectStore('notes').delete(id);
+    if (!idb || !id) return;
+    const tx = idb.transaction("notes", "readwrite");
+    tx.objectStore("notes").delete(id);
 }
 
 async function clearLocalData() {
@@ -571,22 +658,22 @@ async function clearLocalData() {
     pendingDeleteId = null;
     lastMovedToTrashNote = null;
 
-    noteBody.value = '';
-    noteTitleInput.value = '';
+    noteBody.value = "";
+    noteTitleInput.value = "";
     noteBody.disabled = true;
     noteTitleInput.disabled = true;
-    editorToolbar.classList.add('hidden');
-    noteTitleInput.classList.add('hidden');
-    charCount.classList.add('hidden');
-    dateDisplay.classList.add('hidden');
-    noteCodeView.classList.add('hidden');
+    editorToolbar.classList.add("hidden");
+    noteTitleInput.classList.add("hidden");
+    charCount.classList.add("hidden");
+    dateDisplay.classList.add("hidden");
+    noteCodeView.classList.add("hidden");
 
-    renderList('');
+    renderList("");
 
-    if (db) {
+    if (idb) {
         return new Promise((resolve) => {
-            const tx = db.transaction('notes', 'readwrite');
-            tx.objectStore('notes').clear();
+            const tx = idb.transaction("notes", "readwrite");
+            tx.objectStore("notes").clear();
             tx.oncomplete = () => resolve();
         });
     }
@@ -594,24 +681,34 @@ async function clearLocalData() {
 
 function cleanupEmptyNotes(exceptId = null) {
     let changed = false;
-    Object.values(currentNotes).forEach(n => {
-        if (n.id !== exceptId && !n.deletedAt && (!n.body || !n.body.trim()) && (!n.title || !n.title.trim())) {
+    Object.values(currentNotes).forEach((n) => {
+        if (
+            n.id !== exceptId &&
+            !n.deletedAt &&
+            (!n.body || !n.body.trim()) &&
+            (!n.title || !n.title.trim())
+        ) {
             delete currentNotes[n.id];
             deleteLocalNote(n.id);
-            worker.postMessage({ type: 'PERMANENT_DELETE_NOTE', id: n.id });
+            syncDeleteNote(n.id);
             changed = true;
         }
     });
     if (changed) renderList(searchInput.value);
 }
 
-window.addEventListener('beforeunload', () => {
+window.addEventListener("beforeunload", () => {
     cleanupEmptyNotes();
 });
 
 function initAutoNote() {
-    if (currentTab !== 'notes') return;
-    const existingEmpty = Object.values(currentNotes).find(n => !n.deletedAt && (!n.body || !n.body.trim()) && (!n.title || !n.title.trim()));
+    if (currentTab !== "notes") return;
+    const existingEmpty = Object.values(currentNotes).find(
+        (n) =>
+            !n.deletedAt &&
+            (!n.body || !n.body.trim()) &&
+            (!n.title || !n.title.trim()),
+    );
     if (existingEmpty) {
         selectNote(existingEmpty.id, true);
     } else {
@@ -621,27 +718,30 @@ function initAutoNote() {
 
 function cleanExpiredTrash() {
     const now = Date.now();
-    Object.values(currentNotes).forEach(n => {
-        if (n.deletedAt && (now - n.deletedAt > SEVEN_DAYS_MS)) {
+    Object.values(currentNotes).forEach((n) => {
+        if (n.deletedAt && now - n.deletedAt > SEVEN_DAYS_MS) {
             delete currentNotes[n.id];
             deleteLocalNote(n.id);
-            worker.postMessage({ type: 'PERMANENT_DELETE_NOTE', id: n.id });
+            syncDeleteNote(n.id);
         }
     });
 }
 
-function renderList(filter = '') {
-    noteList.innerHTML = '';
+function renderList(filter = "") {
+    noteList.innerHTML = "";
     const now = Date.now();
 
     const filtered = Object.values(currentNotes)
-        .filter(n => {
-            if (currentTab === 'notes') return !n.deletedAt;
-            return !!n.deletedAt && (now - n.deletedAt <= SEVEN_DAYS_MS);
+        .filter((n) => {
+            if (currentTab === "notes") return !n.deletedAt;
+            return !!n.deletedAt && now - n.deletedAt <= SEVEN_DAYS_MS;
         })
-        .filter(n => (n.body || '').includes(filter) || (n.title || '').includes(filter))
+        .filter(
+            (n) =>
+                (n.body || "").includes(filter) || (n.title || "").includes(filter),
+        )
         .sort((a, b) => {
-            if (currentTab === 'notes') {
+            if (currentTab === "notes") {
                 const aPinned = !!a.pinned;
                 const bPinned = !!b.pinned;
                 if (aPinned !== bPinned) return aPinned ? -1 : 1;
@@ -650,68 +750,71 @@ function renderList(filter = '') {
         });
 
     if (filtered.length === 0) {
-        emptyState.textContent = currentTab === 'notes' ? "メモがありません" : "ゴミ箱は空です";
-        emptyState.classList.remove('hidden');
+        emptyState.textContent =
+            currentTab === "notes" ? "メモがありません" : "ゴミ箱は空です";
+        emptyState.classList.remove("hidden");
         return;
     } else {
-        emptyState.classList.add('hidden');
+        emptyState.classList.add("hidden");
     }
 
-    let currentGroupKey = '';
+    let currentGroupKey = "";
 
-    filtered.forEach(n => {
-        let groupKey = '';
-        let groupHeaderHTML = '';
+    filtered.forEach((n) => {
+        let groupKey = "";
+        let groupHeaderHTML = "";
 
-        if (currentTab === 'notes' && n.pinned) {
-            groupKey = 'pinned';
+        if (currentTab === "notes" && n.pinned) {
+            groupKey = "pinned";
             groupHeaderHTML = `<span class="material-symbols-outlined" style="font-size:15px; vertical-align:middle; color:var(--m3-primary);">push_pin</span> ピン留め`;
         } else {
-            const dateText = getDateGroup(currentTab === 'notes' ? n.updatedAt : n.deletedAt);
+            const dateText = getDateGroup(
+                currentTab === "notes" ? n.updatedAt : n.deletedAt,
+            );
             groupKey = dateText;
             groupHeaderHTML = dateText;
         }
 
         if (groupKey !== currentGroupKey) {
             currentGroupKey = groupKey;
-            const groupHeader = document.createElement('div');
-            groupHeader.className = 'date-group-header';
+            const groupHeader = document.createElement("div");
+            groupHeader.className = "date-group-header";
             groupHeader.innerHTML = groupHeaderHTML;
             noteList.appendChild(groupHeader);
         }
 
-        const li = document.createElement('li');
-        li.className = `note-item ${n.id === activeNoteId ? 'active' : ''}`;
+        const li = document.createElement("li");
+        li.className = `note-item ${n.id === activeNoteId ? "active" : ""}`;
         li.onclick = () => selectNote(n.id);
 
-        const contentDiv = document.createElement('div');
-        contentDiv.className = 'item-content';
+        const contentDiv = document.createElement("div");
+        contentDiv.className = "item-content";
 
-        const titleSpan = document.createElement('span');
-        titleSpan.className = 'title';
-        if (n.pinned && currentTab === 'notes') {
+        const titleSpan = document.createElement("span");
+        titleSpan.className = "title";
+        if (n.pinned && currentTab === "notes") {
             titleSpan.innerHTML = `<span class="material-symbols-outlined pin-icon">push_pin</span> ${getNoteDisplayTitle(n)}`;
         } else {
             titleSpan.textContent = getNoteDisplayTitle(n);
         }
         contentDiv.appendChild(titleSpan);
 
-        if (currentTab === 'trash') {
-            const subMeta = document.createElement('span');
-            subMeta.className = 'sub-meta';
+        if (currentTab === "trash") {
+            const subMeta = document.createElement("span");
+            subMeta.className = "sub-meta";
             const daysLeft = getDaysRemaining(n.deletedAt);
             subMeta.textContent = `${formatDateOnly(n.deletedAt)} 移動 • 残り ${daysLeft}日`;
             contentDiv.appendChild(subMeta);
         }
 
-        const delBtn = document.createElement('button');
-        delBtn.className = 'btn-delete';
-        delBtn.title = currentTab === 'notes' ? 'ゴミ箱へ' : '完全削除';
-        delBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">${currentTab === 'notes' ? 'delete' : 'delete_forever'}</span>`;
+        const delBtn = document.createElement("button");
+        delBtn.className = "btn-delete";
+        delBtn.title = currentTab === "notes" ? "ゴミ箱へ" : "完全削除";
+        delBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">${currentTab === "notes" ? "delete" : "delete_forever"}</span>`;
 
         delBtn.onclick = (e) => {
             e.stopPropagation();
-            if (currentTab === 'notes') {
+            if (currentTab === "notes") {
                 moveToTrash(n.id);
             } else {
                 openDeleteModal(n.id);
@@ -727,36 +830,42 @@ function renderList(filter = '') {
 function selectNote(id, autoFocus = true) {
     cleanupEmptyNotes(id);
 
-    const isSameNote = (activeNoteId === id);
+    const isSameNote = activeNoteId === id;
     activeNoteId = id;
-    const n = currentNotes[id] || { title: '', body: '', pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
+    const n = currentNotes[id] || {
+        title: "",
+        body: "",
+        pinned: false,
+        codeCollapsed: {},
+        updatedAt: Date.now(),
+    };
 
     const isTrashNote = !!n.deletedAt;
     noteBody.disabled = isTrashNote;
     noteTitleInput.disabled = isTrashNote;
 
     if (!isSameNote) {
-        noteTitleInput.value = n.title || '';
-        noteBody.value = n.body || '';
-        resetTextHistory(n.body || '');
+        noteTitleInput.value = n.title || "";
+        noteBody.value = n.body || "";
+        resetTextHistory(n.body || "");
     }
 
     updateTitlePlaceholder(n);
 
-    editorToolbar.classList.remove('hidden');
-    noteTitleInput.classList.remove('hidden');
-    charCount.classList.remove('hidden');
-    dateDisplay.classList.remove('hidden');
+    editorToolbar.classList.remove("hidden");
+    noteTitleInput.classList.remove("hidden");
+    charCount.classList.remove("hidden");
+    dateDisplay.classList.remove("hidden");
 
     if (isTrashNote) {
-        btnRestoreTrash.classList.remove('hidden');
-        btnPin.classList.add('hidden');
-        btnTrashIndicator.classList.remove('hidden');
+        btnRestoreTrash.classList.remove("hidden");
+        btnPin.classList.add("hidden");
+        btnTrashIndicator.classList.remove("hidden");
     } else {
-        btnRestoreTrash.classList.add('hidden');
-        btnTrashIndicator.classList.add('hidden');
-        btnPin.classList.remove('hidden');
-        btnPin.classList.toggle('active', !!n.pinned);
+        btnRestoreTrash.classList.add("hidden");
+        btnTrashIndicator.classList.add("hidden");
+        btnPin.classList.remove("hidden");
+        btnPin.classList.toggle("active", !!n.pinned);
     }
 
     updateEditorFooter();
@@ -765,8 +874,8 @@ function selectNote(id, autoFocus = true) {
     updateAutoCodeRender();
 
     if (window.innerWidth <= 768) {
-        mainLayout.classList.add('view-editor');
-        btnBack.classList.remove('hidden');
+        mainLayout.classList.add("view-editor");
+        btnBack.classList.remove("hidden");
     }
 
     if (autoFocus && !isTrashNote) {
@@ -779,9 +888,12 @@ function selectNote(id, autoFocus = true) {
 
 function updateTitlePlaceholder(note) {
     if (!note) return;
-    const tempNote = { ...note, title: '' };
+    const tempNote = { ...note, title: "" };
     const autoTitle = getNoteDisplayTitle(tempNote);
-    noteTitleInput.placeholder = autoTitle === "空のメモ" ? "タイトル（未入力時は自動抽出）" : `自動: ${autoTitle}`;
+    noteTitleInput.placeholder =
+        autoTitle === "空のメモ"
+            ? "タイトル（未入力時は自動抽出）"
+            : `自動: ${autoTitle}`;
 }
 
 noteTitleInput.oninput = () => {
@@ -796,8 +908,8 @@ noteTitleInput.oninput = () => {
         updateTitlePlaceholder(currentNotes[activeNoteId]);
         renderList(searchInput.value);
 
-        setStatus('saving', 'クラウドに保存中...');
-        worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+        setStatus("saving", "クラウドに保存中...");
+        syncSaveNote(currentNotes[activeNoteId]);
     }
 };
 
@@ -807,19 +919,19 @@ function moveToTrash(id) {
 
     currentNotes[id].deletedAt = Date.now();
     saveLocalNote(currentNotes[id]);
-    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[id] });
+    syncSaveNote(currentNotes[id]);
 
     if (activeNoteId === id) {
         activeNoteId = null;
-        noteTitleInput.value = '';
-        noteBody.value = '';
+        noteTitleInput.value = "";
+        noteBody.value = "";
         noteBody.disabled = true;
         noteTitleInput.disabled = true;
-        editorToolbar.classList.add('hidden');
-        noteTitleInput.classList.add('hidden');
-        charCount.classList.add('hidden');
-        dateDisplay.classList.add('hidden');
-        noteCodeView.classList.add('hidden');
+        editorToolbar.classList.add("hidden");
+        noteTitleInput.classList.add("hidden");
+        charCount.classList.add("hidden");
+        dateDisplay.classList.add("hidden");
+        noteCodeView.classList.add("hidden");
     }
 
     renderList(searchInput.value);
@@ -828,7 +940,7 @@ function moveToTrash(id) {
         if (lastMovedToTrashNote) {
             delete currentNotes[lastMovedToTrashNote.id].deletedAt;
             saveLocalNote(currentNotes[lastMovedToTrashNote.id]);
-            worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[lastMovedToTrashNote.id] });
+            syncSaveNote(currentNotes[lastMovedToTrashNote.id]);
             selectNote(lastMovedToTrashNote.id);
             showToast("メモを復元しました");
             lastMovedToTrashNote = null;
@@ -838,64 +950,67 @@ function moveToTrash(id) {
 
 function openDeleteModal(id) {
     pendingDeleteId = id;
-    deleteModal.classList.remove('hidden');
+    deleteModal.classList.remove("hidden");
 }
 
 function executeDelete() {
     if (!pendingDeleteId) return;
     const id = pendingDeleteId;
-    deleteModal.classList.add('hidden');
+    deleteModal.classList.add("hidden");
 
     delete currentNotes[id];
     deleteLocalNote(id);
-    worker.postMessage({ type: 'PERMANENT_DELETE_NOTE', id });
+    syncDeleteNote(id);
     showToast("メモを完全削除しました");
 
     if (activeNoteId === id) {
         activeNoteId = null;
-        noteTitleInput.value = '';
-        noteBody.value = '';
+        noteTitleInput.value = "";
+        noteBody.value = "";
         noteBody.disabled = true;
         noteTitleInput.disabled = true;
-        editorToolbar.classList.add('hidden');
-        noteTitleInput.classList.add('hidden');
-        charCount.classList.add('hidden');
-        dateDisplay.classList.add('hidden');
-        noteCodeView.classList.add('hidden');
+        editorToolbar.classList.add("hidden");
+        noteTitleInput.classList.add("hidden");
+        charCount.classList.add("hidden");
+        dateDisplay.classList.add("hidden");
+        noteCodeView.classList.add("hidden");
     }
     pendingDeleteId = null;
     renderList(searchInput.value);
 }
 
 btnDeleteConfirm.onclick = executeDelete;
-btnDeleteCancel.onclick = () => deleteModal.classList.add('hidden');
+btnDeleteCancel.onclick = () => deleteModal.classList.add("hidden");
 
-btnEmptyTrash.onclick = () => emptyTrashModal.classList.remove('hidden');
-btnEmptyCancel.onclick = () => emptyTrashModal.classList.add('hidden');
+btnEmptyTrash.onclick = () => emptyTrashModal.classList.remove("hidden");
+btnEmptyCancel.onclick = () => emptyTrashModal.classList.add("hidden");
 
 function executeEmptyTrash() {
-    emptyTrashModal.classList.add('hidden');
+    emptyTrashModal.classList.add("hidden");
 
-    Object.values(currentNotes).forEach(n => {
+    Object.values(currentNotes).forEach((n) => {
         if (n.deletedAt) {
             delete currentNotes[n.id];
             deleteLocalNote(n.id);
         }
     });
 
-    worker.postMessage({ type: 'CLEAR_ALL_TRASH' });
+    syncClearTrash();
 
-    if (activeNoteId && (!currentNotes[activeNoteId] || currentNotes[activeNoteId].deletedAt)) {
+    if (
+        activeNoteId &&
+        (!currentNotes[activeNoteId] || currentNotes[activeNoteId].deletedAt)
+    ) {
         activeNoteId = null;
-        noteTitleInput.value = '';
-        noteBody.value = '';
+        noteTitleInput.value = "";
+        noteBody.value = "";
         noteBody.disabled = true;
         noteTitleInput.disabled = true;
-        editorToolbar.classList.add('hidden');
-        noteTitleInput.classList.add('hidden');
-        charCount.classList.add('hidden');
-        dateDisplay.classList.add('hidden');
-        noteCodeView.classList.add('hidden');
+        editorToolbar.classList.add("hidden");
+        noteTitleInput.classList.add("hidden");
+        charCount.classList.add("hidden");
+        dateDisplay.classList.add("hidden");
+        noteCodeView.classList.add("hidden");
     }
 
     renderList(searchInput.value);
@@ -904,12 +1019,12 @@ function executeEmptyTrash() {
 
 btnEmptyConfirm.onclick = executeEmptyTrash;
 
-window.addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-        if (!deleteModal.classList.contains('hidden')) {
+window.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+        if (!deleteModal.classList.contains("hidden")) {
             e.preventDefault();
             executeDelete();
-        } else if (!emptyTrashModal.classList.contains('hidden')) {
+        } else if (!emptyTrashModal.classList.contains("hidden")) {
             e.preventDefault();
             executeEmptyTrash();
         }
@@ -920,40 +1035,45 @@ btnRestoreTrash.onclick = () => {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     delete currentNotes[activeNoteId].deletedAt;
     saveLocalNote(currentNotes[activeNoteId]);
-    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+    syncSaveNote(currentNotes[activeNoteId]);
     showToast("メモを復元しました");
     selectNote(activeNoteId);
 };
 
 tabNotes.onclick = () => {
-    currentTab = 'notes';
-    tabNotes.classList.add('active');
-    tabTrash.classList.remove('active');
-    btnNew.classList.remove('hidden');
-    btnEmptyTrash.classList.add('hidden');
-    trashNotice.classList.add('hidden');
+    currentTab = "notes";
+    tabNotes.classList.add("active");
+    tabTrash.classList.remove("active");
+    btnNew.classList.remove("hidden");
+    btnEmptyTrash.classList.add("hidden");
+    trashNotice.classList.add("hidden");
     renderList(searchInput.value);
 };
 
 tabTrash.onclick = () => {
-    currentTab = 'trash';
-    tabTrash.classList.add('active');
-    tabNotes.classList.remove('active');
-    btnNew.classList.add('hidden');
-    btnEmptyTrash.classList.remove('hidden');
-    trashNotice.classList.remove('hidden');
+    currentTab = "trash";
+    tabTrash.classList.add("active");
+    tabNotes.classList.remove("active");
+    btnNew.classList.add("hidden");
+    btnEmptyTrash.classList.remove("hidden");
+    trashNotice.classList.remove("hidden");
     renderList(searchInput.value);
 };
 
 btnPin.onclick = () => {
-    if (!activeNoteId || !currentNotes[activeNoteId] || !currentNotes[activeNoteId].id) return;
+    if (
+        !activeNoteId ||
+        !currentNotes[activeNoteId] ||
+        !currentNotes[activeNoteId].id
+    )
+        return;
     const isPinned = !currentNotes[activeNoteId].pinned;
     currentNotes[activeNoteId].pinned = isPinned;
-    btnPin.classList.toggle('active', isPinned);
+    btnPin.classList.toggle("active", isPinned);
     saveLocalNote(currentNotes[activeNoteId]);
     renderList(searchInput.value);
-    setStatus('saving', '保存中...');
-    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+    setStatus("saving", "保存中...");
+    syncSaveNote(currentNotes[activeNoteId]);
     showToast(isPinned ? "メモをピン留めしました" : "ピン留めを解除しました");
 };
 
@@ -972,8 +1092,8 @@ function updateEditorFooter() {
 }
 
 btnBack.onclick = () => {
-    mainLayout.classList.remove('view-editor');
-    btnBack.classList.add('hidden');
+    mainLayout.classList.remove("view-editor");
+    btnBack.classList.add("hidden");
 };
 
 // ★ 文字タイピング処理（完全なデータのみ送信して無限ループを防止）
@@ -985,11 +1105,11 @@ function handleInput() {
     const updatedNote = {
         ...currentNotes[activeNoteId],
         id: activeNoteId,
-        title: currentNotes[activeNoteId].title || '',
+        title: currentNotes[activeNoteId].title || "",
         body: val,
         pinned: currentNotes[activeNoteId].pinned || false,
         codeCollapsed: currentNotes[activeNoteId].codeCollapsed || {},
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
     };
 
     // ★ IDがセットされていることを絶対保証
@@ -1000,14 +1120,14 @@ function handleInput() {
         updateEditorFooter();
         renderList(searchInput.value);
 
-        setStatus('saving', 'クラウドに保存中...');
-        worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+        setStatus("saving", "クラウドに保存中...");
+        syncSaveNote(updatedNote);
     }
 }
 
 noteBody.oninput = handleInput;
 
-noteBody.addEventListener('paste', () => {
+noteBody.addEventListener("paste", () => {
     setTimeout(() => {
         handleInput();
         updateAutoCodeRender(true);
@@ -1023,59 +1143,72 @@ searchInput.oninput = () => renderList(searchInput.value);
 function createNewNote(autoFocus = true) {
     cleanupEmptyNotes();
 
-    const newId = 'note_' + Date.now();
-    currentNotes[newId] = { id: newId, title: '', body: '', pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
+    const newId = "note_" + Date.now();
+    currentNotes[newId] = {
+        id: newId,
+        title: "",
+        body: "",
+        pinned: false,
+        codeCollapsed: {},
+        updatedAt: Date.now(),
+    };
     saveLocalNote(currentNotes[newId]);
     selectNote(newId, autoFocus);
-    setStatus('saving', '新規作成中...');
-    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[newId] });
+    setStatus("saving", "新規作成中...");
+    syncSaveNote(currentNotes[newId]);
 }
 
-document.getElementById('btn-new').onclick = () => createNewNote(true);
+document.getElementById("btn-new").onclick = () => createNewNote(true);
 
-window.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
-        if (currentTab === 'notes') createNewNote(true);
+        if (currentTab === "notes") createNewNote(true);
     }
 });
 
-btnModalCancel.onclick = () => logoutModal.classList.add('hidden');
+btnModalCancel.onclick = () => logoutModal.classList.add("hidden");
 btnModalConfirm.onclick = () => {
-    logoutModal.classList.add('hidden');
+    logoutModal.classList.add("hidden");
     signOut(auth);
 };
 
 // Discord風設定タブ切り替え
-document.querySelectorAll('.settings-tab-btn').forEach(btn => {
+document.querySelectorAll(".settings-tab-btn").forEach((btn) => {
     btn.onclick = () => {
-        document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+        document
+            .querySelectorAll(".settings-tab-btn")
+            .forEach((b) => b.classList.remove("active"));
+        document
+            .querySelectorAll(".tab-content")
+            .forEach((c) => c.classList.add("hidden"));
 
-        btn.classList.add('active');
-        const tabName = btn.getAttribute('data-tab');
-        document.getElementById(`tab-content-${tabName}`).classList.remove('hidden');
+        btn.classList.add("active");
+        const tabName = btn.getAttribute("data-tab");
+        document
+            .getElementById(`tab-content-${tabName}`)
+            .classList.remove("hidden");
     };
 });
 
 btnSettingsTrigger.onclick = () => {
     renderAppVersion();
-    settingsModal.classList.remove('hidden');
+    settingsModal.classList.remove("hidden");
 };
-btnSettingsClose.onclick = () => settingsModal.classList.add('hidden');
+btnSettingsClose.onclick = () => settingsModal.classList.add("hidden");
 
 btnSettingsLogoutAction.onclick = () => {
-    settingsModal.classList.add('hidden');
-    logoutModal.classList.remove('hidden');
+    settingsModal.classList.add("hidden");
+    logoutModal.classList.remove("hidden");
 };
 
 btnUpdateCheck.onclick = async () => {
-    setStatus('saving', 'キャッシュをクリア中...');
-    if ('caches' in window) {
+    setStatus("saving", "キャッシュをクリア中...");
+    if ("caches" in window) {
         const keys = await caches.keys();
-        await Promise.all(keys.map(k => caches.delete(k)));
+        await Promise.all(keys.map((k) => caches.delete(k)));
     }
-    if ('serviceWorker' in navigator) {
+    if ("serviceWorker" in navigator) {
         const regs = await navigator.serviceWorker.getRegistrations();
         for (let r of regs) await r.unregister();
     }
@@ -1085,32 +1218,33 @@ btnUpdateCheck.onclick = async () => {
 // 認証
 async function loginWithProvider(provider) {
     try {
-        authLoading.classList.remove('hidden');
-        authButtons.classList.add('hidden');
+        authLoading.classList.remove("hidden");
+        authButtons.classList.add("hidden");
         await signInWithPopup(auth, provider);
     } catch (error) {
         alert("ログインに失敗しました: " + error.message);
-        authLoading.classList.add('hidden');
-        authButtons.classList.remove('hidden');
+        authLoading.classList.add("hidden");
+        authButtons.classList.remove("hidden");
     }
 }
 
-document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
+document.getElementById("btn-google").onclick = () =>
+    loginWithProvider(new GoogleAuthProvider());
 
-onAuthStateChanged(auth, async user => {
-    splashScreen.classList.add('hidden');
+onAuthStateChanged(auth, async (user) => {
+    splashScreen.classList.add("hidden");
     if (user) {
         if (currentUserId !== null && currentUserId !== user.uid) {
             await clearLocalData();
         }
         currentUserId = user.uid;
 
-        authContainer.classList.add('hidden');
-        appContainer.classList.remove('hidden');
-        setStatus('synced', 'クラウド同期完了');
+        authContainer.classList.add("hidden");
+        appContainer.classList.remove("hidden");
 
-        const nameText = user.displayName || user.email?.split('@')[0] || 'ユーザー';
-        const emailText = user.email || 'メールアドレス非公開';
+        const nameText =
+            user.displayName || user.email?.split("@")[0] || "ユーザー";
+        const emailText = user.email || "メールアドレス非公開";
 
         userName.textContent = nameText;
         userEmail.textContent = emailText;
@@ -1127,38 +1261,49 @@ onAuthStateChanged(auth, async user => {
 
         if (userProviderTag) userProviderTag.textContent = "Google";
 
-        worker.postMessage({ type: 'SET_USER', uid: user.uid });
+        // Firebase Realtime Database リアルタイム同期開始
+        if (currentDbRef) {
+            off(currentDbRef);
+        }
+        currentDbRef = ref(db, `users/${user.uid}/notes`);
+        onValue(
+            currentDbRef,
+            (snapshot) => {
+                const remoteNotes = snapshot.val() || {};
+                Object.values(remoteNotes).forEach((n) => {
+                    currentNotes[n.id] = n;
+                    saveLocalNote(n);
+                });
+                cleanExpiredTrash();
+                renderList(searchInput.value);
+
+                if (activeNoteId && currentNotes[activeNoteId]) {
+                    if (
+                        document.activeElement !== noteBody &&
+                        document.activeElement !== noteTitleInput
+                    ) {
+                        selectNote(activeNoteId, false);
+                    }
+                } else {
+                    initAutoNote();
+                }
+                setStatus("synced", "クラウド同期完了");
+            },
+            (error) => {
+                console.error("Sync Error:", error);
+            },
+        );
     } else {
         await clearLocalData();
+        if (currentDbRef) {
+            off(currentDbRef);
+            currentDbRef = null;
+        }
         currentUserId = null;
 
-        authContainer.classList.remove('hidden');
-        appContainer.classList.add('hidden');
-        authLoading.classList.add('hidden');
-        authButtons.classList.remove('hidden');
-        worker.postMessage({ type: 'CLEAR_USER' });
+        authContainer.classList.remove("hidden");
+        appContainer.classList.add("hidden");
+        authLoading.classList.add("hidden");
+        authButtons.classList.remove("hidden");
     }
 });
-
-// クラウド同期受信
-worker.onmessage = e => {
-    if (e.data.type === 'SYNC_NOTES') {
-        const remoteNotes = e.data.notes || {};
-        Object.values(remoteNotes).forEach(n => {
-            currentNotes[n.id] = n;
-            saveLocalNote(n);
-        });
-        cleanExpiredTrash();
-        renderList(searchInput.value);
-
-        if (activeNoteId && currentNotes[activeNoteId]) {
-            // ユーザーが入力中でない場合のみUI更新
-            if (document.activeElement !== noteBody && document.activeElement !== noteTitleInput) {
-                selectNote(activeNoteId, false);
-            }
-        } else {
-            initAutoNote();
-        }
-        setStatus('synced', 'クラウド同期完了');
-    }
-};

@@ -57,27 +57,6 @@ worker.js
 <files>
 This section contains the contents of the repository's files.
 
-<file path=".repomixignore">
-# AI Agent / Skill 関連（ドキュメント類でトークンを圧迫するため除外）
-.agents/
-.claude/
-skills-lock.json
-
-# CI/CD & Deploy 設定ファイル
-.github/
-.firebaserc
-
-# Node / npm 関連（自動生成ファイル）
-node_modules/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-
-# OS / 一時ファイル
-.DS_Store
-*.log
-</file>
-
 <file path=".gitignore">
 # Logs
 logs
@@ -150,6 +129,27 @@ node_modules/
 .dataconnect
 </file>
 
+<file path=".repomixignore">
+# AI Agent / Skill 関連（ドキュメント類でトークンを圧迫するため除外）
+.agents/
+.claude/
+skills-lock.json
+
+# CI/CD & Deploy 設定ファイル
+.github/
+.firebaserc
+
+# Node / npm 関連（自動生成ファイル）
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# OS / 一時ファイル
+.DS_Store
+*.log
+</file>
+
 <file path="404.html">
 <!DOCTYPE html>
 <html>
@@ -201,99 +201,6 @@ node_modules/
 # FlickMemo
 </file>
 
-<file path="firebase.json">
-{
-  "hosting": {
-    "public": ".",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "headers": [
-      {
-        "source": "**",
-        "headers": [
-          {
-            "key": "Cross-Origin-Opener-Policy",
-            "value": "same-origin-allow-popups"
-          },
-          {
-            "key": "Cross-Origin-Embedder-Policy",
-            "value": "unsafe-none"
-          }
-        ]
-      }
-    ]
-  }
-}
-</file>
-
-<file path="worker.js">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, set, remove, get, update, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
-let db = null;
-let currentUid = null;
-
-self.onmessage = e => {
-    const { type, config, uid, note, id } = e.data;
-
-    if (type === 'INIT_FIREBASE') {
-        try {
-            const app = initializeApp(config);
-            db = getDatabase(app);
-        } catch (err) {
-            console.error("Worker Firebase Init Error:", err);
-        }
-    }
-
-    if (type === 'SET_USER') {
-        currentUid = uid;
-        if (!db) return;
-        const dbRef = ref(db, `users/${uid}/notes`);
-        onValue(dbRef, snapshot => {
-            const notes = snapshot.val();
-            self.postMessage({ type: 'SYNC_NOTES', notes });
-        });
-    }
-
-    if (type === 'CLEAR_USER') {
-        currentUid = null;
-    }
-
-    if (type === 'SAVE_NOTE' && currentUid && note) {
-        if (!db) return;
-        const noteRef = ref(db, `users/${currentUid}/notes/${note.id}`);
-        set(noteRef, note);
-    }
-
-    if (type === 'PERMANENT_DELETE_NOTE' && currentUid && id) {
-        if (!db) return;
-        const noteRef = ref(db, `users/${currentUid}/notes/${id}`);
-        remove(noteRef);
-    }
-
-    // ★ クラウド上のゴミ箱メモを一括完全削除
-    if (type === 'CLEAR_ALL_TRASH' && currentUid) {
-        if (!db) return;
-        const notesRef = ref(db, `users/${currentUid}/notes`);
-        get(notesRef).then(snapshot => {
-            const data = snapshot.val();
-            if (data) {
-                const updates = {};
-                Object.keys(data).forEach(key => {
-                    if (data[key].deletedAt) {
-                        updates[key] = null; // nullで一括削除
-                    }
-                });
-                update(notesRef, updates);
-            }
-        }).catch(err => console.error("Clear trash error:", err));
-    }
-};
-</file>
-
 <file path="bump.js">
 import fs from 'fs';
 import { execSync } from 'child_process';
@@ -333,10 +240,97 @@ try {
 }
 </file>
 
-<file path="version.json">
+<file path="firebase.json">
 {
-  "version": "1.1.3"
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  }
 }
+</file>
+
+<file path="worker.js">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, set, remove, get, update, onValue, off } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+let db = null;
+let currentUid = null;
+let currentDbRef = null; // ★ 通信回線の接続状態を管理
+
+self.onmessage = e => {
+    const { type, config, uid, note, id } = e.data;
+
+    if (type === 'INIT_FIREBASE') {
+        try {
+            const app = initializeApp(config);
+            db = getDatabase(app);
+        } catch (err) {
+            console.error("Worker Firebase Init Error:", err);
+        }
+    }
+
+    if (type === 'SET_USER') {
+        // ★ 以前のアカウントの通信回線が残っていれば強制切断して混線を防ぐ！
+        if (currentDbRef) {
+            off(currentDbRef);
+        }
+
+        currentUid = uid;
+        if (!db) return;
+
+        currentDbRef = ref(db, `users/${uid}/notes`);
+
+        // 新しいアカウント専用の通信を開始
+        onValue(currentDbRef, snapshot => {
+            const notes = snapshot.val();
+            self.postMessage({ type: 'SYNC_NOTES', notes });
+        }, error => {
+            console.error("Sync Error:", error);
+        });
+    }
+
+    if (type === 'CLEAR_USER') {
+        // ★ ログアウト時に通信回線を完全に強制切断！
+        if (currentDbRef) {
+            off(currentDbRef);
+            currentDbRef = null;
+        }
+        currentUid = null;
+    }
+
+    if (type === 'SAVE_NOTE' && currentUid && note) {
+        if (!db) return;
+        const noteRef = ref(db, `users/${currentUid}/notes/${note.id}`);
+        set(noteRef, note);
+    }
+
+    if (type === 'PERMANENT_DELETE_NOTE' && currentUid && id) {
+        if (!db) return;
+        const noteRef = ref(db, `users/${currentUid}/notes/${id}`);
+        remove(noteRef);
+    }
+
+    if (type === 'CLEAR_ALL_TRASH' && currentUid) {
+        if (!db) return;
+        const notesRef = ref(db, `users/${currentUid}/notes`);
+        get(notesRef).then(snapshot => {
+            const data = snapshot.val();
+            if (data) {
+                const updates = {};
+                Object.keys(data).forEach(key => {
+                    if (data[key].deletedAt) {
+                        updates[key] = null;
+                    }
+                });
+                update(notesRef, updates);
+            }
+        }).catch(err => console.error("Clear trash error:", err));
+    }
+};
 </file>
 
 <file path="index.html">
@@ -352,17 +346,16 @@ try {
         href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto+Mono&display=swap">
     <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 
-    <!-- スプラッシュ -->
     <div id="splash-screen" class="center-screen">
         <div class="spinner-large"></div>
     </div>
 
-    <!-- ログイン画面 -->
     <div id="auth-container" class="center-screen hidden">
         <div class="m3-card auth-card">
             <div class="brand-icon">
@@ -380,14 +373,10 @@ try {
                 <button id="btn-google" class="m3-button btn-google">
                     <span class="material-symbols-outlined">login</span> Google でログイン
                 </button>
-                <button id="btn-ms" class="m3-button btn-ms">
-                    <span class="material-symbols-outlined">key</span> Microsoft でログイン
-                </button>
             </div>
         </div>
     </div>
 
-    <!-- メイン画面 -->
     <div id="app-container" class="hidden">
         <header class="m3-top-app-bar">
             <div class="header-left">
@@ -411,8 +400,8 @@ try {
             </div>
         </header>
 
+        <!-- ★ main-layout を基準にバッジを絶対配置 -->
         <div class="main-layout" id="main-layout">
-            <!-- サイドバー -->
             <aside class="sidebar" id="sidebar-container">
                 <div class="sidebar-tabs">
                     <button id="tab-notes" class="tab-btn active">
@@ -428,11 +417,9 @@ try {
                         <span class="material-symbols-outlined">search</span>
                         <input type="text" id="search-input" placeholder="検索...">
                     </div>
-
                     <button id="btn-new" class="m3-fab-button">
                         <span class="material-symbols-outlined">add</span> 新しいメモ
                     </button>
-
                     <button id="btn-empty-trash" class="m3-fab-button btn-danger-fab hidden">
                         <span class="material-symbols-outlined">delete_sweep</span> ゴミ箱を空にする
                     </button>
@@ -452,7 +439,6 @@ try {
                 </div>
             </aside>
 
-            <!-- エディタエリア -->
             <main class="editor-area">
                 <div class="editor-toolbar hidden" id="editor-toolbar">
                     <div class="toolbar-group">
@@ -472,7 +458,6 @@ try {
                             style="color:var(--m3-danger) !important; border-color:var(--m3-danger-border) !important; cursor:default;">
                             <span class="material-symbols-outlined">delete</span>
                         </button>
-
                         <button id="btn-copy" class="m3-icon-button" title="コピー">
                             <span class="material-symbols-outlined">content_copy</span>
                         </button>
@@ -484,15 +469,21 @@ try {
 
                 <input type="text" id="note-title-input" class="m3-title-input hidden" placeholder="タイトル（未入力時は自動抽出）"
                     disabled>
+
+                <!-- テキスト入力欄 -->
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
 
-                <div id="date-display" class="date-display-floating hidden">--月--日</div>
-                <div id="char-count" class="char-count-floating hidden">0 文字</div>
+                <!-- 自動変身コードビュー -->
+                <div id="note-code-view" class="m3-code-view hidden"></div>
             </main>
+
+            <!-- ★ スクロール領域に依存せず、画面右下・左下に完全に固定表示されるバッジ -->
+            <div id="date-display" class="date-display-floating hidden">--月--日</div>
+            <div id="char-count" class="char-count-floating hidden">0 文字</div>
         </div>
     </div>
 
-    <!-- 完全削除ダイアログ -->
+    <!-- ダイアログ群 -->
     <div id="delete-modal" class="modal-overlay hidden">
         <div class="m3-dialog">
             <div class="dialog-icon"><span class="material-symbols-outlined">delete_forever</span></div>
@@ -505,7 +496,6 @@ try {
         </div>
     </div>
 
-    <!-- ゴミ箱を空にするダイアログ -->
     <div id="empty-trash-modal" class="modal-overlay hidden">
         <div class="m3-dialog">
             <div class="dialog-icon"><span class="material-symbols-outlined">delete_sweep</span></div>
@@ -518,7 +508,6 @@ try {
         </div>
     </div>
 
-    <!-- ログアウト確認ダイアログ -->
     <div id="logout-modal" class="modal-overlay hidden">
         <div class="m3-dialog">
             <div class="dialog-icon"><span class="material-symbols-outlined">logout</span></div>
@@ -531,7 +520,7 @@ try {
         </div>
     </div>
 
-    <!-- ★ Discordスタイルの洗練設定モーダル（PC：2カラム / スマホ：フルスクリーン） -->
+    <!-- 設定モーダル -->
     <div id="settings-modal" class="modal-overlay hidden">
         <div class="m3-dialog settings-dialog-discord">
             <div class="dialog-header">
@@ -545,7 +534,6 @@ try {
             </div>
 
             <div class="discord-settings-layout">
-                <!-- 左ナビタブ -->
                 <nav class="settings-nav">
                     <button class="settings-tab-btn active" data-tab="account">
                         <span class="material-symbols-outlined">account_circle</span> アカウント
@@ -558,9 +546,7 @@ try {
                     </button>
                 </nav>
 
-                <!-- 右コンテンツエリア -->
                 <div class="settings-content-area">
-                    <!-- 1. アカウントタブ -->
                     <div id="tab-content-account" class="tab-content">
                         <div class="discord-profile-card">
                             <div class="profile-banner"></div>
@@ -585,7 +571,6 @@ try {
                         </div>
                     </div>
 
-                    <!-- 2. システムタブ -->
                     <div id="tab-content-system" class="tab-content hidden">
                         <div class="setting-item-box">
                             <div class="setting-text">
@@ -604,7 +589,6 @@ try {
                         </div>
                     </div>
 
-                    <!-- 3. アプリ情報タブ -->
                     <div id="tab-content-about" class="tab-content hidden">
                         <div class="setting-item-box">
                             <div class="setting-text">
@@ -626,16 +610,29 @@ try {
         </div>
     </div>
 
-    <!-- トースト通知 -->
     <div id="toast-msg" class="m3-snackbar hidden">
         <span id="toast-text">メッセージ</span>
         <button id="btn-toast-action" class="snackbar-action hidden">元に戻す</button>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-typescript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-css.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+
     <script type="module" src="app.js"></script>
 </body>
 
 </html>
+</file>
+
+<file path="version.json">
+{
+  "version": "1.1.13"
+}
 </file>
 
 <file path="style.css">
@@ -679,62 +676,39 @@ html {
     overflow: hidden;
 }
 
+/* ★ 邪魔なアローボタン（三角）を完全に削除 */
 ::-webkit-scrollbar-button {
     display: none !important;
     width: 0;
     height: 0;
 }
 
-/* メモ一覧：iOS風 極細スクロールバー */
-.list-container {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    position: relative;
-    scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
-}
-
-.list-container::-webkit-scrollbar {
-    width: 4px;
-}
-
-.list-container::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.list-container::-webkit-scrollbar-thumb {
-    background: transparent;
-    border-radius: var(--m3-radius-full);
-    transition: background 0.3s;
-}
-
-.list-container.is-scrolling::-webkit-scrollbar-thumb,
-.list-container:hover::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-}
-
-/* エディタ：独自UIスクロールバー */
-.editor-area::-webkit-scrollbar,
-.m3-text-area::-webkit-scrollbar {
+/* ★ アプリ全域：幅6px、常に薄く表示されてホバーで濃くなる安定したスクロールバー */
+::-webkit-scrollbar {
     width: 6px;
     height: 6px;
 }
 
-.editor-area::-webkit-scrollbar-track,
-.m3-text-area::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
     background: transparent;
 }
 
-.editor-area::-webkit-scrollbar-thumb,
-.m3-text-area::-webkit-scrollbar-thumb {
-    background: #2a2b2d;
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    /* 常に薄く見えるためドラッグしやすい */
     border-radius: var(--m3-radius-full);
+    transition: background 0.2s ease;
 }
 
-.editor-area::-webkit-scrollbar-thumb:hover,
-.m3-text-area::-webkit-scrollbar-thumb:hover {
-    background: var(--m3-surface-hover);
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+    background: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* Firefox用 */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }
 
 input,
@@ -780,7 +754,6 @@ select {
     }
 }
 
-/* 認証カード */
 .m3-card {
     background: var(--m3-surface);
     border: 1px solid var(--m3-border);
@@ -855,7 +828,6 @@ select {
     font-size: 0.9rem;
 }
 
-/* App Bar */
 #app-container {
     display: flex;
     flex-direction: column;
@@ -940,7 +912,6 @@ select {
     }
 }
 
-/* Material Icon Button */
 .m3-icon-button {
     background: transparent;
     border: none;
@@ -971,7 +942,6 @@ select {
     cursor: not-allowed;
 }
 
-/* Layout & Sidebar */
 .main-layout {
     display: flex;
     flex: 1;
@@ -1089,6 +1059,13 @@ select {
     background: #4a2b2b;
 }
 
+.list-container {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    position: relative;
+}
+
 .note-list {
     list-style: none;
     padding: 0.4rem 0.75rem 3.5rem 0.75rem;
@@ -1192,7 +1169,6 @@ select {
     margin-top: 3rem;
 }
 
-/* 一番下固定ゴミ箱バナー */
 .trash-bottom-banner {
     margin-top: auto;
     position: relative;
@@ -1225,6 +1201,7 @@ select {
 }
 
 /* Editor */
+/* ★ .editor-area 自体は position: relative を外すか、バッジを外の main-layout に追従させる */
 .editor-area {
     flex: 1;
     display: flex;
@@ -1232,7 +1209,6 @@ select {
     background: var(--m3-bg);
     padding: 1rem 1.5rem;
     overflow-y: auto;
-    position: relative;
 }
 
 .editor-toolbar {
@@ -1250,7 +1226,6 @@ select {
     gap: 0.4rem;
 }
 
-/* タイトル入力欄 */
 .m3-title-input {
     background: transparent;
     border: none;
@@ -1274,6 +1249,7 @@ select {
     font-weight: 400;
 }
 
+/* ★ 文字被りを100%防止するための超巨大な余白 */
 .m3-text-area {
     flex: 1;
     background: transparent;
@@ -1283,15 +1259,96 @@ select {
     font-size: 1rem;
     resize: none;
     line-height: 1.7;
-    font-family: 'Google Sans', sans-serif;
-    padding-bottom: 3.8rem !important;
+    font-family: 'Google Sans', 'Roboto Mono', sans-serif;
+    padding-bottom: 100px !important;
 }
 
-/* 左下日付 / 右下文字数バッジ */
+.m3-code-view {
+    flex: 1;
+    overflow-y: auto;
+    font-size: 1rem;
+    line-height: 1.7;
+    cursor: text;
+    user-select: text;
+    padding-bottom: 100px !important;
+}
+
+.m3-code-view p {
+    margin-bottom: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.code-block-wrapper {
+    background: #1e1f20;
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    margin: 0.8rem 0;
+    overflow: hidden;
+    transition: all 0.2s var(--m3-motion-curve);
+}
+
+.code-block-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--m3-surface-container);
+    padding: 0.45rem 0.88rem;
+    border-bottom: 1px solid var(--m3-border);
+    font-size: 0.75rem;
+    color: var(--m3-primary);
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 500;
+}
+
+.code-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.code-header-btn {
+    background: transparent;
+    border: none;
+    color: var(--m3-text-muted);
+    cursor: pointer;
+    font-size: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
+}
+
+.code-header-btn:hover {
+    color: var(--m3-text);
+    background: var(--m3-surface-hover);
+}
+
+.code-block-wrapper pre {
+    margin: 0 !important;
+    padding: 1rem !important;
+    background: transparent !important;
+    font-family: 'Roboto Mono', monospace !important;
+    font-size: 0.9rem !important;
+    line-height: 1.6 !important;
+    overflow-x: auto;
+}
+
+.code-block-wrapper.is-collapsed pre {
+    display: none !important;
+}
+
+.code-block-wrapper.is-collapsed {
+    border-color: var(--m3-border);
+}
+
+/* ★ バッジをスクロールコンテナ外（.main-layout）の右下・左下に完全固定（被りなし） */
 .date-display-floating {
     position: absolute;
     bottom: 1.2rem;
-    left: 1.5rem;
+    left: calc(270px + 1.5rem);
     font-size: 0.72rem;
     color: var(--m3-text-muted);
     background: var(--m3-surface);
@@ -1299,10 +1356,9 @@ select {
     border-radius: var(--m3-radius-full);
     border: 1px solid var(--m3-border);
     pointer-events: none;
-    opacity: 0.6;
-    transition: opacity 0.2s;
+    opacity: 0.8;
     font-family: 'Roboto Mono', monospace;
-    z-index: 5;
+    z-index: 10;
 }
 
 .char-count-floating {
@@ -1316,18 +1372,12 @@ select {
     border-radius: var(--m3-radius-full);
     border: 1px solid var(--m3-border);
     pointer-events: none;
-    opacity: 0.6;
-    transition: opacity 0.2s;
+    opacity: 0.8;
     font-family: 'Roboto Mono', monospace;
-    z-index: 5;
+    z-index: 10;
 }
 
-.editor-area:hover .date-display-floating,
-.editor-area:hover .char-count-floating {
-    opacity: 1;
-}
-
-/* ダイアログ汎用 */
+/* Dialogs */
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -1402,7 +1452,7 @@ select {
     background: #4a2b2b;
 }
 
-/* ★【本物のDiscord風 ✕ Material 3 洗練設定モーダル】 */
+/* Discordスタイル設定モーダル */
 .settings-dialog-discord {
     max-width: 620px !important;
     width: 90vw;
@@ -1440,7 +1490,6 @@ select {
     overflow: hidden;
 }
 
-/* 左側ナビゲーション（Discordスタイル） */
 .settings-nav {
     width: 160px;
     background: var(--m3-surface-container);
@@ -1484,7 +1533,6 @@ select {
     font-weight: 500;
 }
 
-/* 右側メインコンテンツ */
 .settings-content-area {
     flex: 1;
     padding: 1.2rem 1.5rem;
@@ -1498,7 +1546,6 @@ select {
     gap: 1rem;
 }
 
-/* Discord風プロフィールカード */
 .discord-profile-card {
     background: var(--m3-surface);
     border-radius: var(--m3-radius-lg);
@@ -1655,7 +1702,6 @@ select {
     }
 }
 
-/* ★ スマホ（768px以下）：画面全域を使ったアプリ専用フルスクリーン設定画面 */
 @media (max-width: 768px) {
     .sidebar {
         width: 100%;
@@ -1684,7 +1730,12 @@ select {
         z-index: 3;
     }
 
-    /* スマホフルスクリーン設定ダイアログ */
+    .date-display-floating {
+        left: 1.5rem;
+    }
+
+    /* スマホ時はサイドバーがないので左寄せ直す */
+
     .settings-dialog-discord {
         position: fixed;
         inset: 0;
@@ -1725,7 +1776,7 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, o
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
 const APP_VERSION = "1.3.0";
 
-// ⚠️ ご自身のFirebaseキーを入れてください
+// ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
     authDomain: "flickmemo-qwe.web.app",
@@ -1755,6 +1806,8 @@ const noteList = document.getElementById('note-list');
 const emptyState = document.getElementById('empty-state');
 const noteTitleInput = document.getElementById('note-title-input');
 const noteBody = document.getElementById('note-body');
+const noteCodeView = document.getElementById('note-code-view');
+
 const statusBar = document.getElementById('status-bar');
 const statusText = document.getElementById('status-text');
 const btnBack = document.getElementById('btn-back');
@@ -1787,6 +1840,7 @@ const btnEmptyCancel = document.getElementById('btn-empty-cancel');
 const btnEmptyConfirm = document.getElementById('btn-empty-confirm');
 
 const logoutModal = document.getElementById('logout-modal');
+const btnLogoutTrigger = document.getElementById('btn-logout-trigger');
 const btnModalCancel = document.getElementById('btn-modal-cancel');
 const btnModalConfirm = document.getElementById('btn-modal-confirm');
 
@@ -1813,16 +1867,33 @@ let lastMovedToTrashNote = null;
 let currentTab = 'notes';
 let toastTimer = null;
 let db = null;
+let currentUserId = null;
 
-// iOS風スクロールバー監視
-let scrollTimer = null;
-listContainer.addEventListener('scroll', () => {
-    listContainer.classList.add('is-scrolling');
-    clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(() => {
-        listContainer.classList.remove('is-scrolling');
-    }, 800);
-});
+function setupScrollFade(element) {
+    if (!element) return;
+    let timer = null;
+
+    const triggerShow = () => {
+        element.classList.add('is-scrolling');
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            element.classList.remove('is-scrolling');
+        }, 3000);
+    };
+
+    element.addEventListener('scroll', triggerShow);
+    element.addEventListener('mousemove', triggerShow);
+    element.addEventListener('mouseleave', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            element.classList.remove('is-scrolling');
+        }, 1000);
+    });
+}
+
+setupScrollFade(listContainer);
+setupScrollFade(noteBody);
+setupScrollFade(noteCodeView);
 
 function setStatus(type, text) {
     statusBar.className = `m3-badge status-${type}`;
@@ -1848,20 +1919,282 @@ function showToast(msg, actionCallback = null) {
 }
 
 window.addEventListener('online', () => setStatus('saving', 'オンライン復帰・同期中...'));
-window.addEventListener('offline', () => setStatus('offline', 'オフライン (ローカル保存済み)'));
+window.addEventListener('offline', () => setStatus('offline', 'ローカル保存済み'));
 
 function renderAppVersion() {
     appVersionDisplay.textContent = `v${APP_VERSION}`;
 }
 
-// アバターフォールバック（インラインSVG）
 function getInitialsAvatar(name) {
     const initial = (name || 'U').charAt(0).toUpperCase();
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#042f66" rx="32"/><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" fill="#a8c7fa" font-size="28" font-family="sans-serif" font-weight="bold">${initial}</text></svg>`;
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
-// Undo / Redo 多段階スタック
+function isFullSourceCode(text) {
+    if (!text || !text.trim()) return false;
+
+    const indicators = [
+        /\bimport\s+[\s\S]*?\s+from\s+["']/,
+        /\bexport\s+(default|const|let|var|function|class)\b/,
+        /\binitializeApp\s*\(/,
+        /\bgetAuth\s*\(/,
+        /\bnew\s+Worker\s*\(/,
+        /\bdocument\.getElementById\s*\(/,
+        /\bwindow\.addEventListener\s*\(/,
+        /\bfunction\s+\w+\s*\(/,
+        /\bconst\s+\w+\s*=\s*/,
+        /\blet\s+\w+\s*=\s*/,
+        /\bclass\s+\w+/,
+        /\bdef\s+\w+\s*\(/
+    ];
+
+    let matches = 0;
+    for (const pat of indicators) {
+        if (pat.test(text)) matches++;
+    }
+    return matches >= 2;
+}
+
+function isPureTextLine(line) {
+    const l = line.trim();
+    if (!l) return false;
+
+    const hasJpChars = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(l);
+    const hasCodeKeywords = /\b(function|const|let|var|if|else|for|while|return|import|export|class|def|async|await)\b/.test(l);
+
+    return hasJpChars && !hasCodeKeywords;
+}
+
+function isCodeLine(line) {
+    const l = line.trim();
+    if (!l) return true;
+    if (isPureTextLine(l)) return false;
+
+    if (l.startsWith('//') || l.startsWith('/*') || l.startsWith('*') || l.startsWith('#')) {
+        return true;
+    }
+
+    let cleanLine = l.replace(/\/\/.*$/, '').replace(/#.*$/, '');
+    cleanLine = cleanLine.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+
+    const hasKeywords = /\b(import|export|const|let|var|function|async|await|return|class|if|else|for|while|def|console|document|window|MutationObserver|initializeApp|getAuth)\b/.test(cleanLine);
+    const hasSymbols = /[\{\}\(\)\[\];=><\+\-\*\/]/.test(cleanLine);
+
+    return hasKeywords || hasSymbols;
+}
+
+function updateAutoCodeRender(forceRender = false) {
+    const text = noteBody.value || '';
+    if (!text.trim()) {
+        noteBody.classList.remove('hidden');
+        noteCodeView.classList.add('hidden');
+        return;
+    }
+
+    const activeNote = activeNoteId ? currentNotes[activeNoteId] : null;
+    const collapsedState = (activeNote && activeNote.codeCollapsed) ? activeNote.codeCollapsed : {};
+
+    const isFullCode = isFullSourceCode(text);
+    const hasMarkdownBlock = /```[\s\S]*?```/.test(text);
+
+    let hasAnyCode = false;
+    let html = '';
+    let blockIndex = 0;
+
+    if (isFullCode) {
+        hasAnyCode = true;
+        const isCollapsed = !!collapsedState[`block_0`];
+        html = buildCodeBlockHTML('javascript', text.trim(), 0, isCollapsed);
+    } else if (hasMarkdownBlock) {
+        hasAnyCode = true;
+        const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+        let lastIndex = 0;
+        let match;
+
+        while ((match = codeBlockRegex.exec(text)) !== null) {
+            const plainText = text.substring(lastIndex, match.index);
+            if (plainText.trim()) {
+                html += `<p>${escapeHTML(plainText)}</p>`;
+            }
+
+            const lang = (match[1] || 'javascript').toLowerCase();
+            const rawCode = match[2].trim();
+            const isCollapsed = !!collapsedState[`block_${blockIndex}`];
+
+            html += buildCodeBlockHTML(lang, rawCode, blockIndex, isCollapsed);
+            blockIndex++;
+
+            lastIndex = match.index + match[0].length;
+        }
+
+        const remaining = text.substring(lastIndex);
+        if (remaining.trim()) {
+            html += `<p>${escapeHTML(remaining)}</p>`;
+        }
+    } else {
+        const lines = text.split('\n');
+        let currentBlock = [];
+        let currentIsCode = null;
+
+        lines.forEach((line) => {
+            const lineIsText = isPureTextLine(line);
+            const lineIsCode = !lineIsText && isCodeLine(line);
+            const isBlank = !line.trim();
+
+            let targetType = 'TEXT';
+            if (lineIsText) {
+                targetType = 'TEXT';
+            } else if (lineIsCode) {
+                targetType = 'CODE';
+            } else if (isBlank) {
+                targetType = currentIsCode ?? 'TEXT';
+            }
+
+            if (currentIsCode === null) {
+                currentIsCode = targetType;
+                currentBlock.push(line);
+            } else if (currentIsCode === targetType) {
+                currentBlock.push(line);
+            } else {
+                const blockContent = currentBlock.join('\n').trim();
+                if (blockContent) {
+                    if (currentIsCode === 'CODE') {
+                        hasAnyCode = true;
+                        const isCollapsed = !!collapsedState[`block_${blockIndex}`];
+                        html += buildCodeBlockHTML('javascript', blockContent, blockIndex, isCollapsed);
+                        blockIndex++;
+                    } else {
+                        html += `<p>${escapeHTML(blockContent)}</p>`;
+                    }
+                }
+                currentBlock = [line];
+                currentIsCode = targetType;
+            }
+        });
+
+        if (currentBlock.length > 0) {
+            const blockContent = currentBlock.join('\n').trim();
+            if (blockContent) {
+                if (currentIsCode === 'CODE') {
+                    hasAnyCode = true;
+                    const isCollapsed = !!collapsedState[`block_${blockIndex}`];
+                    html += buildCodeBlockHTML('javascript', blockContent, blockIndex, isCollapsed);
+                    blockIndex++;
+                } else {
+                    html += `<p>${escapeHTML(blockContent)}</p>`;
+                }
+            }
+        }
+    }
+
+    if (hasAnyCode && (forceRender || document.activeElement !== noteBody)) {
+        noteCodeView.innerHTML = html;
+        if (window.Prism) {
+            Prism.highlightAllUnder(noteCodeView);
+        }
+
+        noteCodeView.querySelectorAll('.copy-code-btn').forEach(btn => {
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                const code = decodeURIComponent(btn.getAttribute('data-code'));
+                navigator.clipboard.writeText(code);
+                showToast("コードをコピーしました");
+            };
+        });
+
+        noteCodeView.querySelectorAll('.collapse-code-btn').forEach(btn => {
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                const idx = btn.getAttribute('data-index');
+                const wrapper = noteCodeView.querySelector(`.code-block-wrapper[data-index="${idx}"]`);
+
+                if (activeNote) {
+                    activeNote.codeCollapsed = activeNote.codeCollapsed || {};
+                    const nextState = !wrapper.classList.contains('is-collapsed');
+                    activeNote.codeCollapsed[`block_${idx}`] = nextState;
+
+                    wrapper.classList.toggle('is-collapsed', nextState);
+                    btn.querySelector('span').textContent = nextState ? 'unfold_more' : 'unfold_less';
+
+                    if (activeNote.id) {
+                        saveLocalNote(activeNote);
+                        setStatus('saving', 'クラウドに保存中...');
+                        worker.postMessage({ type: 'SAVE_NOTE', note: activeNote });
+                    }
+                }
+            };
+        });
+
+        noteBody.classList.add('hidden');
+        noteCodeView.classList.remove('hidden');
+    } else {
+        noteBody.classList.remove('hidden');
+        noteCodeView.classList.add('hidden');
+    }
+}
+
+noteCodeView.onmouseup = (e) => {
+    if (e.target.closest('.copy-code-btn') || e.target.closest('.collapse-code-btn')) return;
+
+    const rect = noteCodeView.getBoundingClientRect();
+    if (e.clientX >= rect.right - 14) return;
+
+    const selection = window.getSelection();
+    if (selection && selection.toString().length > 0) {
+        return;
+    }
+
+    const savedScrollTop = noteCodeView.scrollTop;
+    const clickRelativeY = (e.clientY - rect.top) + savedScrollTop;
+    const scrollHeight = noteCodeView.scrollHeight || 1;
+    const clickRatio = Math.min(1, Math.max(0, clickRelativeY / scrollHeight));
+    const targetCaretPos = Math.floor(noteBody.value.length * clickRatio);
+
+    noteCodeView.classList.add('hidden');
+    noteBody.classList.remove('hidden');
+
+    noteBody.scrollTop = savedScrollTop;
+
+    noteBody.focus({ preventScroll: true });
+    setTimeout(() => {
+        noteBody.setSelectionRange(targetCaretPos, targetCaretPos);
+        noteBody.scrollTop = savedScrollTop;
+    }, 10);
+};
+
+function buildCodeBlockHTML(lang, rawCode, index, isCollapsed) {
+    const escapedCode = escapeHTML(rawCode);
+    const iconName = isCollapsed ? 'unfold_more' : 'unfold_less';
+    const collapseClass = isCollapsed ? 'is-collapsed' : '';
+
+    return `
+    <div class="code-block-wrapper ${collapseClass}" data-index="${index}">
+      <div class="code-block-header">
+        <span>${lang}</span>
+        <div class="code-header-actions">
+          <button class="code-header-btn collapse-code-btn" data-index="${index}" title="折りたたみ">
+            <span class="material-symbols-outlined" style="font-size:16px;">${iconName}</span>
+          </button>
+          <button class="code-header-btn copy-code-btn" data-code="${encodeURIComponent(rawCode)}" title="コピー">
+            <span class="material-symbols-outlined" style="font-size:14px;">content_copy</span> コピー
+          </button>
+        </div>
+      </div>
+      <pre><code class="language-${lang}">${escapedCode}</code></pre>
+    </div>
+  `;
+}
+
+function escapeHTML(str) {
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 let textHistory = [];
 let historyIndex = -1;
 let historyDebounceTimer = null;
@@ -1891,20 +2224,29 @@ function updateUndoRedoButtons() {
 
 function applyUndoRedoText(targetText) {
     noteBody.value = targetText;
-    if (!activeNoteId) return;
+    if (!activeNoteId || !currentNotes[activeNoteId]) return;
 
+    // ★ 履歴復元時も完全なデータ構造で保存（エラー防止）
     const updatedNote = {
         ...currentNotes[activeNoteId],
         id: activeNoteId,
+        title: currentNotes[activeNoteId].title || '',
         body: targetText,
+        pinned: currentNotes[activeNoteId].pinned || false,
+        codeCollapsed: currentNotes[activeNoteId].codeCollapsed || {},
         updatedAt: Date.now()
     };
-    currentNotes[activeNoteId] = updatedNote;
-    saveLocalNote(updatedNote);
-    updateEditorFooter();
-    renderList(searchInput.value);
-    setStatus('saving', 'クラウドに保存中...');
-    worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+
+    if (updatedNote.id) {
+        currentNotes[activeNoteId] = updatedNote;
+        saveLocalNote(updatedNote);
+        updateTitlePlaceholder(updatedNote);
+        updateEditorFooter();
+        renderList(searchInput.value);
+        updateAutoCodeRender(true);
+        setStatus('saving', 'クラウドに保存中...');
+        worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+    }
 }
 
 btnUndo.onclick = () => {
@@ -1984,15 +2326,42 @@ function loadLocalNotes() {
 }
 
 function saveLocalNote(note) {
-    if (!db) return;
+    if (!db || !note.id) return;
     const tx = db.transaction('notes', 'readwrite');
     tx.objectStore('notes').put(note);
 }
 
 function deleteLocalNote(id) {
-    if (!db) return;
+    if (!db || !id) return;
     const tx = db.transaction('notes', 'readwrite');
     tx.objectStore('notes').delete(id);
+}
+
+async function clearLocalData() {
+    currentNotes = {};
+    activeNoteId = null;
+    pendingDeleteId = null;
+    lastMovedToTrashNote = null;
+
+    noteBody.value = '';
+    noteTitleInput.value = '';
+    noteBody.disabled = true;
+    noteTitleInput.disabled = true;
+    editorToolbar.classList.add('hidden');
+    noteTitleInput.classList.add('hidden');
+    charCount.classList.add('hidden');
+    dateDisplay.classList.add('hidden');
+    noteCodeView.classList.add('hidden');
+
+    renderList('');
+
+    if (db) {
+        return new Promise((resolve) => {
+            const tx = db.transaction('notes', 'readwrite');
+            tx.objectStore('notes').clear();
+            tx.oncomplete = () => resolve();
+        });
+    }
 }
 
 function cleanupEmptyNotes(exceptId = null) {
@@ -2132,7 +2501,7 @@ function selectNote(id, autoFocus = true) {
 
     const isSameNote = (activeNoteId === id);
     activeNoteId = id;
-    const n = currentNotes[id] || { title: '', body: '', pinned: false, updatedAt: Date.now() };
+    const n = currentNotes[id] || { title: '', body: '', pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
 
     const isTrashNote = !!n.deletedAt;
     noteBody.disabled = isTrashNote;
@@ -2165,6 +2534,8 @@ function selectNote(id, autoFocus = true) {
     updateEditorFooter();
     renderList(searchInput.value);
 
+    updateAutoCodeRender();
+
     if (window.innerWidth <= 768) {
         mainLayout.classList.add('view-editor');
         btnBack.classList.remove('hidden');
@@ -2189,15 +2560,17 @@ noteTitleInput.oninput = () => {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const val = noteTitleInput.value;
 
-    currentNotes[activeNoteId].title = val;
-    currentNotes[activeNoteId].updatedAt = Date.now();
+    if (currentNotes[activeNoteId].id) {
+        currentNotes[activeNoteId].title = val;
+        currentNotes[activeNoteId].updatedAt = Date.now();
 
-    saveLocalNote(currentNotes[activeNoteId]);
-    updateTitlePlaceholder(currentNotes[activeNoteId]);
-    renderList(searchInput.value);
+        saveLocalNote(currentNotes[activeNoteId]);
+        updateTitlePlaceholder(currentNotes[activeNoteId]);
+        renderList(searchInput.value);
 
-    setStatus('saving', 'クラウドに保存中...');
-    worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+        setStatus('saving', 'クラウドに保存中...');
+        worker.postMessage({ type: 'SAVE_NOTE', note: currentNotes[activeNoteId] });
+    }
 };
 
 function moveToTrash(id) {
@@ -2218,6 +2591,7 @@ function moveToTrash(id) {
         noteTitleInput.classList.add('hidden');
         charCount.classList.add('hidden');
         dateDisplay.classList.add('hidden');
+        noteCodeView.classList.add('hidden');
     }
 
     renderList(searchInput.value);
@@ -2259,6 +2633,7 @@ function executeDelete() {
         noteTitleInput.classList.add('hidden');
         charCount.classList.add('hidden');
         dateDisplay.classList.add('hidden');
+        noteCodeView.classList.add('hidden');
     }
     pendingDeleteId = null;
     renderList(searchInput.value);
@@ -2292,6 +2667,7 @@ function executeEmptyTrash() {
         noteTitleInput.classList.add('hidden');
         charCount.classList.add('hidden');
         dateDisplay.classList.add('hidden');
+        noteCodeView.classList.add('hidden');
     }
 
     renderList(searchInput.value);
@@ -2342,7 +2718,7 @@ tabTrash.onclick = () => {
 };
 
 btnPin.onclick = () => {
-    if (!activeNoteId || !currentNotes[activeNoteId]) return;
+    if (!activeNoteId || !currentNotes[activeNoteId] || !currentNotes[activeNoteId].id) return;
     const isPinned = !currentNotes[activeNoteId].pinned;
     currentNotes[activeNoteId].pinned = isPinned;
     btnPin.classList.toggle('active', isPinned);
@@ -2356,7 +2732,7 @@ btnPin.onclick = () => {
 btnCopy.onclick = () => {
     if (!noteBody.value) return;
     navigator.clipboard.writeText(noteBody.value);
-    showToast("クリップボードにコピーしました");
+    showToast("全文をコピーしました");
 };
 
 function updateEditorFooter() {
@@ -2372,35 +2748,55 @@ btnBack.onclick = () => {
     btnBack.classList.add('hidden');
 };
 
+// ★ 文字タイピング処理（完全なデータのみ送信して無限ループを防止）
 function handleInput() {
-    if (!activeNoteId) return;
+    if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const val = noteBody.value;
     pushTextHistory(val);
 
     const updatedNote = {
         ...currentNotes[activeNoteId],
         id: activeNoteId,
+        title: currentNotes[activeNoteId].title || '',
         body: val,
+        pinned: currentNotes[activeNoteId].pinned || false,
+        codeCollapsed: currentNotes[activeNoteId].codeCollapsed || {},
         updatedAt: Date.now()
     };
-    currentNotes[activeNoteId] = updatedNote;
-    saveLocalNote(updatedNote);
-    updateTitlePlaceholder(updatedNote);
-    updateEditorFooter();
-    renderList(searchInput.value);
 
-    setStatus('saving', 'クラウドに保存中...');
-    worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+    // ★ IDがセットされていることを絶対保証
+    if (updatedNote.id) {
+        currentNotes[activeNoteId] = updatedNote;
+        saveLocalNote(updatedNote);
+        updateTitlePlaceholder(updatedNote);
+        updateEditorFooter();
+        renderList(searchInput.value);
+
+        setStatus('saving', 'クラウドに保存中...');
+        worker.postMessage({ type: 'SAVE_NOTE', note: updatedNote });
+    }
 }
 
 noteBody.oninput = handleInput;
+
+noteBody.addEventListener('paste', () => {
+    setTimeout(() => {
+        handleInput();
+        updateAutoCodeRender(true);
+    }, 50);
+});
+
+noteBody.onblur = () => {
+    updateAutoCodeRender();
+};
+
 searchInput.oninput = () => renderList(searchInput.value);
 
 function createNewNote(autoFocus = true) {
     cleanupEmptyNotes();
 
     const newId = 'note_' + Date.now();
-    currentNotes[newId] = { id: newId, title: '', body: '', pinned: false, updatedAt: Date.now() };
+    currentNotes[newId] = { id: newId, title: '', body: '', pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
     saveLocalNote(currentNotes[newId]);
     selectNote(newId, autoFocus);
     setStatus('saving', '新規作成中...');
@@ -2458,7 +2854,7 @@ btnUpdateCheck.onclick = async () => {
     window.location.reload(true);
 };
 
-// 認証ハンドラー
+// 認証
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
@@ -2471,19 +2867,16 @@ async function loginWithProvider(provider) {
     }
 }
 
-// ★ Microsoft ログインの高度ハンドラー（個人・組織アカウント共通指定）
-const msProvider = new OAuthProvider('microsoft.com');
-msProvider.setCustomParameters({
-    tenant: 'common' // 個人アカウント(Outlook/Hotmail)および組織アカウント両対応
-});
-
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
-document.getElementById('btn-ms').onclick = () => loginWithProvider(msProvider);
 
-// ★【ユーザーアカウント情報の高精度取得 ＆ 安全アバターフォールバック】
-onAuthStateChanged(auth, user => {
+onAuthStateChanged(auth, async user => {
     splashScreen.classList.add('hidden');
     if (user) {
+        if (currentUserId !== null && currentUserId !== user.uid) {
+            await clearLocalData();
+        }
+        currentUserId = user.uid;
+
         authContainer.classList.add('hidden');
         appContainer.classList.remove('hidden');
         setStatus('synced', 'クラウド同期完了');
@@ -2494,7 +2887,6 @@ onAuthStateChanged(auth, user => {
         userName.textContent = nameText;
         userEmail.textContent = emailText;
 
-        // アバター設定 ＆ 読み込み失敗時のインラインSVG安全装置
         userAvatar.onerror = () => {
             userAvatar.src = getInitialsAvatar(nameText);
         };
@@ -2505,17 +2897,13 @@ onAuthStateChanged(auth, user => {
             userAvatar.src = getInitialsAvatar(nameText);
         }
 
-        // プロバイダ（Google / Microsoft）自動判定
-        let providerName = "Google";
-        if (user.providerData && user.providerData[0]) {
-            const pId = user.providerData[0].providerId;
-            if (pId.includes('microsoft')) providerName = "Microsoft";
-            if (pId.includes('google')) providerName = "Google";
-        }
-        if (userProviderTag) userProviderTag.textContent = providerName;
+        if (userProviderTag) userProviderTag.textContent = "Google";
 
         worker.postMessage({ type: 'SET_USER', uid: user.uid });
     } else {
+        await clearLocalData();
+        currentUserId = null;
+
         authContainer.classList.remove('hidden');
         appContainer.classList.add('hidden');
         authLoading.classList.add('hidden');
@@ -2536,6 +2924,7 @@ worker.onmessage = e => {
         renderList(searchInput.value);
 
         if (activeNoteId && currentNotes[activeNoteId]) {
+            // ユーザーが入力中でない場合のみUI更新
             if (document.activeElement !== noteBody && document.activeElement !== noteTitleInput) {
                 selectNote(activeNoteId, false);
             }
