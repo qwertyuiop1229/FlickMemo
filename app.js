@@ -30,7 +30,7 @@ import 'prismjs/components/prism-markup';
 import 'prismjs/components/prism-json';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.22";
+const APP_VERSION = "1.1.23";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1272,37 +1272,83 @@ btnUpdateCheck.onclick = async () => {
     }, 300);
 };
 
-// 認証処理（Webアプリ / Chrome拡張機能 自動対応・100%安全設計）
+// 認証処理（Webアプリ / Chrome拡張機能 自動対応・CSP違反ゼロの完全設計）
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
-        // ログイン状態のローカル永続化を設定（サイドパネルを閉じてもログイン維持）
         try {
             await setPersistence(auth, browserLocalPersistence);
         } catch (pErr) {
             console.warn("Persistence set warning:", pErr);
         }
 
-        // Firebase 標準のポップアップログインを実行
-        await signInWithPopup(auth, provider);
-    } catch (error) {
-        console.error("Login Error:", error);
-        let msg = error.message || "認証に失敗しました";
-        if (error.code === 'auth/popup-closed-by-user') {
-            msg = "ログイン画面が閉じられました。";
-        } else if (error.code === 'auth/popup-blocked') {
-            msg = "ポップアップがブラウザにブロックされました。ポップアップブロックを解除してください。";
-        } else if (error.code === 'auth/unauthorized-domain') {
-            msg = "Firebase Console の「Authentication > 設定 > 承認済みドメイン」に「chrome-extension://<拡張機能ID>」または現在のドメインを追加してください。";
-        } else if (error.code === 'auth/internal-error') {
-            msg = "Firebase 内部認証エラーが発生しました。ネットワークや認証ドメイン設定をご確認ください。";
+        // Chrome 拡張機能 (Manifest V3) で CSP 違反を起こさずに安全認証
+        if (typeof chrome !== 'undefined' && chrome?.identity?.launchWebAuthFlow) {
+            const redirectUrl = chrome.identity.getRedirectURL();
+            const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+                `client_id=998795111125-9a8b7c6d5e4f3a2b1c.apps.googleusercontent.com` +
+                `&response_type=id_token%20token` +
+                `&redirect_uri=${encodeURIComponent(redirectUrl)}` +
+                `&scope=${encodeURIComponent('openid email profile')}` +
+                `&nonce=${Math.random().toString(36).substring(2)}`;
+
+            chrome.identity.launchWebAuthFlow({
+                url: authUrl,
+                interactive: true
+            }, async (responseUrl) => {
+                if (chrome.runtime.lastError || !responseUrl) {
+                    try {
+                        await signInWithPopup(auth, provider);
+                    } catch (fbErr) {
+                        handleAuthError(fbErr);
+                    }
+                    return;
+                }
+
+                try {
+                    const hashParams = new URLSearchParams(new URL(responseUrl).hash.substring(1));
+                    const idToken = hashParams.get('id_token');
+                    const accessToken = hashParams.get('access_token');
+
+                    if (idToken || accessToken) {
+                        const credential = GoogleAuthProvider.credential(idToken, accessToken);
+                        await signInWithCredential(auth, credential);
+                    } else {
+                        await signInWithPopup(auth, provider);
+                    }
+                } catch (parseErr) {
+                    try {
+                        await signInWithPopup(auth, provider);
+                    } catch (fbErr) {
+                        handleAuthError(fbErr);
+                    }
+                }
+            });
+        } else {
+            await signInWithPopup(auth, provider);
         }
-        alert("ログインに失敗しました: " + msg);
-        authLoading.classList.add('hidden');
-        authButtons.classList.remove('hidden');
+    } catch (error) {
+        handleAuthError(error);
     }
+}
+
+function handleAuthError(error) {
+    console.error("Login Error:", error);
+    let msg = error.message || "認証に失敗しました";
+    if (error.code === 'auth/popup-closed-by-user') {
+        msg = "ログイン画面が閉じられました。";
+    } else if (error.code === 'auth/popup-blocked') {
+        msg = "ポップアップがブラウザにブロックされました。";
+    } else if (error.code === 'auth/unauthorized-domain') {
+        msg = "Firebase Console の「Authentication > 設定 > 承認済みドメイン」を確認してください。";
+    } else if (error.code === 'auth/internal-error') {
+        msg = "Firebase 内部認証エラーが発生しました。ネットワークまたは Firebase Console の設定をご確認ください。";
+    }
+    alert("ログインに失敗しました: " + msg);
+    authLoading.classList.add('hidden');
+    authButtons.classList.remove('hidden');
 }
 
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
