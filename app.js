@@ -30,7 +30,7 @@ import 'prismjs/components/prism-markup';
 import 'prismjs/components/prism-json';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.25";
+const APP_VERSION = "1.1.26";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {

@@ -1,5 +1,5 @@
-import { initializeApp } from "firebase/app";
-import { getAuth, signInWithPopup, GoogleAuthProvider, setPersistence, browserLocalPersistence } from "firebase/auth";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
@@ -25,7 +25,7 @@ async function performAuth() {
         const result = await signInWithPopup(auth, provider);
         const user = result.user;
 
-        if (msg) msg.textContent = "ログインが成功しました！";
+        if (msg) msg.textContent = "ログインが成功しました！画面を閉じています...";
 
         if (window.opener) {
             window.opener.postMessage({ type: 'FLICKMEMO_AUTH_SUCCESS', uid: user.uid }, '*');
