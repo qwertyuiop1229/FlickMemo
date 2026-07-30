@@ -20,7 +20,7 @@ import {
 } from "firebase/database";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.19";
+const APP_VERSION = "1.1.20";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1253,28 +1253,23 @@ btnUpdateCheck.onclick = async () => {
     window.location.reload(true);
 };
 
-// 認証（Webアプリ / Chrome拡張機能 自動両対応）
+// 認証処理（Webアプリ / Chrome拡張機能 自動対応）
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
-        if (typeof chrome !== 'undefined' && chrome?.identity?.getAuthToken) {
-            chrome.identity.getAuthToken({ interactive: true }, (token) => {
-                if (chrome.runtime.lastError || !token) {
-                    alert("ログイン認証に失敗しました: " + (chrome.runtime.lastError?.message || "トークン取得不可"));
-                    authLoading.classList.add('hidden');
-                    authButtons.classList.remove('hidden');
-                    return;
-                }
-                const credential = GoogleAuthProvider.credential(null, token);
-                signInWithCredential(auth, credential);
-            });
-        } else {
-            await signInWithPopup(auth, provider);
-        }
+        // ★ Firebase 標準のポップアップログインを実行（chrome.identity.getAuthTokenのOAuth2 Client IDエラーを完全回避）
+        await signInWithPopup(auth, provider);
     } catch (error) {
-        alert("ログインに失敗しました: " + error.message);
+        console.error("Login Error:", error);
+        let msg = error.message || "認証に失敗しました";
+        if (error.code === 'auth/popup-closed-by-user') {
+            msg = "ログイン画面が閉じられました。";
+        } else if (error.code === 'auth/unauthorized-domain') {
+            msg = "Firebase Console の「Authentication > 設定 > 承認済みドメイン」を確認してください。";
+        }
+        alert("ログインに失敗しました: " + msg);
         authLoading.classList.add('hidden');
         authButtons.classList.remove('hidden');
     }

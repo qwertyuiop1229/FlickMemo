@@ -1,5 +1,14 @@
-// 右クリックコンテキストメニューの作成（選択テキスト / ページ情報）
+// 拡張機能アイコンの左クリックで直接サイドパネルを開く設定
+if (typeof chrome !== 'undefined' && chrome?.sidePanel?.setPanelBehavior) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error(error));
+}
+
 chrome.runtime.onInstalled.addListener(() => {
+    if (typeof chrome !== 'undefined' && chrome?.sidePanel?.setPanelBehavior) {
+        chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error(error));
+    }
+
+    // 右クリックコンテキストメニューの作成
     chrome.contextMenus.create({
         id: "add-selection-to-flickmemo",
         title: "選択したテキストをFlickMemoに追加",
