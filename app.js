@@ -19,8 +19,16 @@ import {
     off
 } from "firebase/database";
 
+import Prism from 'prismjs';
+import 'prismjs/components/prism-javascript';
+import 'prismjs/components/prism-typescript';
+import 'prismjs/components/prism-python';
+import 'prismjs/components/prism-css';
+import 'prismjs/components/prism-markup';
+import 'prismjs/components/prism-json';
+
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.20";
+const APP_VERSION = "1.1.21";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -375,7 +383,7 @@ function updateAutoCodeRender(forceRender = false) {
 
     if (hasAnyCode && (forceRender || document.activeElement !== noteBody)) {
         noteCodeView.innerHTML = html;
-        if (window.Prism) {
+        if (Prism) {
             Prism.highlightAllUnder(noteCodeView);
         }
 
@@ -1241,16 +1249,25 @@ btnSettingsLogoutAction.onclick = () => {
 };
 
 btnUpdateCheck.onclick = async () => {
-    setStatus('saving', 'キャッシュをクリア中...');
-    if ('caches' in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map(k => caches.delete(k)));
+    setStatus('saving', 'キャッシュを強制クリア中...');
+    try {
+        if ('caches' in window) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map(k => caches.delete(k)));
+        }
+        if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            for (let r of regs) await r.unregister();
+        }
+    } catch (err) {
+        console.error("Cache clear error:", err);
     }
-    if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        for (let r of regs) await r.unregister();
-    }
-    window.location.reload(true);
+    showToast("最新コードで再読み込み中...");
+    setTimeout(() => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('v', Date.now());
+        window.location.href = url.toString();
+    }, 300);
 };
 
 // 認証処理（Webアプリ / Chrome拡張機能 自動対応）
@@ -1259,7 +1276,6 @@ async function loginWithProvider(provider) {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
-        // ★ Firebase 標準のポップアップログインを実行（chrome.identity.getAuthTokenのOAuth2 Client IDエラーを完全回避）
         await signInWithPopup(auth, provider);
     } catch (error) {
         console.error("Login Error:", error);
@@ -1268,6 +1284,8 @@ async function loginWithProvider(provider) {
             msg = "ログイン画面が閉じられました。";
         } else if (error.code === 'auth/unauthorized-domain') {
             msg = "Firebase Console の「Authentication > 設定 > 承認済みドメイン」を確認してください。";
+        } else if (error.code === 'auth/internal-error') {
+            msg = "Firebase 内部エラーが発生しました。認証ドメイン設定を確認してください。";
         }
         alert("ログインに失敗しました: " + msg);
         authLoading.classList.add('hidden');
