@@ -47,10 +47,12 @@ app.js
 bump.js
 firebase.json
 index.html
+manifest.json
 package.json
 README.md
 style.css
 version.json
+vite.config.js
 worker.js
 </directory_structure>
 
@@ -186,19 +188,88 @@ pnpm-lock.yaml
 </html>
 </file>
 
-<file path="package.json">
+<file path="manifest.json">
 {
-    "name": "flickmemo",
+    "manifest_version": 3,
+    "name": "FlickMemo - 超軽量リアルタイムメモ帳",
     "version": "1.3.0",
-    "type": "module",
-    "scripts": {
-        "deploy": "node bump.js && git add . && git commit -m \"auto deploy: update code and version\" && git push && firebase deploy"
+    "description": "即座に書ける、リアルタイム同期の超軽量メモ帳",
+    "action": {
+        "default_popup": "index.html",
+        "default_title": "FlickMemoを開く"
+    },
+    "side_panel": {
+        "default_path": "index.html"
+    },
+    "permissions": [
+        "sidePanel",
+        "identity",
+        "storage"
+    ],
+    "content_security_policy": {
+        "extension_pages": "script-src 'self'; object-src 'self';"
     }
 }
 </file>
 
 <file path="README.md">
 # FlickMemo
+</file>
+
+<file path="vite.config.js">
+import { defineConfig } from 'vite';
+import { resolve } from 'path';
+import fs from 'fs';
+
+const copyExtensionFiles = () => ({
+    name: 'copy-extension-files',
+    closeBundle() {
+        if (!fs.existsSync('dist/icons')) fs.mkdirSync('dist/icons', { recursive: true });
+        if (fs.existsSync('manifest.json')) fs.copyFileSync('manifest.json', 'dist/manifest.json');
+        if (fs.existsSync('icons')) {
+            fs.readdirSync('icons').forEach(file => {
+                fs.copyFileSync(`icons/${file}`, `dist/icons/${file}`);
+            });
+        }
+    }
+});
+
+export default defineConfig({
+    build: {
+        outDir: 'dist',
+        rollupOptions: {
+            input: {
+                popup: resolve(__dirname, 'index.html')
+            },
+            output: {
+                entryFileNames: 'assets/[name].js',
+                chunkFileNames: 'assets/[name].js',
+                assetFileNames: 'assets/[name].[ext]'
+            }
+        }
+    },
+    plugins: [copyExtensionFiles()]
+});
+</file>
+
+<file path="package.json">
+{
+    "name": "flickmemo",
+    "version": "1.3.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "deploy": "node bump.js && git add . && git commit -m \"auto deploy: update code and version\" && git push && firebase deploy"
+    },
+    "dependencies": {
+        "firebase": "^10.12.0",
+        "prismjs": "^1.29.0"
+    },
+    "devDependencies": {
+        "vite": "^5.0.0"
+    }
+}
 </file>
 
 <file path="bump.js">
@@ -348,6 +419,15 @@ self.onmessage = e => {
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
     <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+{
+    "imports": {
+    "firebase/app": "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js",
+    "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js",
+    "firebase/database": "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js"
+        }
+}
+</script>
 </head>
 
 <body>
@@ -631,7 +711,7 @@ self.onmessage = e => {
 
 <file path="version.json">
 {
-  "version": "1.1.14"
+  "version": "1.1.16"
 }
 </file>
 
@@ -1770,12 +1850,29 @@ select {
 </file>
 
 <file path="app.js">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getDatabase, ref, set, remove, get, update, onValue, off } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { initializeApp } from "firebase/app";
+import {
+    getAuth,
+    signInWithPopup,
+    GoogleAuthProvider,
+    signInWithCredential,
+    OAuthProvider,
+    signOut,
+    onAuthStateChanged
+} from "firebase/auth";
+import {
+    getDatabase,
+    ref,
+    set,
+    remove,
+    get,
+    update,
+    onValue,
+    off
+} from "firebase/database";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.1.16";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -2911,12 +3008,28 @@ btnUpdateCheck.onclick = async () => {
     window.location.reload(true);
 };
 
-// 認証
+// 認証（Webアプリ / Chrome拡張機能 自動両対応）
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
-        await signInWithPopup(auth, provider);
+
+        // ★ Chrome 拡張機能環境で chrome.identity が利用可能な場合
+        if (typeof chrome !== 'undefined' && chrome?.identity?.getAuthToken) {
+            chrome.identity.getAuthToken({ interactive: true }, (token) => {
+                if (chrome.runtime.lastError || !token) {
+                    alert("ログイン認証に失敗しました: " + (chrome.runtime.lastError?.message || "トークン取得不可"));
+                    authLoading.classList.add('hidden');
+                    authButtons.classList.remove('hidden');
+                    return;
+                }
+                const credential = GoogleAuthProvider.credential(null, token);
+                signInWithCredential(auth, credential);
+            });
+        } else {
+            // ★ 通常の Web アプリ環境（Firebase Hosting等）
+            await signInWithPopup(auth, provider);
+        }
     } catch (error) {
         alert("ログインに失敗しました: " + error.message);
         authLoading.classList.add('hidden');

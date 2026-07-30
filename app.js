@@ -20,7 +20,7 @@ import {
 } from "firebase/database";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.16";
+const APP_VERSION = "1.1.17";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -149,6 +149,10 @@ let lastMovedToTrashNote = null;
 let currentTab = 'notes';
 let toastTimer = null;
 let currentUserId = null;
+
+// 省メモリ・通信節約用の最適化タイマー＆差分キャッシュ
+let syncDebounceTimer = null;
+let lastSyncedData = {};
 
 function setupScrollFade(element) {
     if (!element) return;
@@ -492,10 +496,93 @@ function pushTextHistory(text) {
     historyDebounceTimer = setTimeout(() => {
         textHistory = textHistory.slice(0, historyIndex + 1);
         textHistory.push(text);
-        if (textHistory.length > 50) textHistory.shift();
+        if (textHistory.length > 25) textHistory.shift();
         historyIndex = textHistory.length - 1;
         updateUndoRedoButtons();
     }, 300);
+}
+
+// ★ アクティブなリスト項目だけのピンポイントDOM更新（全体DOM全破棄・全再構築を防止して省メモリ＆CPU化）
+function updateActiveNoteItemDOM(id) {
+    if (!id) return;
+    const activeLi = noteList.querySelector(`.note-item.active`);
+    if (!activeLi) {
+        renderList(searchInput.value);
+        return;
+    }
+    const note = currentNotes[id];
+    if (!note) return;
+    const titleSpan = activeLi.querySelector('.title');
+    if (titleSpan) {
+        const titleText = getNoteDisplayTitle(note);
+        if (note.pinned && currentTab === 'notes') {
+            titleSpan.innerHTML = `<span class="material-symbols-outlined pin-icon">push_pin</span> ${escapeHTML(titleText)}`;
+        } else {
+            titleSpan.textContent = titleText;
+        }
+    }
+}
+
+// ★ ローカル即時（0ms）反映＋RTDB通信デバウンス（750ms）で通信量を最少化
+function scheduleSaveNote(id, updatedFields) {
+    if (!id || !currentNotes[id]) return;
+
+    Object.assign(currentNotes[id], updatedFields);
+    currentNotes[id].updatedAt = Date.now();
+
+    updateActiveNoteItemDOM(id);
+    updateTitlePlaceholder(currentNotes[id]);
+    updateEditorFooter();
+
+    setStatus('saving', '保存中...');
+
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = setTimeout(() => {
+        flushPendingSave(id);
+    }, 750);
+}
+
+function flushPendingSave(id) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+
+    const note = id ? currentNotes[id] : (activeNoteId ? currentNotes[activeNoteId] : null);
+    if (!note || !note.id) return;
+
+    saveLocalNote(note);
+
+    const last = lastSyncedData[note.id];
+    if (last && last.body === note.body && last.title === note.title && last.pinned === note.pinned) {
+        setStatus('synced', 'クラウド同期完了');
+        return;
+    }
+
+    lastSyncedData[note.id] = { body: note.body, title: note.title, pinned: note.pinned };
+    syncUpdateNoteFields(note.id, {
+        body: note.body,
+        title: note.title,
+        pinned: note.pinned,
+        updatedAt: note.updatedAt
+    });
+    setStatus('synced', 'クラウド同期完了');
+}
+
+function checkPendingExtensionNotes() {
+    if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+        chrome.storage.local.get(['pendingQuickNote'], (result) => {
+            if (result && result.pendingQuickNote) {
+                const text = result.pendingQuickNote;
+                chrome.storage.local.remove('pendingQuickNote');
+                createNewNote(true);
+                if (activeNoteId && currentNotes[activeNoteId]) {
+                    noteBody.value = text;
+                    handleInput();
+                    flushPendingSave(activeNoteId);
+                    showToast("選択したテキストを新しいメモに追加しました");
+                }
+            }
+        });
+    }
 }
 
 function updateUndoRedoButtons() {
@@ -507,7 +594,6 @@ function applyUndoRedoText(targetText) {
     noteBody.value = targetText;
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
 
-    // ★ 履歴復元時も完全なデータ構造で保存（エラー防止）
     const updatedNote = {
         ...currentNotes[activeNoteId],
         id: activeNoteId,
@@ -789,7 +875,6 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
     noteBody.disabled = isTrashNote;
     noteTitleInput.disabled = isTrashNote;
 
-    // ★ バグ修正：同じノートが開かれていても他端末での編集をリアルタイムに画面へ反映（フォーカス中のキャレット保護）
     if (document.activeElement === noteTitleInput) {
         if (noteTitleInput.value !== (n.title || '')) {
             const start = noteTitleInput.selectionStart;
@@ -860,19 +945,7 @@ function updateTitlePlaceholder(note) {
 
 noteTitleInput.oninput = () => {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
-    const val = noteTitleInput.value;
-
-    if (currentNotes[activeNoteId].id) {
-        currentNotes[activeNoteId].title = val;
-        currentNotes[activeNoteId].updatedAt = Date.now();
-
-        saveLocalNote(currentNotes[activeNoteId]);
-        updateTitlePlaceholder(currentNotes[activeNoteId]);
-        renderList(searchInput.value);
-
-        setStatus('saving', 'クラウドに保存中...');
-        syncUpdateNoteFields(activeNoteId, { title: val, updatedAt: currentNotes[activeNoteId].updatedAt });
-    }
+    scheduleSaveNote(activeNoteId, { title: noteTitleInput.value });
 };
 
 function moveToTrash(id) {
@@ -1050,33 +1123,11 @@ btnBack.onclick = () => {
     btnBack.classList.add('hidden');
 };
 
-// ★ 文字タイピング処理（完全なデータのみ送信して無限ループを防止）
 function handleInput() {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const val = noteBody.value;
     pushTextHistory(val);
-
-    const updatedNote = {
-        ...currentNotes[activeNoteId],
-        id: activeNoteId,
-        title: currentNotes[activeNoteId].title || '',
-        body: val,
-        pinned: currentNotes[activeNoteId].pinned || false,
-        codeCollapsed: currentNotes[activeNoteId].codeCollapsed || {},
-        updatedAt: Date.now()
-    };
-
-    // ★ IDがセットされていることを絶対保証
-    if (updatedNote.id) {
-        currentNotes[activeNoteId] = updatedNote;
-        saveLocalNote(updatedNote);
-        updateTitlePlaceholder(updatedNote);
-        updateEditorFooter();
-        renderList(searchInput.value);
-
-        setStatus('saving', 'クラウドに保存中...');
-        syncUpdateNoteFields(activeNoteId, { body: val, updatedAt: updatedNote.updatedAt });
-    }
+    scheduleSaveNote(activeNoteId, { body: val });
 }
 
 noteBody.oninput = handleInput;
@@ -1162,7 +1213,6 @@ async function loginWithProvider(provider) {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
-        // ★ Chrome 拡張機能環境で chrome.identity が利用可能な場合
         if (typeof chrome !== 'undefined' && chrome?.identity?.getAuthToken) {
             chrome.identity.getAuthToken({ interactive: true }, (token) => {
                 if (chrome.runtime.lastError || !token) {
@@ -1175,7 +1225,6 @@ async function loginWithProvider(provider) {
                 signInWithCredential(auth, credential);
             });
         } else {
-            // ★ 通常の Web アプリ環境（Firebase Hosting等）
             await signInWithPopup(auth, provider);
         }
     } catch (error) {
@@ -1216,7 +1265,6 @@ onAuthStateChanged(auth, async user => {
 
         if (userProviderTag) userProviderTag.textContent = "Google";
 
-        // ★ Firebase Realtime Database リアルタイム同期（複数デバイス1文字単位の即時反映＆ループ完全防止）
         if (currentDbRef) {
             off(currentDbRef);
         }
@@ -1224,7 +1272,6 @@ onAuthStateChanged(auth, async user => {
         onValue(currentDbRef, snapshot => {
             const remoteNotes = snapshot.val() || {};
 
-            // 他端末で完全削除されたノートをローカルから同期削除
             Object.keys(currentNotes).forEach(id => {
                 if (!remoteNotes[id]) {
                     delete currentNotes[id];
@@ -1244,7 +1291,6 @@ onAuthStateChanged(auth, async user => {
                 }
             });
 
-            // リモートの最新ノートデータでローカルマップとIndexedDBを更新
             Object.values(remoteNotes).forEach(n => {
                 currentNotes[n.id] = n;
                 saveLocalNote(n);
@@ -1253,7 +1299,6 @@ onAuthStateChanged(auth, async user => {
             cleanExpiredTrash();
             renderList(searchInput.value);
 
-            // ★ 同期ループ防止：受信ハンドラ内で createNewNote / cleanupEmptyNotes 等の自動書き込み処理を直接呼ばない
             if (activeNoteId && currentNotes[activeNoteId]) {
                 selectNote(activeNoteId, false, true);
             } else {
@@ -1266,6 +1311,7 @@ onAuthStateChanged(auth, async user => {
                 }
             }
             setStatus('synced', 'クラウド同期完了');
+            checkPendingExtensionNotes();
         }, error => {
             console.error("Sync Error:", error);
         });
@@ -1281,5 +1327,21 @@ onAuthStateChanged(auth, async user => {
         appContainer.classList.add('hidden');
         authLoading.classList.add('hidden');
         authButtons.classList.remove('hidden');
+    }
+});
+
+// ★ アプリ非表示・離脱時の即時同期確定ハンドラ
+window.addEventListener('beforeunload', () => {
+    cleanupEmptyNotes();
+    if (activeNoteId && syncDebounceTimer) {
+        flushPendingSave(activeNoteId);
+    }
+});
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && activeNoteId && syncDebounceTimer) {
+        flushPendingSave(activeNoteId);
+    } else if (document.visibilityState === 'visible') {
+        checkPendingExtensionNotes();
     }
 });
