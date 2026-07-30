@@ -15,13 +15,22 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-async function doAuth() {
+async function performAuth() {
     const msg = document.getElementById('msg');
     try {
         await setPersistence(auth, browserLocalPersistence);
         const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-        if (msg) msg.textContent = "ログインが完了しました！画面を閉じています...";
+        provider.setCustomParameters({ prompt: 'select_account' });
+
+        const result = await signInWithPopup(auth, provider);
+        const user = result.user;
+
+        if (msg) msg.textContent = "ログインが成功しました！";
+
+        if (window.opener) {
+            window.opener.postMessage({ type: 'FLICKMEMO_AUTH_SUCCESS', uid: user.uid }, '*');
+        }
+
         setTimeout(() => window.close(), 600);
     } catch (err) {
         console.error("Auth window error:", err);
@@ -30,4 +39,4 @@ async function doAuth() {
     }
 }
 
-doAuth();
+performAuth();

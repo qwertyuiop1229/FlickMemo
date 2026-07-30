@@ -30,7 +30,7 @@ import 'prismjs/components/prism-markup';
 import 'prismjs/components/prism-json';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.24";
+const APP_VERSION = "1.1.25";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1278,22 +1278,26 @@ async function loginWithProvider(provider) {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
+        // Chrome 拡張機能環境（サイドパネルやポップアップ）の場合
         if (typeof chrome !== 'undefined' && chrome?.windows?.create) {
-            const authUrl = chrome.runtime.getURL('auth.html');
+            // Web上の認証ページを開くことで拡張機能のCSP制限(script-src 'self')を完全回避
+            const webAuthUrl = 'https://flickmemo-qwe.web.app/auth.html';
             chrome.windows.create({
-                url: authUrl,
+                url: webAuthUrl,
                 type: 'popup',
-                width: 480,
-                height: 580
+                width: 500,
+                height: 620
             });
 
+            // タイムアウト保護タイマー
             setTimeout(() => {
                 if (!auth.currentUser) {
                     authLoading.classList.add('hidden');
                     authButtons.classList.remove('hidden');
                 }
-            }, 12000);
+            }, 15000);
         } else {
+            // 通常の Web アプリ環境 (flickmemo-qwe.web.app 等)
             try {
                 await setPersistence(auth, browserLocalPersistence);
             } catch (pErr) {
@@ -1309,7 +1313,7 @@ async function loginWithProvider(provider) {
         } else if (error.code === 'auth/popup-blocked') {
             msg = "ポップアップがブラウザにブロックされました。";
         } else if (error.code === 'auth/unauthorized-domain') {
-            msg = "Firebase Console の「Authentication > 設定 > 承認済みドメイン」を確認してください。";
+            msg = "Firebase Console の「Authentication > 設定 > 承認済みドメイン」をご確認ください。";
         }
         alert("ログインに失敗しました: " + msg);
         authLoading.classList.add('hidden');
