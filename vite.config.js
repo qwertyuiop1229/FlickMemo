@@ -22,7 +22,8 @@ export default defineConfig({
         outDir: 'dist',
         rollupOptions: {
             input: {
-                popup: resolve(__dirname, 'index.html')
+                popup: resolve(__dirname, 'index.html'),
+                auth: resolve(__dirname, 'auth.html')
             },
             output: {
                 entryFileNames: 'assets/[name].js',
