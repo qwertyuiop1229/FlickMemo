@@ -75,7 +75,6 @@
             </div>
         </header>
 
-        <!-- ★ main-layout を基準にバッジを絶対配置 -->
         <div class="main-layout" id="main-layout">
             <aside class="sidebar" id="sidebar-container">
                 <div class="sidebar-tabs">
@@ -90,11 +89,16 @@
                 <div class="sidebar-top">
                     <div class="m3-search-bar">
                         <span class="material-symbols-outlined">search</span>
-                        <input type="text" id="search-input" placeholder="検索...">
+                        <input type="text" id="search-input" placeholder="検索... (Ctrl+F)">
                     </div>
-                    <button id="btn-new" class="m3-fab-button">
-                        <span class="material-symbols-outlined">add</span> 新しいメモ
-                    </button>
+                    <div class="sidebar-action-buttons">
+                        <button id="btn-new" class="m3-fab-button">
+                            <span class="material-symbols-outlined">add</span> 新しいメモ
+                        </button>
+                        <button id="btn-paste-clip" class="m3-icon-button" title="クリップボードから作成">
+                            <span class="material-symbols-outlined">content_paste</span>
+                        </button>
+                    </div>
                     <button id="btn-empty-trash" class="m3-fab-button btn-danger-fab hidden">
                         <span class="material-symbols-outlined">delete_sweep</span> ゴミ箱を空にする
                     </button>
@@ -145,14 +149,11 @@
                 <input type="text" id="note-title-input" class="m3-title-input hidden" placeholder="タイトル（未入力時は自動抽出）"
                     disabled>
 
-                <!-- テキスト入力欄 -->
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
 
-                <!-- 自動変身コードビュー -->
                 <div id="note-code-view" class="m3-code-view hidden"></div>
             </main>
 
-            <!-- ★ スクロール領域に依存せず、画面右下・左下に完全に固定表示されるバッジ -->
             <div id="date-display" class="date-display-floating hidden">--月--日</div>
             <div id="char-count" class="char-count-floating hidden">0 文字</div>
         </div>

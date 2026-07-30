@@ -20,7 +20,7 @@ import {
 } from "firebase/database";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.18";
+const APP_VERSION = "1.1.19";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1152,26 +1152,6 @@ btnBack.onclick = () => {
     mainLayout.classList.remove('view-editor');
     btnBack.classList.add('hidden');
 };
-
-// クリップボードからメモ作成
-const btnPasteClip = document.getElementById('btn-paste-clip');
-if (btnPasteClip) {
-    btnPasteClip.onclick = async () => {
-        try {
-            const text = await navigator.clipboard.readText();
-            if (!text || !text.trim()) {
-                showToast("クリップボードにテキストがありません");
-                return;
-            }
-            createNewNote(true);
-            noteBody.value = text;
-            handleInput();
-            showToast("クリップボードからメモを作成しました");
-        } catch (err) {
-            showToast("クリップボード読み取り許可が必要です");
-        }
-    };
-}
 
 // クイック検索ショートカットキー (Ctrl+F / /)
 window.addEventListener('keydown', e => {

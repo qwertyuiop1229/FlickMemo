@@ -10,11 +10,24 @@
     "side_panel": {
         "default_path": "index.html"
     },
+    "background": {
+        "service_worker": "background.js"
+    },
     "permissions": [
         "sidePanel",
         "identity",
-        "storage"
+        "storage",
+        "contextMenus"
     ],
+    "commands": {
+        "_execute_action": {
+            "suggested_key": {
+                "default": "Ctrl+Shift+M",
+                "mac": "Command+Shift+M"
+            },
+            "description": "FlickMemoポップアップを開く"
+        }
+    },
     "content_security_policy": {
         "extension_pages": "script-src 'self'; object-src 'self';"
     }
