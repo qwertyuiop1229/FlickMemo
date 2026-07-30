@@ -1124,6 +1124,29 @@ select {
     }
 }
 
+.sidebar-action-buttons {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.sidebar-action-buttons #btn-new {
+    flex: 1;
+}
+
+.sidebar-action-buttons #btn-paste-clip {
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-lg);
+    width: 44px;
+    height: 44px;
+    background: var(--m3-surface-container);
+}
+
+.sidebar-action-buttons #btn-paste-clip:hover {
+    background: var(--m3-surface-hover);
+    color: var(--m3-primary);
+}
+
 /* Chrome拡張機能ポップアップ・サイドパネル最適化 */
 @media (max-width: 480px) {
     body {

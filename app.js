@@ -20,7 +20,7 @@ import {
 } from "firebase/database";
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.17";
+const APP_VERSION = "1.1.18";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -567,6 +567,14 @@ function flushPendingSave(id) {
     setStatus('synced', 'クラウド同期完了');
 }
 
+function updateExtensionBadge() {
+    if (typeof chrome !== 'undefined' && chrome?.action?.setBadgeText) {
+        const count = Object.values(currentNotes).filter(n => !n.deletedAt).length;
+        chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
+        chrome.action.setBadgeBackgroundColor({ color: "#28292a" });
+    }
+}
+
 function checkPendingExtensionNotes() {
     if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
         chrome.storage.local.get(['pendingQuickNote'], (result) => {
@@ -751,6 +759,15 @@ window.addEventListener('beforeunload', () => {
 
 function initAutoNote() {
     if (currentTab !== 'notes') return;
+    const isMobile = window.innerWidth <= 768;
+
+    if (isMobile) {
+        // スマホ閲覧時（幅768px以下）は勝手に新しいメモを作成せず、メモ一覧を表示
+        mainLayout.classList.remove('view-editor');
+        btnBack.classList.add('hidden');
+        return;
+    }
+
     const existingEmpty = Object.values(currentNotes).find(n => !n.deletedAt && (!n.body || !n.body.trim()) && (!n.title || !n.title.trim()));
     if (existingEmpty) {
         selectNote(existingEmpty.id, true);
@@ -865,6 +882,9 @@ function renderList(filter = '') {
 }
 
 function selectNote(id, autoFocus = true, isRemoteSync = false) {
+    if (syncDebounceTimer && activeNoteId && activeNoteId !== id) {
+        flushPendingSave(activeNoteId);
+    }
     if (!isRemoteSync) cleanupEmptyNotes(id);
 
     const isSameNote = (activeNoteId === id);
@@ -874,6 +894,9 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
     const isTrashNote = !!n.deletedAt;
     noteBody.disabled = isTrashNote;
     noteTitleInput.disabled = isTrashNote;
+
+    noteBody.scrollTop = 0;
+    noteCodeView.scrollTop = 0;
 
     if (document.activeElement === noteTitleInput) {
         if (noteTitleInput.value !== (n.title || '')) {
@@ -949,6 +972,9 @@ noteTitleInput.oninput = () => {
 };
 
 function moveToTrash(id) {
+    if (syncDebounceTimer && activeNoteId === id) {
+        flushPendingSave(id);
+    }
     if (!currentNotes[id]) return;
     lastMovedToTrashNote = { ...currentNotes[id] };
 
@@ -1119,9 +1145,46 @@ function updateEditorFooter() {
 }
 
 btnBack.onclick = () => {
+    if (syncDebounceTimer && activeNoteId) {
+        flushPendingSave(activeNoteId);
+    }
+    cleanupEmptyNotes();
     mainLayout.classList.remove('view-editor');
     btnBack.classList.add('hidden');
 };
+
+// クリップボードからメモ作成
+const btnPasteClip = document.getElementById('btn-paste-clip');
+if (btnPasteClip) {
+    btnPasteClip.onclick = async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            if (!text || !text.trim()) {
+                showToast("クリップボードにテキストがありません");
+                return;
+            }
+            createNewNote(true);
+            noteBody.value = text;
+            handleInput();
+            showToast("クリップボードからメモを作成しました");
+        } catch (err) {
+            showToast("クリップボード読み取り許可が必要です");
+        }
+    };
+}
+
+// クイック検索ショートカットキー (Ctrl+F / /)
+window.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+    } else if (e.key === '/' && document.activeElement !== noteBody && document.activeElement !== noteTitleInput && document.activeElement !== searchInput) {
+        e.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+    }
+});
 
 function handleInput() {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
@@ -1146,6 +1209,9 @@ noteBody.onblur = () => {
 searchInput.oninput = () => renderList(searchInput.value);
 
 function createNewNote(autoFocus = true) {
+    if (syncDebounceTimer && activeNoteId) {
+        flushPendingSave(activeNoteId);
+    }
     cleanupEmptyNotes();
 
     const newId = 'note_' + Date.now();
@@ -1271,11 +1337,13 @@ onAuthStateChanged(auth, async user => {
         currentDbRef = ref(db, `users/${user.uid}/notes`);
         onValue(currentDbRef, snapshot => {
             const remoteNotes = snapshot.val() || {};
+            let hasChanges = false;
 
             Object.keys(currentNotes).forEach(id => {
                 if (!remoteNotes[id]) {
                     delete currentNotes[id];
                     deleteLocalNote(id);
+                    hasChanges = true;
                     if (activeNoteId === id) {
                         activeNoteId = null;
                         noteTitleInput.value = '';
@@ -1292,22 +1360,36 @@ onAuthStateChanged(auth, async user => {
             });
 
             Object.values(remoteNotes).forEach(n => {
-                currentNotes[n.id] = n;
-                saveLocalNote(n);
+                const local = currentNotes[n.id];
+                if (!local || (n.updatedAt || 0) >= (local.updatedAt || 0)) {
+                    if (!local || JSON.stringify(local) !== JSON.stringify(n)) {
+                        currentNotes[n.id] = n;
+                        saveLocalNote(n);
+                        hasChanges = true;
+                    }
+                }
             });
 
             cleanExpiredTrash();
-            renderList(searchInput.value);
+            
+            if (hasChanges) {
+                renderList(searchInput.value);
+            }
+
+            updateExtensionBadge();
 
             if (activeNoteId && currentNotes[activeNoteId]) {
                 selectNote(activeNoteId, false, true);
             } else {
-                const validNotes = Object.values(currentNotes)
-                    .filter(n => !n.deletedAt)
-                    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+                const isMobile = window.innerWidth <= 768;
+                if (!isMobile) {
+                    const validNotes = Object.values(currentNotes)
+                        .filter(n => !n.deletedAt)
+                        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
-                if (validNotes.length > 0) {
-                    selectNote(validNotes[0].id, false, true);
+                    if (validNotes.length > 0) {
+                        selectNote(validNotes[0].id, false, true);
+                    }
                 }
             }
             setStatus('synced', 'クラウド同期完了');
