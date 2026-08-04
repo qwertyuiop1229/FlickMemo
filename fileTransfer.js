@@ -147,6 +147,7 @@ export class FileTransferManager {
         if (!roomId) return;
         this.leaveRoom();
         this.currentRoomId = roomId;
+        this._myJoinedAt = Date.now();
 
         const roomMemberRef = ref(this.db, `public_rooms/${roomId}/members/${this.deviceId}`);
         const roomSignalingRef = ref(this.db, `public_rooms/${roomId}/signaling/${this.deviceId}`);
@@ -160,12 +161,13 @@ export class FileTransferManager {
             set(roomMemberRef, {
                 id: this.deviceId,
                 name: this.deviceName,
-                joinedAt: Date.now()
+                joinedAt: this._myJoinedAt
             }).catch(err => {
-                console.warn("Room join warning (public_rooms permission):", err.message);
+                console.warn("Room join warning:", err.message);
             });
         } catch (e) {}
 
+        // シグナリングOffer受信 (= 自分は answerer 側)
         onValue(roomSignalingRef, (snapshot) => {
             const data = snapshot.val();
             if (data && data.offer) {
@@ -176,12 +178,19 @@ export class FileTransferManager {
             console.warn("Room signaling error:", err.message);
         });
 
-        const membersRef = ref(this.db, `public_rooms/${roomId}/members`);
-        onValue(membersRef, (snapshot) => {
+        // メンバー変化を監視 — joinedAt が自分より早い人が既にいたら自分が caller になる
+        // (後から入った方がOfferを送る → 先にいた方はsignalingRefを待つだけ)
+        onValue(ref(this.db, `public_rooms/${roomId}/members`), (snapshot) => {
             const members = snapshot.val() || {};
             const otherIds = Object.keys(members).filter(id => id !== this.deviceId);
             if (otherIds.length > 0) {
-                this.onStatusUpdate('room_member_joined', { roomId, otherDeviceId: otherIds[0] });
+                const otherId = otherIds[0];
+                const otherJoinedAt = members[otherId]?.joinedAt || 0;
+                // 自分が後から入った (joinedAt > other) → 自分が caller (Offer送信側)
+                if (this._myJoinedAt > otherJoinedAt) {
+                    this.onStatusUpdate('room_member_joined', { roomId, otherDeviceId: otherId });
+                }
+                // 自分が先にいた → answerer として待機。何もしない (signalingRefで受信)
             }
         }, (err) => {
             console.warn("Room members error:", err.message);

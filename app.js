@@ -35,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.22";
+const APP_VERSION = "1.3.24";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1198,14 +1198,19 @@ const targetSegmentedTabs = document.querySelector('.target-segmented-tabs');
 const roomSectionBoxFirst = document.querySelector('.room-section-box:first-child');
 const roomDividerBadge = document.querySelector('.room-divider-badge');
 const btnSettingsLoginAction = document.getElementById('btn-settings-login-action');
+const e2eeToggleCard = document.querySelector('.e2ee-toggle-card');
+const modeDropdownWrap = document.getElementById('custom-mode-dropdown');
 
 function applyGuestUIRestrictions() {
     if (isGuestMode) {
+        // 送信関連UI 完全非表示
         if (targetSegmentedTabs) targetSegmentedTabs.classList.add('hidden');
         if (targetPanelDevices) targetPanelDevices.classList.add('hidden');
         if (targetPanelRoom) targetPanelRoom.classList.remove('hidden');
         if (roomSectionBoxFirst) roomSectionBoxFirst.classList.add('hidden');
         if (roomDividerBadge) roomDividerBadge.classList.add('hidden');
+        if (e2eeToggleCard) e2eeToggleCard.classList.add('hidden');
+        if (modeDropdownWrap) modeDropdownWrap.classList.add('hidden');
 
         if (dropzoneArea) dropzoneArea.classList.add('hidden');
         if (stagedFilesCard) stagedFilesCard.classList.add('hidden');
@@ -1214,6 +1219,8 @@ function applyGuestUIRestrictions() {
         if (targetSegmentedTabs) targetSegmentedTabs.classList.remove('hidden');
         if (roomSectionBoxFirst) roomSectionBoxFirst.classList.remove('hidden');
         if (roomDividerBadge) roomDividerBadge.classList.remove('hidden');
+        if (e2eeToggleCard) e2eeToggleCard.classList.remove('hidden');
+        if (modeDropdownWrap) modeDropdownWrap.classList.remove('hidden');
 
         if (dropzoneArea) dropzoneArea.classList.remove('hidden');
         if (guestReceiverBanner) guestReceiverBanner.classList.add('hidden');
@@ -1664,14 +1671,19 @@ if (btnJoinRoom) {
     btnJoinRoom.onclick = () => {
         const val = roomCodeInput?.value.trim();
         if (!val) {
-            showToast("合言葉またはルームIDを入力してください");
+            showToast("合言葉を入力してください");
             return;
         }
         const tm = ensureTransferManager();
         if (!tm) return;
         tm.joinRoom(val);
-        updateRoomUI(val);
-        showToast(`合言葉「${val}」で接続待機中...`);
+        if (isGuestMode) {
+            // ゲストは「接続待機中」ステータスカードを表示しない (受信専用なので待つだけ)
+            showToast(`合言葉「${val}」で受信待機中...`);
+        } else {
+            updateRoomUI(val);
+            showToast(`合言葉「${val}」で接続待機中...`);
+        }
     };
 }
 
