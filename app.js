@@ -2,6 +2,8 @@ import { initializeApp } from "firebase/app";
 import {
     getAuth,
     signInWithPopup,
+    signInWithRedirect,
+    getRedirectResult,
     GoogleAuthProvider,
     signInWithCredential,
     OAuthProvider,
@@ -32,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.30";
+const APP_VERSION = "1.3.4";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1293,6 +1295,8 @@ function openTransferView() {
     if (transferPanel) transferPanel.classList.remove('hidden');
     tabNotes?.classList.remove('active');
     tabTrash?.classList.remove('active');
+    if (dateDisplay) dateDisplay.classList.add('hidden');
+    if (charCount) charCount.classList.add('hidden');
 }
 
 function openNotesView() {
@@ -1309,6 +1313,8 @@ function openNotesView() {
     renderList(searchInput.value);
 
     if (activeNoteId && currentNotes[activeNoteId]) {
+        if (dateDisplay) dateDisplay.classList.remove('hidden');
+        if (charCount) charCount.classList.remove('hidden');
         updateAutoCodeRender(true);
     }
 }
@@ -1341,6 +1347,8 @@ tabTrash.onclick = () => {
     renderList(searchInput.value);
 
     if (activeNoteId && currentNotes[activeNoteId]) {
+        if (dateDisplay) dateDisplay.classList.remove('hidden');
+        if (charCount) charCount.classList.remove('hidden');
         updateAutoCodeRender(true);
     }
 };
@@ -1489,11 +1497,24 @@ btnUpdateCheck.onclick = async () => {
     }, 300);
 };
 
-// 認証処理（Webアプリ / Chrome拡張機能 自動対応）
+// リダイレクト認証結果のチェック（iOS PWA / Safari リダイレクト対応）
+getRedirectResult(auth).then(result => {
+    if (result && result.user) {
+        console.log("Redirect login successful:", result.user.email);
+    }
+}).catch(err => {
+    console.error("Redirect Result Error:", err);
+});
+
+// 認証処理（Webアプリ / iOS PWA / Chrome拡張機能 自動対応）
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
+
+        const ua = navigator.userAgent;
+        const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
 
         // Chrome 拡張機能環境（サイドパネルやポップアップ）の場合
         if (typeof chrome !== 'undefined' && chrome?.identity?.launchWebAuthFlow) {
@@ -1531,10 +1552,13 @@ async function loginWithProvider(provider) {
                 }
             } catch (extAuthErr) {
                 console.error("Extension Auth Error:", extAuthErr);
-                // フォールバック：通常ポップアップ開口
                 await setPersistence(auth, browserLocalPersistence);
                 await signInWithPopup(auth, provider);
             }
+        } else if (isIOS || isStandalone) {
+            // iOS Safari / iOS PWA環境ではポップアップウィンドウ開口がブロックされるため、同画面リダイレクトを使用
+            await setPersistence(auth, browserLocalPersistence);
+            await signInWithRedirect(auth, provider);
         } else {
             // 通常の Web アプリ環境 (flickmemo-qwe.web.app 等)
             try {
@@ -1542,7 +1566,16 @@ async function loginWithProvider(provider) {
             } catch (pErr) {
                 console.warn("Persistence set warning:", pErr);
             }
-            await signInWithPopup(auth, provider);
+            try {
+                await signInWithPopup(auth, provider);
+            } catch (popupErr) {
+                if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/operation-not-supported-in-this-environment') {
+                    console.warn("Popup blocked. Falling back to signInWithRedirect...");
+                    await signInWithRedirect(auth, provider);
+                } else {
+                    throw popupErr;
+                }
+            }
         }
     } catch (error) {
         console.error("Login Error:", error);
