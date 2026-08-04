@@ -116,7 +116,7 @@ export class FileTransferManager {
         updatePresence();
 
         clearInterval(this.heartbeatTimer);
-        this.heartbeatTimer = setInterval(updatePresence, 10000);
+        this.heartbeatTimer = setInterval(updatePresence, 20000);
 
         onValue(signalingRef, (snapshot) => {
             const data = snapshot.val();

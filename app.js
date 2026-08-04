@@ -35,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.18";
+const APP_VERSION = "1.3.20";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -2113,17 +2113,23 @@ onAuthStateChanged(auth, async user => {
     }
 });
 
-// ★ アプリ非表示・離脱時の即時同期確定ハンドラ
-window.addEventListener('beforeunload', () => {
+// ★ アプリ非表示・離脱時の即時同期＆RTDB自動クリーニングハンドラ (iOS PWA / モバイル離脱完全対応)
+function handleAppExitCleanup() {
+    if (transferManager) {
+        transferManager.stopDevicePresence();
+    }
     cleanupEmptyNotes();
     if (activeNoteId && syncDebounceTimer) {
         flushPendingSave(activeNoteId);
     }
-});
+}
+
+window.addEventListener('beforeunload', handleAppExitCleanup);
+window.addEventListener('pagehide', handleAppExitCleanup);
 
 document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && activeNoteId && syncDebounceTimer) {
-        flushPendingSave(activeNoteId);
+    if (document.visibilityState === 'hidden') {
+        handleAppExitCleanup();
     } else if (document.visibilityState === 'visible') {
         checkPendingExtensionNotes();
     }
