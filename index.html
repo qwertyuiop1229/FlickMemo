@@ -288,14 +288,14 @@
                         <!-- 接続中ヘッダーカード -->
                         <div class="session-connected-card">
                             <div class="session-info-group">
-                                <span class="material-symbols-outlined status-pulse-green">swap_horizontal_circle</span>
+                                <span class="material-symbols-outlined session-connected-icon">swap_horizontal_circle</span>
                                 <div>
                                     <div id="session-device-name" class="session-device-name">接続中: 相手端末</div>
-                                    <div class="session-sub-text">相互にファイルを何度でも送信可能です</div>
+                                    <div class="session-sub-text">双方向でファイルを何度でも送受信できます</div>
                                 </div>
                             </div>
-                            <button id="btn-disconnect-session" class="m3-button btn-danger-sm" type="button">
-                                <span class="material-symbols-outlined">logout</span> 切断
+                            <button id="btn-disconnect-session" class="m3-icon-button-danger" title="切断" type="button">
+                                <span class="material-symbols-outlined">link_off</span>
                             </button>
                         </div>
 
@@ -305,35 +305,45 @@
                             <span>相手端末がファイル送信中です。完了までお待ちください...</span>
                         </div>
 
+                        <!-- ドロップゾーン -->
                         <div id="dropzone-area" class="dropzone-area">
                             <input type="file" id="file-input" class="hidden" multiple>
                             <div class="dropzone-content">
-                                <span class="material-symbols-outlined dropzone-icon">cloud_upload</span>
-                                <h3>ファイルをここにドラッグ＆ドロップ</h3>
-                                <p>またはクリックしてファイルを選択（大容量・複数ファイル対応）</p>
-                                <button id="btn-browse-files" class="m3-button btn-primary-sm" type="button">
+                                <span class="material-symbols-outlined dropzone-icon">upload_file</span>
+                                <p class="dropzone-hint">クリックまたはドラッグ＆ドロップでファイルを選択</p>
+                                <button id="btn-browse-files" class="m3-button btn-secondary-sm" type="button">
                                     <span class="material-symbols-outlined">folder_open</span> ファイルを選択
                                 </button>
                             </div>
                         </div>
 
-                        <!-- ★ 送信ファイル待機エリア（複数選択・送信開始） -->
+                        <!-- 送信ファイル待機エリア -->
                         <div id="staged-files-card" class="staged-files-card hidden">
                             <div class="staged-card-header">
-                                <span class="staged-title"><span class="material-symbols-outlined">description</span> 送信ファイル (<span id="staged-file-count">0</span>)</span>
-                                <button id="btn-clear-staged" class="btn-text-danger" type="button">すべてクリア</button>
+                                <span class="staged-title">
+                                    <span class="material-symbols-outlined">description</span>
+                                    送信ファイル (<span id="staged-file-count">0</span>件)
+                                </span>
+                                <button id="btn-clear-staged" class="btn-text-danger" type="button">クリア</button>
                             </div>
                             <ul id="staged-file-list" class="staged-file-list"></ul>
                             <div class="staged-action-row">
                                 <button id="btn-add-more-files" class="m3-button btn-secondary-sm" type="button">
                                     <span class="material-symbols-outlined">add</span> 追加
-                        <!-- ★ ゲストユーザー用 受信専用インフォバナー -->
-                        <div id="guest-receiver-banner" class="guest-receiver-banner hidden">
-                            <span class="material-symbols-outlined status-pulse">downloading</span>
-                            <span>ゲストモード（ファイル受信専用）: 相手端末からのファイル送信を待機中...</span>
+                                </button>
+                                <button id="btn-start-send" class="m3-button btn-primary-lg" type="button">
+                                    <span class="material-symbols-outlined">send</span> 送信開始
+                                </button>
+                            </div>
                         </div>
 
-                        <!-- ★ 受信・送信履歴（接続後画面へ配置） -->
+                        <!-- ゲストユーザー用 受信専用インフォバナー -->
+                        <div id="guest-receiver-banner" class="guest-receiver-banner hidden">
+                            <span class="material-symbols-outlined">downloading</span>
+                            <span>ゲストモード（受信専用）<br>相手端末からファイルが届くと自動でダウンロードされます</span>
+                        </div>
+
+                        <!-- 受信・送信履歴 -->
                         <div class="transfers-history-card">
                             <h4><span class="material-symbols-outlined">history</span> 受信・送信履歴</h4>
                             <ul id="transfer-history-list" class="transfer-history-list">

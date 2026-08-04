@@ -35,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.24";
+const APP_VERSION = "1.3.26";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -2202,23 +2202,37 @@ onAuthStateChanged(auth, async user => {
     }
 });
 
-// ★ アプリ非表示・離脱時の即時同期＆RTDB自動クリーニングハンドラ (iOS PWA / モバイル離脱完全対応)
-function handleAppExitCleanup() {
-    if (transferManager) {
-        transferManager.stopDevicePresence();
-    }
+// ★ メモ保存のみ（ウィンドウ最小化・バックグラウンド移行では P2P 切断しない）
+function handleNoteSave() {
     cleanupEmptyNotes();
     if (activeNoteId && syncDebounceTimer) {
         flushPendingSave(activeNoteId);
     }
 }
 
-window.addEventListener('beforeunload', handleAppExitCleanup);
-window.addEventListener('pagehide', handleAppExitCleanup);
+// ★ アプリ完全終了時のみ P2P を切断（タスクキル・タブ閉じ・スマホスワイプ終了）
+function handleAppExitCleanup() {
+    if (transferManager) {
+        transferManager.stopDevicePresence();
+    }
+    handleNoteSave();
+}
 
+// タブ閉じ / ページ遷移 → P2P も含めて完全クリーンアップ
+window.addEventListener('beforeunload', handleAppExitCleanup);
+
+// iOS PWA / モバイルのスワイプ終了・ホームボタン長押し強制終了 → P2P クリーンアップ
+// (pagehide の persisted=false = 本当のページ破棄のみ対応)
+window.addEventListener('pagehide', (e) => {
+    if (!e.persisted) {
+        handleAppExitCleanup();
+    }
+});
+
+// ウィンドウ最小化・バックグラウンド移行 → メモ保存のみ、P2P 接続は維持
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-        handleAppExitCleanup();
+        handleNoteSave(); // P2P は切断しない
     } else if (document.visibilityState === 'visible') {
         checkPendingExtensionNotes();
     }
