@@ -35,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.14";
+const APP_VERSION = "1.3.16";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1551,11 +1551,28 @@ function updateRoomUI(roomId) {
     }
 }
 
+function ensureTransferManager() {
+    if (!transferManager) {
+        transferManager = new FileTransferManager(
+            auth,
+            db,
+            (event, data) => handleTransferStatus(event, data),
+            (blob, filename) => handleFileReceived(blob, filename),
+            (bytes, total, name, direction) => handleTransferProgress(bytes, total, name, direction)
+        );
+    }
+    if (transferManager) {
+        transferManager.isGuestMode = isGuestMode;
+    }
+    return transferManager;
+}
+
 if (btnCreateRoom) {
     btnCreateRoom.onclick = () => {
-        if (!transferManager) return;
+        const tm = ensureTransferManager();
+        if (!tm) return;
         const newRoomId = 'rm_' + Math.random().toString(36).substring(2, 8);
-        transferManager.joinRoom(newRoomId);
+        tm.joinRoom(newRoomId);
         updateRoomUI(newRoomId);
 
         const shareUrl = `${window.location.origin}${window.location.pathname}?room=${newRoomId}`;
@@ -1574,10 +1591,11 @@ if (btnJoinRoom) {
             showToast("合言葉またはルームIDを入力してください");
             return;
         }
-        if (!transferManager) return;
-        transferManager.joinRoom(val);
+        const tm = ensureTransferManager();
+        if (!tm) return;
+        tm.joinRoom(val);
         updateRoomUI(val);
-        showToast(`ルーム ${val} に接続しました`);
+        showToast(`合言葉「${val}」で接続待機中...`);
     };
 }
 
@@ -1585,7 +1603,7 @@ if (btnLeaveRoom) {
     btnLeaveRoom.onclick = () => {
         if (transferManager) transferManager.leaveRoom();
         updateRoomUI(null);
-        showToast("ルームを退出しました");
+        showToast("ルームから切断しました");
     };
 }
 
@@ -1884,11 +1902,28 @@ const btnGuestLogin = document.getElementById('btn-guest-login');
 if (btnGuestLogin) {
     btnGuestLogin.onclick = () => {
         isGuestMode = true;
-        if (transferManager) transferManager.isGuestMode = true;
+        const tm = ensureTransferManager();
+        if (tm) tm.isGuestMode = true;
         authContainer.classList.add('hidden');
         appContainer.classList.remove('hidden');
-        showToast("ゲストモードで試行中（ローカルメモ / 受信限定）");
+
+        userName.textContent = "ゲストユーザー";
+        userEmail.textContent = "ログインしていません (ローカル保存のみ)";
+        userAvatar.src = getInitialsAvatar("Guest");
+        if (userProviderTag) userProviderTag.textContent = "ゲスト";
+
+        showToast("ゲストモード (ローカルメモ / 合言葉受送信対応)");
         loadLocalNotesOnly();
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlRoom = urlParams.get('room');
+        if (urlRoom && tm) {
+            openTransferView();
+            if (btnTargetTabRoom) btnTargetTabRoom.click();
+            tm.joinRoom(urlRoom);
+            updateRoomUI(urlRoom);
+            showToast(`共有URL「${urlRoom}」に自動接続しました`);
+        }
     };
 }
 
@@ -2007,16 +2042,18 @@ onAuthStateChanged(auth, async user => {
             console.error("Sync Error:", error);
             setStatus('offline', '同期オフライン');
         });
-        if (!transferManager) {
-            transferManager = new FileTransferManager(
-                auth,
-                db,
-                (event, data) => handleTransferStatus(event, data),
-                (blob, filename) => handleFileReceived(blob, filename),
-                (bytes, total, name, direction) => handleTransferProgress(bytes, total, name, direction)
-            );
+        const tm = ensureTransferManager();
+        tm.startDevicePresence();
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlRoom = urlParams.get('room');
+        if (urlRoom && tm) {
+            openTransferView();
+            if (btnTargetTabRoom) btnTargetTabRoom.click();
+            tm.joinRoom(urlRoom);
+            updateRoomUI(urlRoom);
+            showToast(`共有URL「${urlRoom}」に自動接続しました`);
         }
-        transferManager.startDevicePresence();
     } else {
         if (transferManager) {
             transferManager.stopDevicePresence();

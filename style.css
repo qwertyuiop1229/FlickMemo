@@ -1381,25 +1381,69 @@ body.is-extension-popup {
     gap: 0.6rem;
 }
 
-.room-action-card {
-    background: var(--m3-surface-container);
-    border: 1px solid var(--m3-border);
-    border-radius: var(--m3-radius-md);
-    padding: 1rem;
+.room-action-container {
     display: flex;
     flex-direction: column;
     gap: 0.8rem;
 }
 
-.room-action-row {
+.room-section-box {
+    background: var(--m3-surface-container);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 0.9rem 1rem;
     display: flex;
-    align-items: center;
-    gap: 0.8rem;
+    flex-direction: column;
+    gap: 0.5rem;
 }
 
-.room-input-row {
+.room-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--m3-primary);
+}
+
+.room-section-desc {
+    font-size: 0.76rem;
+    color: var(--m3-text-muted);
+    margin: 0;
+}
+
+.room-divider-badge {
+    text-align: center;
+    position: relative;
+    margin: 0.2rem 0;
+}
+
+.room-divider-badge:before {
+    content: "";
+    position: absolute;
+    top: 50%; left: 0; right: 0;
+    height: 1px;
+    background: var(--m3-border);
+    z-index: 1;
+}
+
+.room-divider-badge span {
+    position: relative;
+    z-index: 2;
+    background: var(--m3-surface);
+    padding: 0 0.8rem;
+    font-size: 0.72rem;
+    color: var(--m3-text-muted);
+}
+
+.room-input-group {
     display: flex;
     gap: 0.5rem;
+}
+
+.full-width {
+    width: 100%;
+    justify-content: center;
 }
 
 .m3-text-input {
@@ -1417,9 +1461,33 @@ body.is-extension-popup {
     border-color: var(--m3-primary);
 }
 
-.or-divider {
-    font-size: 0.78rem;
-    color: var(--m3-text-muted);
+.room-active-status {
+    background: rgba(43, 114, 219, 0.15);
+    border: 1px solid var(--m3-primary);
+    border-radius: var(--m3-radius-md);
+    padding: 0.7rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.room-status-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    color: var(--m3-primary);
+    font-weight: 500;
+}
+
+.status-pulse {
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 0.4; }
+    50% { opacity: 1; }
+    100% { opacity: 0.4; }
 }
 
 .dropdown-menu-item {

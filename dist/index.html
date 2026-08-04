@@ -239,19 +239,37 @@
 
                         <!-- 2. 合言葉・共有リンクパネル -->
                         <div id="target-panel-room" class="target-panel-content hidden">
-                            <div class="room-action-card">
-                                <div class="room-action-row">
-                                    <button id="btn-create-room" class="m3-button btn-primary-sm" type="button">
-                                        <span class="material-symbols-outlined">add_link</span> 共有リンクを発行
+                            <div class="room-action-container">
+                                <!-- 共有リンク発行セクション -->
+                                <div class="room-section-box">
+                                    <div class="room-section-header">
+                                        <span class="material-symbols-outlined">share</span>
+                                        <span>方法1: ワンタップ共有リンクを発行</span>
+                                    </div>
+                                    <p class="room-section-desc">発行されたリンクを開くだけで、相手と即座にP2P接続できます</p>
+                                    <button id="btn-create-room" class="m3-button btn-primary-sm full-width" type="button">
+                                        <span class="material-symbols-outlined">add_link</span> 共有URLを発行してコピー
                                     </button>
-                                    <span class="or-divider">または</span>
                                 </div>
-                                <div class="room-input-row">
-                                    <input type="text" id="room-code-input" class="m3-text-input" placeholder="合言葉 (例: 123456 / room_a) を入力...">
-                                    <button id="btn-join-room" class="m3-button btn-secondary-sm" type="button">
-                                        <span class="material-symbols-outlined">meeting_room</span> 接続
-                                    </button>
+
+                                <div class="room-divider-badge"><span>または (OR)</span></div>
+
+                                <!-- 合言葉接続セクション -->
+                                <div class="room-section-box">
+                                    <div class="room-section-header">
+                                        <span class="material-symbols-outlined">key</span>
+                                        <span>方法2: 合言葉を入力して接続</span>
+                                    </div>
+                                    <p class="room-section-desc">同じ合言葉 (例: 123456 / room_a) を入力した端末同士で接続します</p>
+                                    <div class="room-input-group">
+                                        <input type="text" id="room-code-input" class="m3-text-input" placeholder="合言葉 (例: 123456) を入力...">
+                                        <button id="btn-join-room" class="m3-button btn-secondary-sm" type="button">
+                                            <span class="material-symbols-outlined">meeting_room</span> 接続
+                                        </button>
+                                    </div>
                                 </div>
+
+                                <!-- アクティブ接続状態カード -->
                                 <div id="room-active-status" class="room-active-status hidden">
                                     <div class="room-status-info">
                                         <span class="material-symbols-outlined status-pulse">sensors</span>
