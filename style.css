@@ -1234,11 +1234,28 @@ body.is-extension-popup {
     align-items: center;
     gap: 0.3rem;
     transition: all 0.2s ease;
+}.transfer-mode-selector-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
 }
 
-.btn-secondary-sm:hover {
-    background: var(--m3-surface-hover);
-    border-color: var(--m3-primary);
+.custom-dropdown-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--m3-text-muted);
+    line-height: 1;
+}
+
+.custom-dropdown-label .material-symbols-outlined {
+    font-size: 1.1rem;
+    color: var(--m3-primary);
+    line-height: 1;
+    display: inline-block;
+    vertical-align: middle;
 }
 
 /* ★ 100% 独自デザイン Material 3 カスタムドロップダウン */
@@ -1270,9 +1287,18 @@ body.is-extension-popup {
 }
 
 .selected-mode-text {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    line-height: 1;
+}
+
+.selected-mode-text .mode-icon {
+    font-size: 1.15rem;
+    color: var(--m3-primary);
+    line-height: 1;
+    display: inline-block;
+    vertical-align: middle;
 }
 
 .dropdown-arrow {
@@ -1288,19 +1314,16 @@ body.is-extension-popup {
     position: absolute;
     top: calc(100% + 6px);
     left: 0;
-    right: 0;
-    background: #1e1f20;
+    width: 100%;
+    background: var(--m3-surface-container-high);
     border: 1px solid var(--m3-border);
     border-radius: var(--m3-radius-md);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    list-style: none;
-    z-index: 100;
+    box-shadow: var(--m3-shadow-lg);
+    z-index: 1000;
     overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    padding: 0.4rem;
-    backdrop-filter: blur(12px);
-    animation: fadeInDown 0.15s var(--m3-motion-curve);
+    list-style: none;
+    padding: 0.4rem 0;
+    animation: fadeInDown 0.15s ease-out;
 }
 
 @keyframes fadeInDown {
@@ -1317,9 +1340,8 @@ body.is-extension-popup {
 .dropdown-menu-item {
     display: flex;
     align-items: center;
-    gap: 0.8rem;
-    padding: 0.7rem 0.8rem;
-    border-radius: var(--m3-radius-sm);
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
     cursor: pointer;
     transition: background 0.15s ease;
 }
@@ -1329,23 +1351,19 @@ body.is-extension-popup {
 }
 
 .dropdown-menu-item.selected {
-    background: #042f66;
-    color: var(--m3-primary);
-}
-
-.dropdown-menu-item span.material-symbols-outlined {
-    font-size: 20px;
+    background: rgba(168, 199, 250, 0.12);
     color: var(--m3-primary);
 }
 
 .item-text-group {
     display: flex;
     flex-direction: column;
+    gap: 0.15rem;
     flex: 1;
 }
 
 .item-title {
-    font-size: 0.85rem;
+    font-size: 0.88rem;
     font-weight: 500;
 }
 
@@ -1359,6 +1377,82 @@ body.is-extension-popup {
     color: var(--m3-primary) !important;
 }
 
+.btn-text-subtle {
+    background: transparent;
+    border: none;
+    color: var(--m3-text-muted);
+    font-size: 0.78rem;
+    cursor: pointer;
+    text-decoration: underline;
+    margin-top: 0.8rem;
+    transition: color 0.2s ease;
+}
+
+.btn-text-subtle:hover {
+    color: var(--m3-text);
+}
+
+.e2ee-toggle-card {
+    background: var(--m3-surface-container);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 0.6rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.e2ee-label-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--m3-primary);
+}
+
+.m3-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+}
+
+.m3-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.m3-switch-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: var(--m3-border);
+    transition: .3s;
+    border-radius: 20px;
+}
+
+.m3-switch-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: var(--m3-text);
+    transition: .3s;
+    border-radius: 50%;
+}
+
+.m3-switch input:checked + .m3-switch-slider {
+    background-color: var(--m3-primary);
+}
+
+.m3-switch input:checked + .m3-switch-slider:before {
+    transform: translateX(16px);
+    background-color: #042f66;
+}
+
 /* 送信先マイデバイス一覧 */
 .device-list-container {
     display: flex;
@@ -1370,9 +1464,16 @@ body.is-extension-popup {
     font-size: 0.8rem;
     font-weight: 500;
     color: var(--m3-text-muted);
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 0.3rem;
+    line-height: 1;
+}
+
+.device-list-title .material-symbols-outlined {
+    font-size: 1.1rem;
+    line-height: 1;
+    vertical-align: middle;
 }
 
 .device-chip-list {
@@ -1421,6 +1522,94 @@ body.is-extension-popup {
     flex-direction: column;
     align-items: center;
     justify-content: center;
+}
+
+/* ★ 送信ファイル待機エリア */
+.staged-files-card {
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-primary-border);
+    border-radius: var(--m3-radius-lg);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.staged-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--m3-border);
+}
+
+.staged-title {
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: var(--m3-primary);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.btn-text-danger {
+    background: transparent;
+    border: none;
+    color: var(--m3-danger);
+    font-size: 0.78rem;
+    cursor: pointer;
+}
+
+.staged-file-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.staged-file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--m3-surface-container);
+    border-radius: var(--m3-radius-sm);
+    padding: 0.5rem 0.8rem;
+    font-size: 0.82rem;
+}
+
+.staged-file-item .file-name {
+    color: var(--m3-text);
+    max-width: 70%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.staged-file-item .file-size {
+    color: var(--m3-text-muted);
+    font-size: 0.75rem;
+    margin-left: 0.5rem;
+}
+
+.btn-remove-staged {
+    background: transparent;
+    border: none;
+    color: var(--m3-text-muted);
+    cursor: pointer;
+    padding: 0.2rem;
+}
+
+.btn-remove-staged:hover {
+    color: var(--m3-danger);
+}
+
+.staged-action-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.8rem;
+    padding-top: 0.4rem;
 }
 
 .dropzone-area:hover,

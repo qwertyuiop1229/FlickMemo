@@ -20,8 +20,11 @@ export class FileTransferManager {
         this.receivedSize = 0;
         this.incomingFileInfo = null;
         this.heartbeatTimer = null;
+        this.currentRoomId = null;
 
-        this.initLocalGoServerCheck();
+        this.isE2EEEnabled = true;
+        this.isGuestMode = false;
+        this.cryptoKey = null;
     }
 
     getOrCreateDeviceId() {
@@ -46,29 +49,57 @@ export class FileTransferManager {
     }
 
     async initLocalGoServerCheck() {
+        // Go local server checks bypassed for pure JS/WebRTC simplicity
+        this.localGoServerUrl = null;
+    }
+
+    async generateEncryptionKey() {
+        if (!this.cryptoKey) {
+            const keyMaterial = new TextEncoder().encode("FlickMemo_AES256_GCM_SecretKey_2026");
+            const hash = await window.crypto.subtle.digest("SHA-256", keyMaterial);
+            this.cryptoKey = await window.crypto.subtle.importKey(
+                "raw",
+                hash,
+                { name: "AES-GCM" },
+                false,
+                ["encrypt", "decrypt"]
+            );
+        }
+        return this.cryptoKey;
+    }
+
+    async encryptChunk(buffer) {
+        if (!this.isE2EEEnabled) return buffer;
+        const key = await this.generateEncryptionKey();
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const encrypted = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, buffer);
+        const combined = new Uint8Array(iv.byteLength + encrypted.byteLength);
+        combined.set(iv, 0);
+        combined.set(new Uint8Array(encrypted), iv.byteLength);
+        return combined.buffer;
+    }
+
+    async decryptChunk(buffer) {
+        if (!this.isE2EEEnabled) return buffer;
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 800);
-            const res = await fetch('http://localhost:8080/api/info', { signal: controller.signal });
-            clearTimeout(timeoutId);
-            if (res.ok) {
-                const data = await res.json();
-                this.localGoServerUrl = data.url || 'http://localhost:8080';
-            }
+            const key = await this.generateEncryptionKey();
+            const iv = buffer.slice(0, 12);
+            const data = buffer.slice(12);
+            return await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(iv) }, key, data);
         } catch (e) {
-            this.localGoServerUrl = null;
+            return buffer;
         }
     }
 
     startDevicePresence() {
-        const user = this.auth.currentUser;
+        if (this.isGuestMode) return;
+        const user = this.auth?.currentUser;
         if (!user) return;
 
         const devRef = ref(this.db, `users/${user.uid}/devices/${this.deviceId}`);
         const signalingRef = ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`);
         const answersRef = ref(this.db, `users/${user.uid}/answers/${this.deviceId}`);
 
-        // ★ 切断時（タブ閉鎖・ネット切断・リロード時）の自動削除設定
         onDisconnect(devRef).remove();
         onDisconnect(signalingRef).remove();
         onDisconnect(answersRef).remove();
@@ -84,20 +115,17 @@ export class FileTransferManager {
 
         updatePresence();
 
-        // 10秒おきの定期ハートビート（生存確認）
         clearInterval(this.heartbeatTimer);
         this.heartbeatTimer = setInterval(updatePresence, 10000);
 
-        // 相手からのシグナリング待機
         onValue(signalingRef, (snapshot) => {
             const data = snapshot.val();
             if (data && data.offer) {
-                this.handleIncomingOffer(data.fromDeviceId, data.offer);
+                this.handleIncomingOffer(data.fromDeviceId, data.offer, `users/${user.uid}`);
                 remove(signalingRef);
             }
         });
 
-        // 同一ユーザーのアクティブデバイス一覧監視 (25秒以上更新のないノードは自動除外)
         const allDevicesRef = ref(this.db, `users/${user.uid}/devices`);
         onValue(allDevicesRef, (snapshot) => {
             const data = snapshot.val() || {};
@@ -108,7 +136,6 @@ export class FileTransferManager {
                 if (id !== this.deviceId && dev && (now - (dev.updatedAt || 0) < 25000)) {
                     this.activeDevices[id] = dev;
                 } else if (dev && (now - (dev.updatedAt || 0) >= 25000)) {
-                    // 古い残存ノードをクリーンアップ
                     remove(ref(this.db, `users/${user.uid}/devices/${id}`));
                 }
             });
@@ -116,18 +143,65 @@ export class FileTransferManager {
         });
     }
 
+    joinRoom(roomId) {
+        if (!roomId) return;
+        this.leaveRoom();
+        this.currentRoomId = roomId;
+
+        const roomMemberRef = ref(this.db, `public_rooms/${roomId}/members/${this.deviceId}`);
+        const roomSignalingRef = ref(this.db, `public_rooms/${roomId}/signaling/${this.deviceId}`);
+        const roomAnswersRef = ref(this.db, `public_rooms/${roomId}/answers/${this.deviceId}`);
+
+        onDisconnect(roomMemberRef).remove();
+        onDisconnect(roomSignalingRef).remove();
+        onDisconnect(roomAnswersRef).remove();
+
+        set(roomMemberRef, {
+            id: this.deviceId,
+            name: this.deviceName,
+            joinedAt: Date.now()
+        });
+
+        onValue(roomSignalingRef, (snapshot) => {
+            const data = snapshot.val();
+            if (data && data.offer) {
+                this.handleIncomingOffer(data.fromDeviceId, data.offer, `public_rooms/${roomId}`);
+                remove(roomSignalingRef);
+            }
+        });
+
+        const membersRef = ref(this.db, `public_rooms/${roomId}/members`);
+        onValue(membersRef, (snapshot) => {
+            const members = snapshot.val() || {};
+            const otherIds = Object.keys(members).filter(id => id !== this.deviceId);
+            if (otherIds.length > 0) {
+                this.onStatusUpdate('room_member_joined', { roomId, otherDeviceId: otherIds[0] });
+            }
+        });
+
+        this.onStatusUpdate('room_joined', { roomId });
+    }
+
+    leaveRoom() {
+        if (this.currentRoomId) {
+            const roomId = this.currentRoomId;
+            remove(ref(this.db, `public_rooms/${roomId}/members/${this.deviceId}`));
+            remove(ref(this.db, `public_rooms/${roomId}/signaling/${this.deviceId}`));
+            remove(ref(this.db, `public_rooms/${roomId}/answers/${this.deviceId}`));
+            this.currentRoomId = null;
+            this.onStatusUpdate('room_left');
+        }
+    }
+
     stopDevicePresence() {
         clearInterval(this.heartbeatTimer);
-        const user = this.auth.currentUser;
+        this.leaveRoom();
+        const user = this.auth?.currentUser;
         if (user) {
-            const devRef = ref(this.db, `users/${user.uid}/devices/${this.deviceId}`);
-            const signalingRef = ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`);
-            const answersRef = ref(this.db, `users/${user.uid}/answers/${this.deviceId}`);
-            const candidatesRef = ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`);
-            remove(devRef);
-            remove(signalingRef);
-            remove(answersRef);
-            remove(candidatesRef);
+            remove(ref(this.db, `users/${user.uid}/devices/${this.deviceId}`));
+            remove(ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`));
+            remove(ref(this.db, `users/${user.uid}/answers/${this.deviceId}`));
+            remove(ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`));
         }
         this.cleanupPeerConnection();
     }
@@ -150,16 +224,13 @@ export class FileTransferManager {
         if (this.currentMode !== 'AUTO') {
             return this.currentMode;
         }
-        if (this.localGoServerUrl && file.size > 50 * 1024 * 1024) {
-            return 'DROPZONE_LOCAL';
-        }
         if (targetDevice && targetDevice.online) {
             return 'LAN_P2P';
         }
-        return 'CLOUD_RELAY';
+        return 'WAN_P2P';
     }
 
-    createPeerConnection(targetDeviceId) {
+    createPeerConnection(targetDeviceId, basePath) {
         this.cleanupPeerConnection();
 
         const config = {
@@ -172,10 +243,8 @@ export class FileTransferManager {
         const pc = new RTCPeerConnection(config);
 
         pc.onicecandidate = (event) => {
-            if (event.candidate && targetDeviceId) {
-                const user = this.auth.currentUser;
-                if (!user) return;
-                const candRef = ref(this.db, `users/${user.uid}/candidates/${targetDeviceId}`);
+            if (event.candidate && targetDeviceId && basePath) {
+                const candRef = ref(this.db, `${basePath}/candidates/${targetDeviceId}`);
                 push(candRef, JSON.stringify(event.candidate));
             }
         };
@@ -191,29 +260,28 @@ export class FileTransferManager {
         return pc;
     }
 
-    async connectToDevice(targetDeviceId) {
-        const user = this.auth.currentUser;
-        if (!user) throw new Error("ログインしてください");
+    async connectToDevice(targetDeviceId, isRoom = false) {
+        const basePath = isRoom && this.currentRoomId 
+            ? `public_rooms/${this.currentRoomId}` 
+            : (this.auth?.currentUser ? `users/${this.auth.currentUser.uid}` : null);
 
-        this.peerConnection = this.createPeerConnection(targetDeviceId);
+        if (!basePath) throw new Error("通信パスの初期化に失敗しました。送信権限がありません。");
 
-        this.dataChannel = this.peerConnection.createDataChannel("flickmemo_transfer", {
-            ordered: true
-        });
-
+        this.peerConnection = this.createPeerConnection(targetDeviceId, basePath);
+        this.dataChannel = this.peerConnection.createDataChannel("flickmemo_transfer", { ordered: true });
         this.setupDataChannelHandlers(this.dataChannel);
 
         const offer = await this.peerConnection.createOffer();
         await this.peerConnection.setLocalDescription(offer);
 
-        const sigRef = ref(this.db, `users/${user.uid}/signaling/${targetDeviceId}`);
+        const sigRef = ref(this.db, `${basePath}/signaling/${targetDeviceId}`);
         await set(sigRef, {
             fromDeviceId: this.deviceId,
             offer: JSON.stringify(offer),
             timestamp: Date.now()
         });
 
-        const ansRef = ref(this.db, `users/${user.uid}/answers/${this.deviceId}`);
+        const ansRef = ref(this.db, `${basePath}/answers/${this.deviceId}`);
         const handleAnswerSnapshot = async (snapshot) => {
             const data = snapshot.val();
             if (data && data.answer) {
@@ -231,8 +299,8 @@ export class FileTransferManager {
         };
         onValue(ansRef, handleAnswerSnapshot);
 
-        const candRef = ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`);
-        const handleCandSnapshot = (snapshot) => {
+        const candRef = ref(this.db, `${basePath}/candidates/${this.deviceId}`);
+        onValue(candRef, (snapshot) => {
             const data = snapshot.val() || {};
             Object.values(data).forEach(async (candStr) => {
                 try {
@@ -242,16 +310,12 @@ export class FileTransferManager {
                     }
                 } catch (e) {}
             });
-        };
-        onValue(candRef, handleCandSnapshot);
+        });
     }
 
-    async handleIncomingOffer(fromDeviceId, offerStr) {
-        const user = this.auth.currentUser;
-        if (!user) return;
-
+    async handleIncomingOffer(fromDeviceId, offerStr, basePath) {
         const offer = JSON.parse(offerStr);
-        this.peerConnection = this.createPeerConnection(fromDeviceId);
+        this.peerConnection = this.createPeerConnection(fromDeviceId, basePath);
 
         this.peerConnection.ondatachannel = (event) => {
             this.dataChannel = event.channel;
@@ -262,14 +326,14 @@ export class FileTransferManager {
         const answer = await this.peerConnection.createAnswer();
         await this.peerConnection.setLocalDescription(answer);
 
-        const ansRef = ref(this.db, `users/${user.uid}/answers/${fromDeviceId}`);
+        const ansRef = ref(this.db, `${basePath}/answers/${fromDeviceId}`);
         await set(ansRef, {
             fromDeviceId: this.deviceId,
             answer: JSON.stringify(answer),
             timestamp: Date.now()
         });
 
-        const candRef = ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`);
+        const candRef = ref(this.db, `${basePath}/candidates/${this.deviceId}`);
         onValue(candRef, (snapshot) => {
             const data = snapshot.val() || {};
             Object.values(data).forEach(async (candStr) => {
@@ -290,7 +354,7 @@ export class FileTransferManager {
             this.onStatusUpdate('channel_open');
         };
 
-        dc.onmessage = (event) => {
+        dc.onmessage = async (event) => {
             if (typeof event.data === 'string') {
                 try {
                     const meta = JSON.parse(event.data);
@@ -303,15 +367,15 @@ export class FileTransferManager {
                         const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
                         const safeName = this.sanitizeFilename(this.incomingFileInfo.name);
                         this.onFileReceived(blob, safeName);
-                        // 即時メモリ解放（GC促進）
                         this.receiveBuffer = [];
                         this.receivedSize = 0;
                         this.incomingFileInfo = null;
                     }
                 } catch (e) {}
             } else if (event.data instanceof ArrayBuffer) {
-                this.receiveBuffer.push(event.data);
-                this.receivedSize += event.data.byteLength;
+                const decrypted = await this.decryptChunk(event.data);
+                this.receiveBuffer.push(decrypted);
+                this.receivedSize += decrypted.byteLength;
                 if (this.incomingFileInfo) {
                     this.onProgress(this.receivedSize, this.incomingFileInfo.size, this.incomingFileInfo.name, 'rec');
                 }
@@ -325,6 +389,10 @@ export class FileTransferManager {
     }
 
     async sendFileP2P(file) {
+        if (this.isGuestMode || !this.auth?.currentUser) {
+            throw new Error("ファイルを送信するにはGoogleアカウントでのログインが必要です（ゲストは受信のみ利用可能）。");
+        }
+
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
             throw new Error("P2P接続が確立されていません。送信先デバイスを選択してください。");
         }
@@ -341,7 +409,6 @@ export class FileTransferManager {
 
         let offset = 0;
         const total = file.size;
-
         this.dataChannel.bufferedAmountLowThreshold = 256 * 1024;
 
         const readAndSendChunk = async () => {
@@ -356,10 +423,11 @@ export class FileTransferManager {
                 }
 
                 const slice = file.slice(offset, offset + CHUNK_SIZE);
-                const buffer = await slice.arrayBuffer();
-                this.dataChannel.send(buffer);
+                const rawBuffer = await slice.arrayBuffer();
+                const encryptedBuffer = await this.encryptChunk(rawBuffer);
+                this.dataChannel.send(encryptedBuffer);
 
-                offset += buffer.byteLength;
+                offset += rawBuffer.byteLength;
                 this.onProgress(offset, total, file.name, 'send');
             }
 

@@ -37,6 +37,9 @@
                 <button id="btn-google" class="m3-button btn-google">
                     <span class="material-symbols-outlined">login</span> Google でログイン
                 </button>
+                <button id="btn-guest-login" class="btn-text-subtle" type="button">
+                    ログインせずに使う (オフラインメモ / 受信のみ)
+                </button>
             </div>
         </div>
     </div>
@@ -188,14 +191,6 @@
                                         </div>
                                         <span class="material-symbols-outlined check-icon hidden">check</span>
                                     </li>
-                                    <li class="dropdown-menu-item" data-value="DROPZONE_LOCAL">
-                                        <span class="material-symbols-outlined">laptop_mac</span>
-                                        <div class="item-text-group">
-                                            <span class="item-title">DropZone PC Bridge (Go Local)</span>
-                                            <span class="item-desc">PCのGoローカルサーバー経由でディスク保存</span>
-                                        </div>
-                                        <span class="material-symbols-outlined check-icon hidden">check</span>
-                                    </li>
                                     <li class="dropdown-menu-item" data-value="CLOUD_RELAY">
                                         <span class="material-symbols-outlined">cloud</span>
                                         <div class="item-text-group">
@@ -208,12 +203,52 @@
                             </div>
                         </div>
 
+                        <!-- ★ 暗号化設定トグル -->
+                        <div class="e2ee-toggle-card">
+                            <div class="e2ee-label-group">
+                                <span class="material-symbols-outlined">lock</span>
+                                <span>暗号化</span>
+                            </div>
+                            <label class="m3-switch">
+                                <input type="checkbox" id="toggle-e2ee" checked>
+                                <span class="m3-switch-slider"></span>
+                            </label>
+                        </div>
+
                         <div class="device-list-container">
                             <div class="device-list-title">
                                 <span class="material-symbols-outlined">devices</span> 送信先マイデバイス
                             </div>
                             <div id="device-chip-list" class="device-chip-list">
                                 <span class="no-device-text">他デバイスを検索中...</span>
+                            </div>
+                        </div>
+
+                        <!-- ワンタイム共有ルーム（URL / 合言葉で誰とでも接続） -->
+                        <div class="room-transfer-card">
+                            <div class="room-card-header">
+                                <div class="room-title-group">
+                                    <span class="material-symbols-outlined">link</span>
+                                    <span>ワンタイム共有ルーム（URL / 合言葉で誰とでも送受信）</span>
+                                </div>
+                                <button id="btn-create-room" class="m3-button btn-secondary-sm" type="button">
+                                    <span class="material-symbols-outlined">add_link</span> ルーム作成＆URL共有
+                                </button>
+                            </div>
+                            <div class="room-input-group">
+                                <input type="text" id="room-code-input" class="room-input-field" placeholder="合言葉（例: rm_x8k92p）を入力...">
+                                <button id="btn-join-room" class="m3-button btn-primary-sm" type="button">
+                                    <span class="material-symbols-outlined">meeting_room</span> 入室接続
+                                </button>
+                            </div>
+                            <div id="room-active-status" class="room-active-status hidden">
+                                <div class="room-status-info">
+                                    <span class="material-symbols-outlined status-pulse">sensors</span>
+                                    <span id="room-status-text">現在のルーム: rm_x8k92p (相手の接続を待機中...)</span>
+                                </div>
+                                <button id="btn-leave-room" class="btn-icon-danger" title="ルームを退出">
+                                    <span class="material-symbols-outlined">logout</span>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -224,8 +259,25 @@
                             <span class="material-symbols-outlined dropzone-icon">cloud_upload</span>
                             <h3>ファイルをここにドラッグ＆ドロップ</h3>
                             <p>またはクリックしてファイルを選択（大容量・複数ファイル対応）</p>
-                            <button id="btn-browse-files" class="m3-button btn-primary-sm">
+                            <button id="btn-browse-files" class="m3-button btn-primary-sm" type="button">
                                 <span class="material-symbols-outlined">folder_open</span> ファイルを選択
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- ★ 送信ファイル待機エリア（複数選択・送信開始） -->
+                    <div id="staged-files-card" class="staged-files-card hidden">
+                        <div class="staged-card-header">
+                            <span class="staged-title"><span class="material-symbols-outlined">description</span> 送信ファイル (<span id="staged-file-count">0</span>)</span>
+                            <button id="btn-clear-staged" class="btn-text-danger" type="button">すべてクリア</button>
+                        </div>
+                        <ul id="staged-file-list" class="staged-file-list"></ul>
+                        <div class="staged-action-row">
+                            <button id="btn-add-more-files" class="m3-button btn-secondary-sm" type="button">
+                                <span class="material-symbols-outlined">add</span> 追加
+                            </button>
+                            <button id="btn-start-send" class="m3-button btn-primary-sm" type="button">
+                                <span class="material-symbols-outlined">send</span> 送信開始
                             </button>
                         </div>
                     </div>

@@ -1,4 +1,5 @@
 import { initializeApp } from "firebase/app";
+import JSZip from 'jszip';
 import {
     getAuth,
     signInWithPopup,
@@ -34,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.6";
+const APP_VERSION = "1.3.10";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1175,6 +1176,11 @@ function renderDeviceChips(devices) {
 function handleTransferStatus(event, data) {
     if (event === 'devices_updated') {
         renderDeviceChips(data);
+    } else if (event === 'room_member_joined') {
+        showToast("ルームに相手端末が参加しました！P2P接続を構築中...");
+        if (transferManager && data.otherDeviceId) {
+            transferManager.connectToDevice(data.otherDeviceId, true);
+        }
     } else if (event === 'channel_open') {
         showToast("P2P転送チャネルが開きました（接続完了）");
     } else if (event === 'channel_close' || event === 'p2p_disconnected') {
@@ -1240,6 +1246,57 @@ function addTransferHistory(name, size, type) {
     transferHistoryList.prepend(li);
 }
 
+let stagedFilesQueue = [];
+
+const stagedFilesCard = document.getElementById('staged-files-card');
+const stagedFileList = document.getElementById('staged-file-list');
+const stagedFileCount = document.getElementById('staged-file-count');
+const btnClearStaged = document.getElementById('btn-clear-staged');
+const btnAddMoreFiles = document.getElementById('btn-add-more-files');
+const btnStartSend = document.getElementById('btn-start-send');
+
+function renderStagedFilesUI() {
+    if (!stagedFilesCard || !stagedFileList) return;
+
+    if (stagedFilesQueue.length === 0) {
+        stagedFilesCard.classList.add('hidden');
+        stagedFileList.innerHTML = '';
+        if (stagedFileCount) stagedFileCount.textContent = '0';
+        return;
+    }
+
+    stagedFilesCard.classList.remove('hidden');
+    if (stagedFileCount) stagedFileCount.textContent = stagedFilesQueue.length.toString();
+
+    stagedFileList.innerHTML = '';
+    stagedFilesQueue.forEach((file, index) => {
+        const li = document.createElement('li');
+        li.className = 'staged-file-item';
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+        li.innerHTML = `
+            <div>
+                <span class="file-name">${escapeHTML(file.name)}</span>
+                <span class="file-size">(${sizeMB})</span>
+            </div>
+            <button class="btn-remove-staged" title="削除" type="button">
+                <span class="material-symbols-outlined" style="font-size:18px;">close</span>
+            </button>
+        `;
+        li.querySelector('.btn-remove-staged').onclick = () => {
+            stagedFilesQueue.splice(index, 1);
+            renderStagedFilesUI();
+        };
+        stagedFileList.appendChild(li);
+    });
+}
+
+function stageFiles(files) {
+    if (!files || files.length === 0) return;
+    Array.from(files).forEach(f => stagedFilesQueue.push(f));
+    renderStagedFilesUI();
+    showToast(`${files.length} 件のファイルを送信リストに追加しました`);
+}
+
 // ドロップゾーン＆ファイル選択バインド
 if (dropzoneArea && fileInput && btnBrowseFiles) {
     btnBrowseFiles.onclick = (e) => {
@@ -1256,49 +1313,85 @@ if (dropzoneArea && fileInput && btnBrowseFiles) {
 
     dropzoneArea.ondragleave = () => dropzoneArea.classList.remove('dragover');
 
-    dropzoneArea.ondrop = async (e) => {
+    dropzoneArea.ondrop = (e) => {
         e.preventDefault();
         dropzoneArea.classList.remove('dragover');
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            await startFileSendProcess(Array.from(e.dataTransfer.files));
+            stageFiles(e.dataTransfer.files);
         }
     };
 
-    fileInput.onchange = async () => {
+    fileInput.onchange = () => {
         if (fileInput.files && fileInput.files.length > 0) {
-            await startFileSendProcess(Array.from(fileInput.files));
+            stageFiles(fileInput.files);
+            fileInput.value = '';
         }
     };
 }
 
-async function startFileSendProcess(files) {
-    if (!files || files.length === 0) return;
-    const file = files[0]; // 単一 / 複数送信
+if (btnAddMoreFiles) {
+    btnAddMoreFiles.onclick = () => fileInput.click();
+}
 
-    if (!transferManager) {
-        showToast("送信機能が準備できていません");
-        return;
-    }
+if (btnClearStaged) {
+    btnClearStaged.onclick = () => {
+        stagedFilesQueue = [];
+        renderStagedFilesUI();
+        showToast("送信リストをクリアしました");
+    };
+}
 
-    try {
-        const targetDev = selectedTargetDeviceId ? transferManager.activeDevices[selectedTargetDeviceId] : null;
-        const mode = transferManager.determineOptimalMode(targetDev, file);
-
-        showToast(`モード [${mode}] で「${file.name}」の送信を開始します...`);
-
-        if (mode === 'LAN_P2P' || mode === 'WAN_P2P' || mode === 'AUTO') {
-            await transferManager.sendFileP2P(file);
-            addTransferHistory(file.name, file.size, '送信');
-            showToast(`✅ 「${file.name}」の送信が完了しました！`);
-        } else {
-            showToast("選択されたモードでの送信を開始中...");
-            await transferManager.sendFileP2P(file);
-            addTransferHistory(file.name, file.size, '送信');
+if (btnStartSend) {
+    btnStartSend.onclick = async () => {
+        if (stagedFilesQueue.length === 0) {
+            showToast("送信するファイルを選択してください");
+            return;
         }
-    } catch (err) {
-        console.error("Send File Error:", err);
-        showToast("送信失敗: " + (err.message || "P2P接続を確認してください"));
-    }
+
+        if (!transferManager) {
+            showToast("送信機能が準備できていません");
+            return;
+        }
+
+        let fileToSend = null;
+
+        try {
+            if (stagedFilesQueue.length === 1) {
+                fileToSend = stagedFilesQueue[0];
+            } else {
+                showToast("複数ファイルを軽量ZIP圧縮中...");
+                const zip = new JSZip();
+                stagedFilesQueue.forEach(file => {
+                    zip.file(file.name, file);
+                });
+
+                const zipBlob = await zip.generateAsync({
+                    type: "blob",
+                    compression: "DEFLATE",
+                    compressionOptions: { level: 5 }
+                });
+
+                const todayStr = new Date().toISOString().slice(0, 10);
+                fileToSend = new File([zipBlob], `FlickMemo_Files_${todayStr}.zip`, { type: "application/zip" });
+            }
+
+            const targetDev = selectedTargetDeviceId ? transferManager.activeDevices[selectedTargetDeviceId] : null;
+            const mode = transferManager.determineOptimalMode(targetDev, fileToSend);
+
+            showToast(`モード [${mode}] で「${fileToSend.name}」の送信を開始します...`);
+
+            await transferManager.sendFileP2P(fileToSend);
+
+            addTransferHistory(fileToSend.name, fileToSend.size, '送信');
+            showToast(`✅ 「${fileToSend.name}」の送信が完了しました！`);
+
+            stagedFilesQueue = [];
+            renderStagedFilesUI();
+        } catch (err) {
+            console.error("Send Error:", err);
+            showToast("送信失敗: " + (err.message || "接続を確認してください"));
+        }
+    };
 }
 
 function openTransferView() {
@@ -1395,6 +1488,79 @@ if (dropdownTrigger && dropdownMenuList) {
         };
     });
 }
+
+// ★ ワンタイム共有ルーム Event Handlers
+const btnCreateRoom = document.getElementById('btn-create-room');
+const btnJoinRoom = document.getElementById('btn-join-room');
+const btnLeaveRoom = document.getElementById('btn-leave-room');
+const roomCodeInput = document.getElementById('room-code-input');
+const roomActiveStatus = document.getElementById('room-active-status');
+const roomStatusText = document.getElementById('room-status-text');
+
+function updateRoomUI(roomId) {
+    if (roomId) {
+        roomActiveStatus?.classList.remove('hidden');
+        if (roomStatusText) roomStatusText.textContent = `現在のルーム: ${roomId} (相手の接続を待機中...)`;
+        if (roomCodeInput) roomCodeInput.value = roomId;
+    } else {
+        roomActiveStatus?.classList.add('hidden');
+        if (roomCodeInput) roomCodeInput.value = '';
+    }
+}
+
+if (btnCreateRoom) {
+    btnCreateRoom.onclick = () => {
+        if (!transferManager) return;
+        const newRoomId = 'rm_' + Math.random().toString(36).substring(2, 8);
+        transferManager.joinRoom(newRoomId);
+        updateRoomUI(newRoomId);
+
+        const shareUrl = `${window.location.origin}${window.location.pathname}?room=${newRoomId}`;
+        navigator.clipboard.writeText(shareUrl).then(() => {
+            showToast(`ルーム ${newRoomId} を作成し共有URLをコピーしました！`);
+        }).catch(() => {
+            showToast(`ルーム ${newRoomId} を作成しました。URL: ${shareUrl}`);
+        });
+    };
+}
+
+if (btnJoinRoom) {
+    btnJoinRoom.onclick = () => {
+        const val = roomCodeInput?.value.trim();
+        if (!val) {
+            showToast("合言葉またはルームIDを入力してください");
+            return;
+        }
+        if (!transferManager) return;
+        transferManager.joinRoom(val);
+        updateRoomUI(val);
+        showToast(`ルーム ${val} に接続しました`);
+    };
+}
+
+if (btnLeaveRoom) {
+    btnLeaveRoom.onclick = () => {
+        if (transferManager) transferManager.leaveRoom();
+        updateRoomUI(null);
+        showToast("ルームを退出しました");
+    };
+}
+
+// URL パラメータ `?room=...` の自動接続チェック
+window.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+    const roomParam = params.get('room');
+    if (roomParam) {
+        setTimeout(() => {
+            openTransferView();
+            if (transferManager) {
+                transferManager.joinRoom(roomParam);
+                updateRoomUI(roomParam);
+                showToast(`共有URL経由でルーム ${roomParam} に自動接続しました！`);
+            }
+        }, 800);
+    }
+});
 
 tabNotes.onclick = openNotesView;
 
@@ -1658,11 +1824,37 @@ async function loginWithProvider(provider) {
     }
 }
 
+let isGuestMode = false;
+
+const btnGuestLogin = document.getElementById('btn-guest-login');
+if (btnGuestLogin) {
+    btnGuestLogin.onclick = () => {
+        isGuestMode = true;
+        if (transferManager) transferManager.isGuestMode = true;
+        authContainer.classList.add('hidden');
+        appContainer.classList.remove('hidden');
+        showToast("ゲストモードで試行中（ローカルメモ / 受信限定）");
+        loadLocalNotesOnly();
+    };
+}
+
+const toggleE2ee = document.getElementById('toggle-e2ee');
+if (toggleE2ee) {
+    toggleE2ee.onchange = () => {
+        if (transferManager) {
+            transferManager.isE2EEEnabled = toggleE2ee.checked;
+            showToast(toggleE2ee.checked ? "AES-256 E2EE暗号化を有効にしました" : "E2EE暗号化をオフにしました");
+        }
+    };
+}
+
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
 
 onAuthStateChanged(auth, async user => {
     splashScreen.classList.add('hidden');
     if (user) {
+        isGuestMode = false;
+        if (transferManager) transferManager.isGuestMode = false;
         if (currentUserId !== null && currentUserId !== user.uid) {
             await clearLocalData();
         }
