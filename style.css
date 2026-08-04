@@ -1315,14 +1315,15 @@ body.is-extension-popup {
     top: calc(100% + 6px);
     left: 0;
     width: 100%;
-    background: var(--m3-surface-container-high);
-    border: 1px solid var(--m3-border);
+    background: #232427 !important;
+    border: 1px solid #3c4043 !important;
     border-radius: var(--m3-radius-md);
-    box-shadow: var(--m3-shadow-lg);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85) !important;
     z-index: 1000;
     overflow: hidden;
     list-style: none;
     padding: 0.4rem 0;
+    opacity: 1 !important;
     animation: fadeInDown 0.15s ease-out;
 }
 
@@ -1335,6 +1336,90 @@ body.is-extension-popup {
         opacity: 1;
         transform: translateY(0);
     }
+}
+
+/* 送信先セグメントタブ */
+.target-segmented-tabs {
+    display: flex;
+    background: var(--m3-surface-container-high);
+    border-radius: var(--m3-radius-full);
+    padding: 0.25rem;
+    gap: 0.25rem;
+    border: 1px solid var(--m3-border);
+}
+
+.target-tab-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    background: transparent;
+    border: none;
+    color: var(--m3-text-muted);
+    padding: 0.5rem 1rem;
+    border-radius: var(--m3-radius-full);
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.target-tab-btn:hover {
+    color: var(--m3-text);
+}
+
+.target-tab-btn.active {
+    background: var(--m3-surface);
+    color: var(--m3-primary);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.target-panel-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.room-action-card {
+    background: var(--m3-surface-container);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.room-action-row {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+.room-input-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.m3-text-input {
+    flex: 1;
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 0.5rem 0.8rem;
+    color: var(--m3-text);
+    font-size: 0.82rem;
+    outline: none;
+}
+
+.m3-text-input:focus {
+    border-color: var(--m3-primary);
+}
+
+.or-divider {
+    font-size: 0.78rem;
+    color: var(--m3-text-muted);
 }
 
 .dropdown-menu-item {

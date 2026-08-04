@@ -35,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.10";
+const APP_VERSION = "1.3.12";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1489,6 +1489,28 @@ if (dropdownTrigger && dropdownMenuList) {
     });
 }
 
+// ★ 送信先セグメントタブ 切り替え
+const btnTargetTabDevices = document.getElementById('btn-target-tab-devices');
+const btnTargetTabRoom = document.getElementById('btn-target-tab-room');
+const targetPanelDevices = document.getElementById('target-panel-devices');
+const targetPanelRoom = document.getElementById('target-panel-room');
+
+if (btnTargetTabDevices && btnTargetTabRoom) {
+    btnTargetTabDevices.onclick = () => {
+        btnTargetTabDevices.classList.add('active');
+        btnTargetTabRoom.classList.remove('active');
+        targetPanelDevices?.classList.remove('hidden');
+        targetPanelRoom?.classList.add('hidden');
+    };
+
+    btnTargetTabRoom.onclick = () => {
+        btnTargetTabRoom.classList.add('active');
+        btnTargetTabDevices.classList.remove('active');
+        targetPanelRoom?.classList.remove('hidden');
+        targetPanelDevices?.classList.add('hidden');
+    };
+}
+
 // ★ ワンタイム共有ルーム Event Handlers
 const btnCreateRoom = document.getElementById('btn-create-room');
 const btnJoinRoom = document.getElementById('btn-join-room');
@@ -1500,7 +1522,7 @@ const roomStatusText = document.getElementById('room-status-text');
 function updateRoomUI(roomId) {
     if (roomId) {
         roomActiveStatus?.classList.remove('hidden');
-        if (roomStatusText) roomStatusText.textContent = `現在のルーム: ${roomId} (相手の接続を待機中...)`;
+        if (roomStatusText) roomStatusText.textContent = `現在の合言葉: ${roomId} (接続待機中...)`;
         if (roomCodeInput) roomCodeInput.value = roomId;
     } else {
         roomActiveStatus?.classList.add('hidden');
@@ -1707,7 +1729,16 @@ btnSettingsLogoutAction.onclick = () => {
 };
 
 btnUpdateCheck.onclick = async () => {
-    setStatus('saving', 'キャッシュを強制クリア中...');
+    setStatus('saving', '最新コード取得＆キャッシュ完全消去中...');
+    let latestVersionText = "最新";
+    try {
+        const vRes = await fetch(`./version.json?nocache=${Date.now()}`, { cache: 'no-store' });
+        if (vRes.ok) {
+            const vData = await vRes.json();
+            if (vData.version) latestVersionText = `v${vData.version}`;
+        }
+    } catch (e) {}
+
     try {
         if ('caches' in window) {
             const keys = await caches.keys();
@@ -1717,15 +1748,17 @@ btnUpdateCheck.onclick = async () => {
             const regs = await navigator.serviceWorker.getRegistrations();
             for (let r of regs) await r.unregister();
         }
+        localStorage.removeItem('flickmemo_version_cache');
     } catch (err) {
         console.error("Cache clear error:", err);
     }
-    showToast("最新コードで再読み込み中...");
+    showToast(`最新コード (${latestVersionText}) を取得して再読み込み中...`);
     setTimeout(() => {
         const url = new URL(window.location.href);
         url.searchParams.set('v', Date.now());
-        window.location.href = url.toString();
-    }, 300);
+        url.searchParams.set('reload', 'hard');
+        window.location.replace(url.toString());
+    }, 400);
 };
 
 // リダイレクト認証結果のチェック（iOS PWA / Safari リダイレクト対応）

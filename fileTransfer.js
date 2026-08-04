@@ -152,22 +152,28 @@ export class FileTransferManager {
         const roomSignalingRef = ref(this.db, `public_rooms/${roomId}/signaling/${this.deviceId}`);
         const roomAnswersRef = ref(this.db, `public_rooms/${roomId}/answers/${this.deviceId}`);
 
-        onDisconnect(roomMemberRef).remove();
-        onDisconnect(roomSignalingRef).remove();
-        onDisconnect(roomAnswersRef).remove();
+        try {
+            onDisconnect(roomMemberRef).remove().catch(() => {});
+            onDisconnect(roomSignalingRef).remove().catch(() => {});
+            onDisconnect(roomAnswersRef).remove().catch(() => {});
 
-        set(roomMemberRef, {
-            id: this.deviceId,
-            name: this.deviceName,
-            joinedAt: Date.now()
-        });
+            set(roomMemberRef, {
+                id: this.deviceId,
+                name: this.deviceName,
+                joinedAt: Date.now()
+            }).catch(err => {
+                console.warn("Room join warning (public_rooms permission):", err.message);
+            });
+        } catch (e) {}
 
         onValue(roomSignalingRef, (snapshot) => {
             const data = snapshot.val();
             if (data && data.offer) {
                 this.handleIncomingOffer(data.fromDeviceId, data.offer, `public_rooms/${roomId}`);
-                remove(roomSignalingRef);
+                remove(roomSignalingRef).catch(() => {});
             }
+        }, (err) => {
+            console.warn("Room signaling error:", err.message);
         });
 
         const membersRef = ref(this.db, `public_rooms/${roomId}/members`);
@@ -177,6 +183,8 @@ export class FileTransferManager {
             if (otherIds.length > 0) {
                 this.onStatusUpdate('room_member_joined', { roomId, otherDeviceId: otherIds[0] });
             }
+        }, (err) => {
+            console.warn("Room members error:", err.message);
         });
 
         this.onStatusUpdate('room_joined', { roomId });

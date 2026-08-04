@@ -12,6 +12,9 @@
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
     <link rel="stylesheet" href="style.css">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
 </head>
 
 <body>
@@ -215,40 +218,47 @@
                             </label>
                         </div>
 
-                        <div class="device-list-container">
-                            <div class="device-list-title">
-                                <span class="material-symbols-outlined">devices</span> 送信先マイデバイス
-                            </div>
+                        <!-- ★ 送信先選択 セグメントタブ -->
+                        <div class="target-segmented-tabs">
+                            <button id="btn-target-tab-devices" class="target-tab-btn active" type="button">
+                                <span class="material-symbols-outlined">devices</span> マイデバイス
+                            </button>
+                            <button id="btn-target-tab-room" class="target-tab-btn" type="button">
+                                <span class="material-symbols-outlined">link</span> 合言葉・共有リンク
+                            </button>
+                        </div>
+
+                        <!-- 1. マイデバイスパネル -->
+                        <div id="target-panel-devices" class="target-panel-content">
                             <div id="device-chip-list" class="device-chip-list">
                                 <span class="no-device-text">他デバイスを検索中...</span>
                             </div>
                         </div>
 
-                        <!-- ワンタイム共有ルーム（URL / 合言葉で誰とでも接続） -->
-                        <div class="room-transfer-card">
-                            <div class="room-card-header">
-                                <div class="room-title-group">
-                                    <span class="material-symbols-outlined">link</span>
-                                    <span>ワンタイム共有ルーム（URL / 合言葉で誰とでも送受信）</span>
+                        <!-- 2. 合言葉・共有リンクパネル -->
+                        <div id="target-panel-room" class="target-panel-content hidden">
+                            <div class="room-action-card">
+                                <div class="room-action-row">
+                                    <button id="btn-create-room" class="m3-button btn-primary-sm" type="button">
+                                        <span class="material-symbols-outlined">add_link</span> 共有リンクを発行
+                                    </button>
+                                    <span class="or-divider">または</span>
                                 </div>
-                                <button id="btn-create-room" class="m3-button btn-secondary-sm" type="button">
-                                    <span class="material-symbols-outlined">add_link</span> ルーム作成＆URL共有
-                                </button>
-                            </div>
-                            <div class="room-input-group">
-                                <input type="text" id="room-code-input" class="room-input-field" placeholder="合言葉（例: rm_x8k92p）を入力...">
-                                <button id="btn-join-room" class="m3-button btn-primary-sm" type="button">
-                                    <span class="material-symbols-outlined">meeting_room</span> 入室接続
-                                </button>
-                            </div>
-                            <div id="room-active-status" class="room-active-status hidden">
-                                <div class="room-status-info">
-                                    <span class="material-symbols-outlined status-pulse">sensors</span>
-                                    <span id="room-status-text">現在のルーム: rm_x8k92p (相手の接続を待機中...)</span>
+                                <div class="room-input-row">
+                                    <input type="text" id="room-code-input" class="m3-text-input" placeholder="合言葉 (例: 123456 / room_a) を入力...">
+                                    <button id="btn-join-room" class="m3-button btn-secondary-sm" type="button">
+                                        <span class="material-symbols-outlined">meeting_room</span> 接続
+                                    </button>
                                 </div>
-                                <button id="btn-leave-room" class="btn-icon-danger" title="ルームを退出">
-                                    <span class="material-symbols-outlined">logout</span>
-                                </button>
+                                <div id="room-active-status" class="room-active-status hidden">
+                                    <div class="room-status-info">
+                                        <span class="material-symbols-outlined status-pulse">sensors</span>
+                                        <span id="room-status-text">現在の合言葉: 123456 (接続待機中...)</span>
+                                    </div>
+                                    <button id="btn-leave-room" class="btn-icon-danger" title="切断" type="button">
+                                        <span class="material-symbols-outlined">close</span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
