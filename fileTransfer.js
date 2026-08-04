@@ -378,6 +378,14 @@ export class FileTransferManager {
                         this.receiveBuffer = [];
                         this.receivedSize = 0;
                         this.incomingFileInfo = null;
+                        this.onStatusUpdate('remote_transfer_lock', false);
+                    } else if (meta.type === 'TRANSFER_LOCK') {
+                        this.onStatusUpdate('remote_transfer_lock', true);
+                    } else if (meta.type === 'TRANSFER_UNLOCK') {
+                        this.onStatusUpdate('remote_transfer_lock', false);
+                    } else if (meta.type === 'EXPLICIT_DISCONNECT') {
+                        this.cleanupPeerConnection();
+                        this.onStatusUpdate('p2p_disconnected');
                     }
                 } catch (e) {}
             } else if (event.data instanceof ArrayBuffer) {
@@ -396,6 +404,21 @@ export class FileTransferManager {
         };
     }
 
+    sendControlMessage(msg) {
+        if (this.dataChannel && this.dataChannel.readyState === 'open') {
+            try {
+                this.dataChannel.send(JSON.stringify(msg));
+            } catch (e) {}
+        }
+    }
+
+    disconnect() {
+        this.sendControlMessage({ type: 'EXPLICIT_DISCONNECT' });
+        this.leaveRoom();
+        this.cleanupPeerConnection();
+        this.onStatusUpdate('p2p_disconnected');
+    }
+
     async sendFileP2P(file) {
         if (this.isGuestMode || !this.auth?.currentUser) {
             throw new Error("ファイルを送信するにはGoogleアカウントでのログインが必要です（ゲストは受信のみ利用可能）。");
@@ -405,44 +428,50 @@ export class FileTransferManager {
             throw new Error("P2P接続が確立されていません。送信先デバイスを選択してください。");
         }
 
-        const CHUNK_SIZE = 64 * 1024;
-        const header = {
-            type: 'file_header',
-            name: file.name,
-            size: file.size,
-            mime: file.type || 'application/octet-stream'
-        };
+        this.sendControlMessage({ type: 'TRANSFER_LOCK' });
 
-        this.dataChannel.send(JSON.stringify(header));
+        try {
+            const CHUNK_SIZE = 64 * 1024;
+            const header = {
+                type: 'file_header',
+                name: file.name,
+                size: file.size,
+                mime: file.type || 'application/octet-stream'
+            };
 
-        let offset = 0;
-        const total = file.size;
-        this.dataChannel.bufferedAmountLowThreshold = 256 * 1024;
+            this.dataChannel.send(JSON.stringify(header));
 
-        const readAndSendChunk = async () => {
-            while (offset < total) {
-                if (this.dataChannel.bufferedAmount > 1024 * 1024) {
-                    await new Promise(resolve => {
-                        this.dataChannel.onbufferedamountlow = () => {
-                            this.dataChannel.onbufferedamountlow = null;
-                            resolve();
-                        };
-                    });
+            let offset = 0;
+            const total = file.size;
+            this.dataChannel.bufferedAmountLowThreshold = 256 * 1024;
+
+            const readAndSendChunk = async () => {
+                while (offset < total) {
+                    if (this.dataChannel.bufferedAmount > 1024 * 1024) {
+                        await new Promise(resolve => {
+                            this.dataChannel.onbufferedamountlow = () => {
+                                this.dataChannel.onbufferedamountlow = null;
+                                resolve();
+                            };
+                        });
+                    }
+
+                    const slice = file.slice(offset, offset + CHUNK_SIZE);
+                    const rawBuffer = await slice.arrayBuffer();
+                    const encryptedBuffer = await this.encryptChunk(rawBuffer);
+                    this.dataChannel.send(encryptedBuffer);
+
+                    offset += rawBuffer.byteLength;
+                    this.onProgress(offset, total, file.name, 'send');
                 }
 
-                const slice = file.slice(offset, offset + CHUNK_SIZE);
-                const rawBuffer = await slice.arrayBuffer();
-                const encryptedBuffer = await this.encryptChunk(rawBuffer);
-                this.dataChannel.send(encryptedBuffer);
+                this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
+            };
 
-                offset += rawBuffer.byteLength;
-                this.onProgress(offset, total, file.name, 'send');
-            }
-
-            this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
-        };
-
-        await readAndSendChunk();
+            await readAndSendChunk();
+        } finally {
+            this.sendControlMessage({ type: 'TRANSFER_UNLOCK' });
+        }
     }
 
     sanitizeFilename(name) {

@@ -1461,6 +1461,24 @@ body.is-extension-popup {
     border-color: var(--m3-primary);
 }
 
+.m3-icon-button-danger {
+    background: transparent;
+    border: none;
+    color: var(--m3-danger);
+    width: 32px;
+    height: 32px;
+    border-radius: var(--m3-radius-full);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.m3-icon-button-danger:hover {
+    background: rgba(234, 67, 53, 0.15);
+}
+
 .room-active-status {
     background: rgba(43, 114, 219, 0.15);
     border: 1px solid var(--m3-primary);
@@ -1478,6 +1496,73 @@ body.is-extension-popup {
     font-size: 0.82rem;
     color: var(--m3-primary);
     font-weight: 500;
+}
+
+/* STEP 2: 接続中セッションヘッダー */
+.session-connected-card {
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-primary);
+    border-radius: var(--m3-radius-lg);
+    padding: 0.9rem 1.2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 4px 16px rgba(43, 114, 219, 0.15);
+}
+
+.session-info-group {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+.session-device-name {
+    font-size: 0.92rem;
+    font-weight: 500;
+    color: var(--m3-primary);
+}
+
+.session-sub-text {
+    font-size: 0.76rem;
+    color: var(--m3-text-muted);
+}
+
+.btn-danger-sm {
+    background: rgba(234, 67, 53, 0.15);
+    color: var(--m3-danger);
+    border: 1px solid var(--m3-danger);
+    border-radius: var(--m3-radius-full);
+    padding: 0.4rem 0.9rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: all 0.2s ease;
+}
+
+.btn-danger-sm:hover {
+    background: var(--m3-danger);
+    color: #ffffff;
+}
+
+.transfer-lock-banner {
+    background: rgba(251, 188, 4, 0.15);
+    border: 1px solid #fbbc04;
+    color: #fbbc04;
+    border-radius: var(--m3-radius-md);
+    padding: 0.7rem 1rem;
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    animation: pulse 1.5s infinite;
+}
+
+.status-pulse-green {
+    color: #34a853;
+    animation: pulse 1.5s infinite;
 }
 
 .status-pulse {

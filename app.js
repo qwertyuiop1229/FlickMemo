@@ -35,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.16";
+const APP_VERSION = "1.3.18";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1188,23 +1188,63 @@ function scheduleProgressAutoDismiss() {
     }, 3000);
 }
 
+const transferStepConnect = document.getElementById('transfer-step-connect');
+const transferStepSession = document.getElementById('transfer-step-session');
+const sessionDeviceName = document.getElementById('session-device-name');
+const btnDisconnectSession = document.getElementById('btn-disconnect-session');
+const transferLockBanner = document.getElementById('transfer-lock-banner');
+
+function updateTransferSteps(isConnected, devName) {
+    if (isConnected) {
+        transferStepConnect?.classList.add('hidden');
+        transferStepSession?.classList.remove('hidden');
+        if (sessionDeviceName) {
+            sessionDeviceName.textContent = `接続中: ${devName || '相手端末'}`;
+        }
+    } else {
+        transferStepConnect?.classList.remove('hidden');
+        transferStepSession?.classList.add('hidden');
+        if (transferLockBanner) transferLockBanner.classList.add('hidden');
+        if (btnStartSend) btnStartSend.disabled = false;
+    }
+}
+
+if (btnDisconnectSession) {
+    btnDisconnectSession.onclick = () => {
+        if (transferManager) transferManager.disconnect();
+        updateTransferSteps(false);
+        showToast("接続を切断しました");
+    };
+}
+
 function handleTransferStatus(event, data) {
     if (event === 'devices_updated') {
         renderDeviceChips(data);
     } else if (event === 'room_member_joined') {
-        showToast("ルームに相手端末が参加しました！P2P接続を構築中...");
+        showToast("相手端末を検出しました！接続中...");
         if (transferManager && data.otherDeviceId) {
             transferManager.connectToDevice(data.otherDeviceId, true);
         }
     } else if (event === 'channel_open') {
         showToast("P2P転送チャネルが開きました（接続完了）");
+        const devName = selectedTargetDeviceId && transferManager?.activeDevices[selectedTargetDeviceId]?.name;
+        updateTransferSteps(true, devName);
     } else if (event === 'channel_close' || event === 'p2p_disconnected') {
         selectedTargetDeviceId = null;
         if (transferManager) renderDeviceChips(transferManager.activeDevices);
-        showToast("P2P接続が切断されました");
+        showToast("接続が切断されました");
+        updateTransferSteps(false);
         scheduleProgressAutoDismiss();
     } else if (event === 'p2p_connected') {
-        showToast("デバイス間P2P直接接続が確立しました");
+        showToast("デバイス間P2P接続が確立しました");
+        updateTransferSteps(true);
+    } else if (event === 'remote_transfer_lock') {
+        const isLocked = !!data;
+        if (transferLockBanner) {
+            if (isLocked) transferLockBanner.classList.remove('hidden');
+            else transferLockBanner.classList.add('hidden');
+        }
+        if (btnStartSend) btnStartSend.disabled = isLocked;
     }
 }
 
@@ -1601,9 +1641,10 @@ if (btnJoinRoom) {
 
 if (btnLeaveRoom) {
     btnLeaveRoom.onclick = () => {
-        if (transferManager) transferManager.leaveRoom();
+        if (transferManager) transferManager.disconnect();
         updateRoomUI(null);
-        showToast("ルームから切断しました");
+        updateTransferSteps(false);
+        showToast("切断しました");
     };
 }
 
