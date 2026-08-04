@@ -29,8 +29,10 @@ import 'prismjs/components/prism-css';
 import 'prismjs/components/prism-markup';
 import 'prismjs/components/prism-json';
 
+import { FileTransferManager } from './fileTransfer.js';
+
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.27";
+const APP_VERSION = "1.1.28";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -120,9 +122,28 @@ const btnNew = document.getElementById('btn-new');
 const btnEmptyTrash = document.getElementById('btn-empty-trash');
 const trashNotice = document.getElementById('trash-notice');
 
-// モーダル・ユーザー情報
+// モーダル・ユーザー情報・タブ
 const tabNotes = document.getElementById('tab-notes');
+const tabTransfer = document.getElementById('tab-transfer');
 const tabTrash = document.getElementById('tab-trash');
+const transferPanel = document.getElementById('transfer-panel');
+const transferModeSelect = document.getElementById('transfer-mode-select');
+const deviceChipList = document.getElementById('device-chip-list');
+const dropzoneArea = document.getElementById('dropzone-area');
+const fileInput = document.getElementById('file-input');
+const btnBrowseFiles = document.getElementById('btn-browse-files');
+const transferProgressCard = document.getElementById('transfer-progress-card');
+const transferFilename = document.getElementById('transfer-filename');
+const transferSpeed = document.getElementById('transfer-speed');
+const transferProgressFill = document.getElementById('transfer-progress-fill');
+const transferStatusLabel = document.getElementById('transfer-status-label');
+const transferPercent = document.getElementById('transfer-percent');
+const transferHistoryList = document.getElementById('transfer-history-list');
+
+let transferManager = null;
+let selectedTargetDeviceId = null;
+let transferStartTime = 0;
+
 const deleteModal = document.getElementById('delete-modal');
 const btnDeleteCancel = document.getElementById('btn-delete-cancel');
 const btnDeleteConfirm = document.getElementById('btn-delete-confirm');
@@ -1108,23 +1129,213 @@ btnRestoreTrash.onclick = () => {
     selectNote(activeNoteId);
 };
 
+function renderDeviceChips(devices) {
+    if (!deviceChipList) return;
+    deviceChipList.innerHTML = '';
+    const keys = Object.keys(devices || {});
+
+    if (keys.length === 0) {
+        deviceChipList.innerHTML = '<span class="no-device-text">Googleアカウントの他デバイスを検索中...（他端末でFlickMemoを開くと自動表示）</span>';
+        return;
+    }
+
+    keys.forEach(devId => {
+        const dev = devices[devId];
+        const chip = document.createElement('div');
+        chip.className = `device-chip ${selectedTargetDeviceId === devId ? 'selected' : ''}`;
+        chip.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">smartphone</span> ${escapeHTML(dev.name || '端末')}`;
+        chip.onclick = async () => {
+            selectedTargetDeviceId = devId;
+            renderDeviceChips(devices);
+            showToast(`${dev.name} へP2P接続を試みています...`);
+            if (transferManager) {
+                try {
+                    await transferManager.connectToDevice(devId);
+                } catch (e) {
+                    showToast("接続エラー: " + e.message);
+                }
+            }
+        };
+        deviceChipList.appendChild(chip);
+    });
+}
+
+function handleTransferStatus(event, data) {
+    if (event === 'devices_updated') {
+        renderDeviceChips(data);
+    } else if (event === 'channel_open') {
+        showToast("⚡ P2P高速転送チャネルが開きました（接続完了）");
+    } else if (event === 'channel_close') {
+        showToast("転送チャネルが切断されました");
+    } else if (event === 'p2p_connected') {
+        showToast("⚡ デバイス間P2P直接接続が確立しました！");
+    }
+}
+
+function handleFileReceived(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+    showToast(`📥 ファイル「${filename}」を受信・保存しました！`);
+    addTransferHistory(filename, blob.size, '受信');
+    if (transferProgressCard) transferProgressCard.classList.add('hidden');
+}
+
+function handleTransferProgress(bytes, total, name, direction) {
+    if (!transferProgressCard) return;
+    transferProgressCard.classList.remove('hidden');
+    transferFilename.textContent = `${direction === 'send' ? '📤' : '📥'} ${name}`;
+
+    const percent = Math.min(100, Math.round((bytes / total) * 100));
+    transferProgressFill.style.width = `${percent}%`;
+    transferPercent.textContent = `${percent}%`;
+
+    const now = Date.now();
+    if (!transferStartTime || percent === 0) transferStartTime = now;
+    const elapsedSec = (now - transferStartTime) / 1000;
+    if (elapsedSec > 0.2) {
+        const speedMBs = ((bytes / (1024 * 1024)) / elapsedSec).toFixed(2);
+        transferSpeed.textContent = `${speedMBs} MB/s`;
+    }
+
+    transferStatusLabel.textContent = percent >= 100 ? "完了！" : `${(bytes / (1024 * 1024)).toFixed(1)} / ${(total / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function addTransferHistory(name, size, type) {
+    if (!transferHistoryList) return;
+    const emptyLi = transferHistoryList.querySelector('.empty-history');
+    if (emptyLi) emptyLi.remove();
+
+    const li = document.createElement('li');
+    li.className = 'transfer-history-item';
+    const sizeStr = (size / (1024 * 1024)).toFixed(2) + ' MB';
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    li.innerHTML = `
+        <div>
+            <strong>${type === '送信' ? '📤' : '📥'} ${escapeHTML(name)}</strong>
+            <span style="color:var(--m3-text-muted); font-size:0.75rem; margin-left:0.5rem;">(${sizeStr})</span>
+        </div>
+        <span style="color:var(--m3-text-muted); font-size:0.75rem;">${timeStr}</span>
+    `;
+    transferHistoryList.prepend(li);
+}
+
+// ドロップゾーン＆ファイル選択バインド
+if (dropzoneArea && fileInput && btnBrowseFiles) {
+    btnBrowseFiles.onclick = (e) => {
+        e.stopPropagation();
+        fileInput.click();
+    };
+
+    dropzoneArea.onclick = () => fileInput.click();
+
+    dropzoneArea.ondragover = (e) => {
+        e.preventDefault();
+        dropzoneArea.classList.add('dragover');
+    };
+
+    dropzoneArea.ondragleave = () => dropzoneArea.classList.remove('dragover');
+
+    dropzoneArea.ondrop = async (e) => {
+        e.preventDefault();
+        dropzoneArea.classList.remove('dragover');
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            await startFileSendProcess(Array.from(e.dataTransfer.files));
+        }
+    };
+
+    fileInput.onchange = async () => {
+        if (fileInput.files && fileInput.files.length > 0) {
+            await startFileSendProcess(Array.from(fileInput.files));
+        }
+    };
+}
+
+async function startFileSendProcess(files) {
+    if (!files || files.length === 0) return;
+    const file = files[0]; // 単一 / 複数送信
+
+    if (!transferManager) {
+        showToast("送信機能が準備できていません");
+        return;
+    }
+
+    try {
+        const targetDev = selectedTargetDeviceId ? transferManager.activeDevices[selectedTargetDeviceId] : null;
+        const mode = transferManager.determineOptimalMode(targetDev, file);
+
+        showToast(`モード [${mode}] で「${file.name}」の送信を開始します...`);
+
+        if (mode === 'LAN_P2P' || mode === 'WAN_P2P' || mode === 'AUTO') {
+            await transferManager.sendFileP2P(file);
+            addTransferHistory(file.name, file.size, '送信');
+            showToast(`✅ 「${file.name}」の送信が完了しました！`);
+        } else {
+            showToast("選択されたモードでの送信を開始中...");
+            await transferManager.sendFileP2P(file);
+            addTransferHistory(file.name, file.size, '送信');
+        }
+    } catch (err) {
+        console.error("Send File Error:", err);
+        showToast("送信失敗: " + (err.message || "P2P接続を確認してください"));
+    }
+}
+
+if (transferModeSelect) {
+    transferModeSelect.onchange = () => {
+        if (transferManager) {
+            transferManager.currentMode = transferModeSelect.value;
+            showToast(`送信モードを「${transferModeSelect.options[transferModeSelect.selectedIndex].text}」に変更しました`);
+        }
+    };
+}
+
 tabNotes.onclick = () => {
     currentTab = 'notes';
     tabNotes.classList.add('active');
+    tabTransfer?.classList.remove('active');
     tabTrash.classList.remove('active');
     btnNew.classList.remove('hidden');
     btnEmptyTrash.classList.add('hidden');
     trashNotice.classList.add('hidden');
+    if (transferPanel) transferPanel.classList.add('hidden');
+    noteBody.classList.remove('hidden');
+    if (noteTitleInput) noteTitleInput.classList.remove('hidden');
     renderList(searchInput.value);
+};
+
+tabTransfer.onclick = () => {
+    currentTab = 'transfer';
+    tabTransfer.classList.add('active');
+    tabNotes.classList.remove('active');
+    tabTrash.classList.remove('active');
+    btnNew.classList.add('hidden');
+    btnEmptyTrash.classList.add('hidden');
+    trashNotice.classList.add('hidden');
+    if (transferPanel) transferPanel.classList.remove('hidden');
+    noteBody.classList.add('hidden');
+    if (noteTitleInput) noteTitleInput.classList.add('hidden');
+    noteCodeView.classList.add('hidden');
+    editorToolbar.classList.add('hidden');
 };
 
 tabTrash.onclick = () => {
     currentTab = 'trash';
     tabTrash.classList.add('active');
     tabNotes.classList.remove('active');
+    tabTransfer?.classList.remove('active');
     btnNew.classList.add('hidden');
     btnEmptyTrash.classList.remove('hidden');
     trashNotice.classList.remove('hidden');
+    if (transferPanel) transferPanel.classList.add('hidden');
+    noteBody.classList.remove('hidden');
+    if (noteTitleInput) noteTitleInput.classList.remove('hidden');
     renderList(searchInput.value);
 };
 
@@ -1279,23 +1490,45 @@ async function loginWithProvider(provider) {
         authButtons.classList.add('hidden');
 
         // Chrome 拡張機能環境（サイドパネルやポップアップ）の場合
-        if (typeof chrome !== 'undefined' && chrome?.windows?.create) {
-            // Web上の認証ページを開くことで拡張機能のCSP制限(script-src 'self')を完全回避
-            const webAuthUrl = 'https://flickmemo-qwe.web.app/auth.html';
-            chrome.windows.create({
-                url: webAuthUrl,
-                type: 'popup',
-                width: 500,
-                height: 620
-            });
+        if (typeof chrome !== 'undefined' && chrome?.identity?.launchWebAuthFlow) {
+            try {
+                const redirectUrl = chrome.identity.getRedirectURL();
+                const webAuthUrl = `https://flickmemo-qwe.web.app/auth.html?extension_redirect=${encodeURIComponent(redirectUrl)}`;
 
-            // タイムアウト保護タイマー
-            setTimeout(() => {
-                if (!auth.currentUser) {
-                    authLoading.classList.add('hidden');
-                    authButtons.classList.remove('hidden');
+                const responseUrl = await new Promise((resolve, reject) => {
+                    chrome.identity.launchWebAuthFlow({
+                        url: webAuthUrl,
+                        interactive: true
+                    }, (response) => {
+                        if (chrome.runtime.lastError || !response) {
+                            reject(new Error(chrome.runtime.lastError?.message || "ログイン処理がキャンセルされました"));
+                        } else {
+                            resolve(response);
+                        }
+                    });
+                });
+
+                const hashStr = new URL(responseUrl).hash.substring(1);
+                const hashParams = new URLSearchParams(hashStr);
+                const idToken = hashParams.get('id_token');
+
+                if (idToken) {
+                    const credential = GoogleAuthProvider.credential(idToken);
+                    try {
+                        await setPersistence(auth, browserLocalPersistence);
+                    } catch (pErr) {
+                        console.warn("Persistence warning:", pErr);
+                    }
+                    await signInWithCredential(auth, credential);
+                } else {
+                    throw new Error("認証トークンを受信できませんでした");
                 }
-            }, 15000);
+            } catch (extAuthErr) {
+                console.error("Extension Auth Error:", extAuthErr);
+                // フォールバック：通常ポップアップ開口
+                await setPersistence(auth, browserLocalPersistence);
+                await signInWithPopup(auth, provider);
+            }
         } else {
             // 通常の Web アプリ環境 (flickmemo-qwe.web.app 等)
             try {
@@ -1424,7 +1657,20 @@ onAuthStateChanged(auth, async user => {
             console.error("Sync Error:", error);
             setStatus('offline', '同期オフライン');
         });
+        if (!transferManager) {
+            transferManager = new FileTransferManager(
+                auth,
+                db,
+                (event, data) => handleTransferStatus(event, data),
+                (blob, filename) => handleFileReceived(blob, filename),
+                (bytes, total, name, direction) => handleTransferProgress(bytes, total, name, direction)
+            );
+        }
+        transferManager.startDevicePresence();
     } else {
+        if (transferManager) {
+            transferManager.stopDevicePresence();
+        }
         await clearLocalData();
         if (currentDbRef) {
             off(currentDbRef);

@@ -72,6 +72,9 @@
                     <button id="tab-notes" class="tab-btn active">
                         <span class="material-symbols-outlined">description</span> メモ
                     </button>
+                    <button id="tab-transfer" class="tab-btn">
+                        <span class="material-symbols-outlined">send_and_archive</span> ファイル送信
+                    </button>
                     <button id="tab-trash" class="tab-btn">
                         <span class="material-symbols-outlined">delete</span> ゴミ箱
                     </button>
@@ -104,7 +107,7 @@
                 </div>
             </aside>
 
-            <main class="editor-area">
+            <main class="editor-area" id="editor-area">
                 <div class="editor-toolbar hidden" id="editor-toolbar">
                     <div class="toolbar-group">
                         <button id="btn-undo" class="m3-icon-button" title="元に戻す (Undo)" disabled>
@@ -138,6 +141,69 @@
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
 
                 <div id="note-code-view" class="m3-code-view hidden"></div>
+
+                <!-- ファイル送信・受信用パネル -->
+                <div id="transfer-panel" class="transfer-panel hidden">
+                    <div class="transfer-header-card">
+                        <div class="transfer-mode-selector-group">
+                            <label class="custom-dropdown-label">
+                                <span class="material-symbols-outlined">bolt</span> 送信モード
+                            </label>
+                            <div class="custom-select-wrapper">
+                                <select id="transfer-mode-select" class="m3-custom-select">
+                                    <option value="AUTO">🧠 自動判別（最速モードをAI最適化）</option>
+                                    <option value="LAN_P2P">⚡ 同一Wi-Fi / LAN WebRTC P2P (最速)</option>
+                                    <option value="WAN_P2P">🌐 インターネット P2P (STUN)</option>
+                                    <option value="DROPZONE_LOCAL">🚀 DropZone PC Bridge (Go Local)</option>
+                                    <option value="CLOUD_RELAY">☁️ クラウドストレージリレイ (共有URL)</option>
+                                </select>
+                                <span class="material-symbols-outlined select-arrow">expand_more</span>
+                            </div>
+                        </div>
+
+                        <div class="device-list-container">
+                            <div class="device-list-title">
+                                <span class="material-symbols-outlined">devices</span> 送信先マイデバイス
+                            </div>
+                            <div id="device-chip-list" class="device-chip-list">
+                                <span class="no-device-text">他デバイスを検索中...</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="dropzone-area" class="dropzone-area">
+                        <input type="file" id="file-input" class="hidden" multiple>
+                        <div class="dropzone-content">
+                            <span class="material-symbols-outlined dropzone-icon">cloud_upload</span>
+                            <h3>ファイルをここにドラッグ＆ドロップ</h3>
+                            <p>またはクリックしてファイルを選択（大容量・複数ファイル対応）</p>
+                            <button id="btn-browse-files" class="m3-button btn-primary-sm">
+                                <span class="material-symbols-outlined">folder_open</span> ファイルを選択
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="transfer-progress-card" class="transfer-progress-card hidden">
+                        <div class="progress-info-row">
+                            <span id="transfer-filename" class="transfer-filename">filename.zip</span>
+                            <span id="transfer-speed" class="transfer-speed">0.0 MB/s</span>
+                        </div>
+                        <div class="m3-progress-bar-bg">
+                            <div id="transfer-progress-fill" class="m3-progress-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <div class="progress-sub-row">
+                            <span id="transfer-status-label">転送中...</span>
+                            <span id="transfer-percent">0%</span>
+                        </div>
+                    </div>
+
+                    <div class="transfers-history-card">
+                        <h4><span class="material-symbols-outlined">history</span> 受信・送信履歴</h4>
+                        <ul id="transfer-history-list" class="transfer-history-list">
+                            <li class="empty-history">履歴はありません</li>
+                        </ul>
+                    </div>
+                </div>
             </main>
 
             <div id="date-display" class="date-display-floating hidden">--月--日</div>

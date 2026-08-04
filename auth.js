@@ -20,15 +20,30 @@ async function performAuth() {
     try {
         await setPersistence(auth, browserLocalPersistence);
         const provider = new GoogleAuthProvider();
+        provider.addScope('email');
+        provider.addScope('profile');
         provider.setCustomParameters({ prompt: 'select_account' });
 
         const result = await signInWithPopup(auth, provider);
         const user = result.user;
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        const idToken = credential?.idToken || (await user.getIdToken());
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const extensionRedirect = urlParams.get('extension_redirect');
+
+        if (extensionRedirect) {
+            if (msg) msg.textContent = "拡張機能へログイン情報を転送しています...";
+            const targetUrl = new URL(extensionRedirect);
+            targetUrl.hash = `id_token=${encodeURIComponent(idToken)}&uid=${encodeURIComponent(user.uid)}`;
+            window.location.href = targetUrl.toString();
+            return;
+        }
 
         if (msg) msg.textContent = "ログインが成功しました！画面を閉じています...";
 
         if (window.opener) {
-            window.opener.postMessage({ type: 'FLICKMEMO_AUTH_SUCCESS', uid: user.uid }, '*');
+            window.opener.postMessage({ type: 'FLICKMEMO_AUTH_SUCCESS', uid: user.uid, idToken: idToken }, '*');
         }
 
         setTimeout(() => window.close(), 600);
@@ -39,4 +54,4 @@ async function performAuth() {
     }
 }
 
-performAuth();
+performAuth();

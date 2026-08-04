@@ -1125,12 +1125,20 @@ select {
 }
 
 /* Chrome拡張機能ポップアップ・サイドパネル最適化 */
+body.is-extension-popup {
+    width: 100%;
+    height: 100vh;
+    max-width: 800px;
+    max-height: 600px;
+}
+
 @media (max-width: 480px) {
-    body {
+    body:not(.is-extension-popup) {
         width: 100%;
-        height: 100vh;
-        max-width: 800px;
-        max-height: 600px;
+        height: 100%;
+        height: -webkit-fill-available;
+        height: 100dvh;
+        max-height: none !important;
     }
 
     .date-display-floating {
@@ -1147,3 +1155,273 @@ select {
         font-size: 1.1rem;
     }
 }
+
+/* ==========================================================================
+   ファイル送信 (DropZone 統合) & Material 3 カスタムドロップダウン スタイル
+   ========================================================================== */
+
+.transfer-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+    height: 100%;
+    padding: 0.5rem 0.2rem;
+    overflow-y: auto;
+}
+
+.transfer-header-card {
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-lg);
+    padding: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+/* ★ Material 3 独自カスタムドロップダウンデザイン */
+.transfer-mode-selector-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.custom-dropdown-label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--m3-primary);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.custom-select-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.m3-custom-select {
+    width: 100%;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background: var(--m3-surface-container);
+    color: var(--m3-text);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 0.75rem 2.5rem 0.75rem 1rem;
+    font-size: 0.88rem !important;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s var(--m3-motion-curve);
+    outline: none;
+}
+
+.m3-custom-select:hover {
+    background: var(--m3-surface-hover);
+    border-color: var(--m3-primary);
+}
+
+.m3-custom-select:focus {
+    border-color: var(--m3-primary);
+    box-shadow: 0 0 0 2px rgba(168, 199, 250, 0.2);
+}
+
+.select-arrow {
+    position: absolute;
+    right: 0.8rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--m3-primary);
+    pointer-events: none;
+    font-size: 20px;
+}
+
+/* 送信先マイデバイス一覧 */
+.device-list-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.device-list-title {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--m3-text-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.device-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.device-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--m3-surface-container);
+    border: 1px solid var(--m3-border);
+    color: var(--m3-text);
+    padding: 0.4rem 0.8rem;
+    border-radius: var(--m3-radius-full);
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.device-chip:hover,
+.device-chip.selected {
+    background: #042f66;
+    border-color: var(--m3-primary);
+    color: var(--m3-primary);
+}
+
+.no-device-text {
+    font-size: 0.78rem;
+    color: var(--m3-text-muted);
+    font-style: italic;
+}
+
+/* ドラッグ＆ドロップエリア */
+.dropzone-area {
+    background: rgba(30, 31, 32, 0.6);
+    border: 2px dashed var(--m3-border);
+    border-radius: var(--m3-radius-xl);
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.25s var(--m3-motion-curve);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.dropzone-area:hover,
+.dropzone-area.dragover {
+    border-color: var(--m3-primary);
+    background: rgba(168, 199, 250, 0.08);
+}
+
+.dropzone-icon {
+    font-size: 52px;
+    color: var(--m3-primary);
+    margin-bottom: 0.6rem;
+}
+
+.dropzone-content h3 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    margin-bottom: 0.3rem;
+}
+
+.dropzone-content p {
+    font-size: 0.8rem;
+    color: var(--m3-text-muted);
+    margin-bottom: 1.2rem;
+}
+
+.btn-primary-sm {
+    background: var(--m3-primary);
+    color: var(--m3-on-primary);
+    padding: 0.5rem 1.2rem;
+    border-radius: var(--m3-radius-full);
+    border: none;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+}
+
+/* プログレスカード */
+.transfer-progress-card {
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.progress-info-row,
+.progress-sub-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+}
+
+.transfer-filename {
+    font-weight: 500;
+    color: var(--m3-text);
+    max-width: 70%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.transfer-speed {
+    color: var(--m3-primary);
+    font-weight: 700;
+    font-family: 'Roboto Mono', monospace;
+}
+
+.m3-progress-bar-bg {
+    width: 100%;
+    height: 8px;
+    background: var(--m3-surface-container);
+    border-radius: var(--m3-radius-full);
+    overflow: hidden;
+}
+
+.m3-progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #1a73e8 0%, var(--m3-primary) 100%);
+    border-radius: var(--m3-radius-full);
+    transition: width 0.15s ease;
+}
+
+.transfers-history-card {
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-lg);
+    padding: 1rem;
+}
+
+.transfers-history-card h4 {
+    font-size: 0.85rem;
+    color: var(--m3-text-muted);
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.transfer-history-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.transfer-history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.8rem;
+    background: var(--m3-surface-container);
+    border-radius: var(--m3-radius-sm);
+    font-size: 0.82rem;
+}
+
+.empty-history {
+    font-size: 0.78rem;
+    color: var(--m3-text-muted);
+    text-align: center;
+    padding: 0.8rem 0;
+}
