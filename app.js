@@ -35,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.26";
+const APP_VERSION = "1.3.28";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1184,8 +1184,8 @@ function scheduleProgressAutoDismiss() {
     if (autoDismissProgressTimer) clearTimeout(autoDismissProgressTimer);
     autoDismissProgressTimer = setTimeout(() => {
         if (transferProgressCard) transferProgressCard.classList.add('hidden');
-        clearTransferHistoryUI();
-    }, 3000);
+        // 履歴はセッション中ずっと残す（接続が切れるまで消さない）
+    }, 4000);
 }
 
 const transferStepConnect = document.getElementById('transfer-step-connect');
@@ -1268,7 +1268,10 @@ function handleTransferStatus(event, data) {
         if (transferManager) renderDeviceChips(transferManager.activeDevices);
         showToast("接続が切断されました");
         updateTransferSteps(false);
-        scheduleProgressAutoDismiss();
+        updateRoomUI(null); // 接続待機中カードも消す
+        if (autoDismissProgressTimer) clearTimeout(autoDismissProgressTimer);
+        if (transferProgressCard) transferProgressCard.classList.add('hidden');
+        clearTransferHistoryUI();
     } else if (event === 'p2p_connected') {
         showToast("デバイス間P2P接続が確立しました");
         updateTransferSteps(true);
