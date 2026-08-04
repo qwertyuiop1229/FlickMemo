@@ -1207,6 +1207,12 @@ body.is-extension-popup {
     border-bottom: 1px solid var(--m3-border);
 }
 
+.transfer-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
 .transfer-top-bar h2 {
     font-size: 1.1rem;
     font-weight: 500;
@@ -1497,7 +1503,7 @@ body.is-extension-popup {
 
 .m3-progress-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #1a73e8 0%, var(--m3-primary) 100%);
+    background: var(--m3-primary);
     border-radius: var(--m3-radius-full);
     transition: width 0.15s ease;
 }

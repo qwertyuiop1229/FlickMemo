@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.4";
+const APP_VERSION = "1.3.6";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1147,6 +1147,14 @@ function renderDeviceChips(devices) {
         chip.className = `device-chip ${selectedTargetDeviceId === devId ? 'selected' : ''}`;
         chip.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">smartphone</span> ${escapeHTML(dev.name || '端末')}`;
         chip.onclick = async () => {
+            if (selectedTargetDeviceId === devId && transferManager?.dataChannel?.readyState === 'open') {
+                // すでに接続中をタップした場合は切断して選択解除
+                transferManager.cleanupPeerConnection();
+                selectedTargetDeviceId = null;
+                renderDeviceChips(devices);
+                showToast("接続を切断しました");
+                return;
+            }
             selectedTargetDeviceId = devId;
             renderDeviceChips(devices);
             showToast(`${dev.name} へP2P接続を試みています...`);
@@ -1154,6 +1162,8 @@ function renderDeviceChips(devices) {
                 try {
                     await transferManager.connectToDevice(devId);
                 } catch (e) {
+                    selectedTargetDeviceId = null;
+                    renderDeviceChips(devices);
                     showToast("接続エラー: " + e.message);
                 }
             }
@@ -1166,11 +1176,13 @@ function handleTransferStatus(event, data) {
     if (event === 'devices_updated') {
         renderDeviceChips(data);
     } else if (event === 'channel_open') {
-        showToast("⚡ P2P高速転送チャネルが開きました（接続完了）");
-    } else if (event === 'channel_close') {
-        showToast("転送チャネルが切断されました");
+        showToast("P2P転送チャネルが開きました（接続完了）");
+    } else if (event === 'channel_close' || event === 'p2p_disconnected') {
+        selectedTargetDeviceId = null;
+        if (transferManager) renderDeviceChips(transferManager.activeDevices);
+        showToast("P2P接続が切断されました");
     } else if (event === 'p2p_connected') {
-        showToast("⚡ デバイス間P2P直接接続が確立しました！");
+        showToast("デバイス間P2P直接接続が確立しました");
     }
 }
 
@@ -1184,7 +1196,7 @@ function handleFileReceived(blob, filename) {
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 5000);
 
-    showToast(`📥 ファイル「${filename}」を受信・保存しました！`);
+    showToast(`ファイル「${filename}」を受信・保存しました`);
     addTransferHistory(filename, blob.size, '受信');
     if (transferProgressCard) transferProgressCard.classList.add('hidden');
 }
@@ -1192,7 +1204,7 @@ function handleFileReceived(blob, filename) {
 function handleTransferProgress(bytes, total, name, direction) {
     if (!transferProgressCard) return;
     transferProgressCard.classList.remove('hidden');
-    transferFilename.textContent = `${direction === 'send' ? '📤' : '📥'} ${name}`;
+    transferFilename.textContent = `${direction === 'send' ? '送信:' : '受信:'} ${name}`;
 
     const percent = Math.min(100, Math.round((bytes / total) * 100));
     transferProgressFill.style.width = `${percent}%`;
@@ -1206,7 +1218,7 @@ function handleTransferProgress(bytes, total, name, direction) {
         transferSpeed.textContent = `${speedMBs} MB/s`;
     }
 
-    transferStatusLabel.textContent = percent >= 100 ? "完了！" : `${(bytes / (1024 * 1024)).toFixed(1)} / ${(total / (1024 * 1024)).toFixed(1)} MB`;
+    transferStatusLabel.textContent = percent >= 100 ? "完了" : `${(bytes / (1024 * 1024)).toFixed(1)} / ${(total / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function addTransferHistory(name, size, type) {
@@ -1220,7 +1232,7 @@ function addTransferHistory(name, size, type) {
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     li.innerHTML = `
         <div>
-            <strong>${type === '送信' ? '📤' : '📥'} ${escapeHTML(name)}</strong>
+            <strong>${type === '送信' ? '[送信]' : '[受信]'} ${escapeHTML(name)}</strong>
             <span style="color:var(--m3-text-muted); font-size:0.75rem; margin-left:0.5rem;">(${sizeStr})</span>
         </div>
         <span style="color:var(--m3-text-muted); font-size:0.75rem;">${timeStr}</span>
@@ -1329,6 +1341,59 @@ if (btnBackToNotes) {
     btnBackToNotes.onclick = () => {
         openNotesView();
     };
+}
+
+// 100% 独自デザイン Material 3 カスタムドロップダウンロジック
+const customDropdown = document.getElementById('custom-mode-dropdown');
+const dropdownTrigger = document.getElementById('dropdown-trigger');
+const dropdownMenuList = document.getElementById('dropdown-menu-list');
+const selectedModeText = document.getElementById('selected-mode-text');
+
+if (dropdownTrigger && dropdownMenuList) {
+    dropdownTrigger.onclick = (e) => {
+        e.stopPropagation();
+        const isOpen = !dropdownMenuList.classList.contains('hidden');
+        if (isOpen) {
+            dropdownMenuList.classList.add('hidden');
+            customDropdown?.classList.remove('open');
+        } else {
+            dropdownMenuList.classList.remove('hidden');
+            customDropdown?.classList.add('open');
+        }
+    };
+
+    document.addEventListener('click', () => {
+        dropdownMenuList.classList.add('hidden');
+        customDropdown?.classList.remove('open');
+    });
+
+    dropdownMenuList.querySelectorAll('.dropdown-menu-item').forEach(item => {
+        item.onclick = (e) => {
+            e.stopPropagation();
+            const val = item.getAttribute('data-value');
+            const iconElem = item.querySelector('.material-symbols-outlined:not(.check-icon)');
+            const iconName = iconElem ? iconElem.textContent.trim() : 'bolt';
+            const titleText = item.querySelector('.item-title').textContent.trim();
+
+            dropdownMenuList.querySelectorAll('.dropdown-menu-item').forEach(i => {
+                i.classList.remove('selected');
+                const chk = i.querySelector('.check-icon');
+                if (chk) chk.classList.add('hidden');
+            });
+            item.classList.add('selected');
+            const currentChk = item.querySelector('.check-icon');
+            if (currentChk) currentChk.classList.remove('hidden');
+
+            selectedModeText.innerHTML = `<span class="material-symbols-outlined mode-icon">${iconName}</span> ${escapeHTML(titleText)}`;
+            dropdownMenuList.classList.add('hidden');
+            customDropdown?.classList.remove('open');
+
+            if (transferManager) {
+                transferManager.currentMode = val;
+                showToast(`送信モードを「${titleText}」に変更しました`);
+            }
+        };
+    });
 }
 
 tabNotes.onclick = openNotesView;

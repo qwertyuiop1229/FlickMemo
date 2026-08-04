@@ -146,10 +146,12 @@
                 <div id="transfer-panel" class="transfer-panel hidden">
                     <div class="transfer-header-card">
                         <div class="transfer-top-bar">
-                            <button id="btn-back-to-notes" class="m3-button btn-secondary-sm">
-                                <span class="material-symbols-outlined">arrow_back</span> メモ一覧に戻る
-                            </button>
-                            <h2><span class="material-symbols-outlined">send_and_archive</span> 最速マルチファイル送信</h2>
+                            <div class="transfer-header-left">
+                                <button id="btn-back-to-notes" class="m3-icon-button" title="メモに戻る">
+                                    <span class="material-symbols-outlined">arrow_back</span>
+                                </button>
+                                <h2><span class="material-symbols-outlined">send_and_archive</span> ファイル送信</h2>
+                            </div>
                         </div>
                         <div class="transfer-mode-selector-group">
                             <label class="custom-dropdown-label">
@@ -159,15 +161,15 @@
                             <div class="m3-custom-dropdown" id="custom-mode-dropdown">
                                 <button type="button" class="dropdown-trigger-btn" id="dropdown-trigger">
                                     <span id="selected-mode-text" class="selected-mode-text">
-                                        <span class="material-symbols-outlined mode-icon">psychology</span> 🧠 自動判別（最速AI最適化）
+                                        <span class="material-symbols-outlined mode-icon">auto_awesome</span> 自動判別（スマート最適化）
                                     </span>
                                     <span class="material-symbols-outlined dropdown-arrow">expand_more</span>
                                 </button>
                                 <ul class="dropdown-menu-list hidden" id="dropdown-menu-list">
                                     <li class="dropdown-menu-item selected" data-value="AUTO">
-                                        <span class="material-symbols-outlined">psychology</span>
+                                        <span class="material-symbols-outlined">auto_awesome</span>
                                         <div class="item-text-group">
-                                            <span class="item-title">🧠 自動判別（最速AI最適化）</span>
+                                            <span class="item-title">自動判別（スマート最適化）</span>
                                             <span class="item-desc">ネットワーク環境やファイルサイズを自動解析して最適化</span>
                                         </div>
                                         <span class="material-symbols-outlined check-icon">check</span>
@@ -175,31 +177,31 @@
                                     <li class="dropdown-menu-item" data-value="LAN_P2P">
                                         <span class="material-symbols-outlined">bolt</span>
                                         <div class="item-text-group">
-                                            <span class="item-title">⚡ 同一Wi-Fi / LAN WebRTC P2P</span>
-                                            <span class="item-desc">同一ネットワーク内・サーバー中継なし・回線速度上限（最速）</span>
+                                            <span class="item-title">同一Wi-Fi / LAN WebRTC P2P</span>
+                                            <span class="item-desc">同一ネットワーク内・サーバー中継なし・回線速度上限</span>
                                         </div>
                                         <span class="material-symbols-outlined check-icon hidden">check</span>
                                     </li>
                                     <li class="dropdown-menu-item" data-value="WAN_P2P">
                                         <span class="material-symbols-outlined">public</span>
                                         <div class="item-text-group">
-                                            <span class="item-title">🌐 インターネット P2P (STUN)</span>
-                                            <span class="item-desc">別Wi-Fi / 4G / 5G同士のダイレクト高速通信</span>
+                                            <span class="item-title">インターネット P2P (STUN)</span>
+                                            <span class="item-desc">別Wi-Fi / 4G / 5G同士のダイレクト通信</span>
                                         </div>
                                         <span class="material-symbols-outlined check-icon hidden">check</span>
                                     </li>
                                     <li class="dropdown-menu-item" data-value="DROPZONE_LOCAL">
                                         <span class="material-symbols-outlined">laptop_mac</span>
                                         <div class="item-text-group">
-                                            <span class="item-title">🚀 DropZone PC Bridge (Go Local)</span>
-                                            <span class="item-desc">PCのGoローカルサーバー経由でディスク即時保存</span>
+                                            <span class="item-title">DropZone PC Bridge (Go Local)</span>
+                                            <span class="item-desc">PCのGoローカルサーバー経由でディスク保存</span>
                                         </div>
                                         <span class="material-symbols-outlined check-icon hidden">check</span>
                                     </li>
                                     <li class="dropdown-menu-item" data-value="CLOUD_RELAY">
                                         <span class="material-symbols-outlined">cloud</span>
                                         <div class="item-text-group">
-                                            <span class="item-title">☁️ クラウドストレージリレイ</span>
+                                            <span class="item-title">クラウドストレージリレイ</span>
                                             <span class="item-desc">オフライン時や厳重プロキシ環境での安全なクラウド保存</span>
                                         </div>
                                         <span class="material-symbols-outlined check-icon hidden">check</span>
