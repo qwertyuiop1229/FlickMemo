@@ -58,6 +58,9 @@
                     <span class="status-dot"></span>
                     <span id="status-text">同期完了</span>
                 </div>
+                <button id="btn-header-transfer" class="m3-icon-button" title="最速ファイル送信">
+                    <span class="material-symbols-outlined">send_and_archive</span>
+                </button>
                 <button id="btn-settings-trigger" class="m3-icon-button" title="設定">
                     <span class="material-symbols-outlined">settings</span>
                 </button>
@@ -145,17 +148,58 @@
                     <div class="transfer-header-card">
                         <div class="transfer-mode-selector-group">
                             <label class="custom-dropdown-label">
-                                <span class="material-symbols-outlined">bolt</span> 送信モード
+                                <span class="material-symbols-outlined">bolt</span> 送信モードを選択
                             </label>
-                            <div class="custom-select-wrapper">
-                                <select id="transfer-mode-select" class="m3-custom-select">
-                                    <option value="AUTO">🧠 自動判別（最速モードをAI最適化）</option>
-                                    <option value="LAN_P2P">⚡ 同一Wi-Fi / LAN WebRTC P2P (最速)</option>
-                                    <option value="WAN_P2P">🌐 インターネット P2P (STUN)</option>
-                                    <option value="DROPZONE_LOCAL">🚀 DropZone PC Bridge (Go Local)</option>
-                                    <option value="CLOUD_RELAY">☁️ クラウドストレージリレイ (共有URL)</option>
-                                </select>
-                                <span class="material-symbols-outlined select-arrow">expand_more</span>
+                            <!-- 100% 独自デザイン Material 3 カスタムドロップダウン -->
+                            <div class="m3-custom-dropdown" id="custom-mode-dropdown">
+                                <button type="button" class="dropdown-trigger-btn" id="dropdown-trigger">
+                                    <span id="selected-mode-text" class="selected-mode-text">
+                                        <span class="material-symbols-outlined mode-icon">psychology</span> 🧠 自動判別（最速AI最適化）
+                                    </span>
+                                    <span class="material-symbols-outlined dropdown-arrow">expand_more</span>
+                                </button>
+                                <ul class="dropdown-menu-list hidden" id="dropdown-menu-list">
+                                    <li class="dropdown-menu-item selected" data-value="AUTO">
+                                        <span class="material-symbols-outlined">psychology</span>
+                                        <div class="item-text-group">
+                                            <span class="item-title">🧠 自動判別（最速AI最適化）</span>
+                                            <span class="item-desc">ネットワーク環境やファイルサイズを自動解析して最適化</span>
+                                        </div>
+                                        <span class="material-symbols-outlined check-icon">check</span>
+                                    </li>
+                                    <li class="dropdown-menu-item" data-value="LAN_P2P">
+                                        <span class="material-symbols-outlined">bolt</span>
+                                        <div class="item-text-group">
+                                            <span class="item-title">⚡ 同一Wi-Fi / LAN WebRTC P2P</span>
+                                            <span class="item-desc">同一ネットワーク内・サーバー中継なし・回線速度上限（最速）</span>
+                                        </div>
+                                        <span class="material-symbols-outlined check-icon hidden">check</span>
+                                    </li>
+                                    <li class="dropdown-menu-item" data-value="WAN_P2P">
+                                        <span class="material-symbols-outlined">public</span>
+                                        <div class="item-text-group">
+                                            <span class="item-title">🌐 インターネット P2P (STUN)</span>
+                                            <span class="item-desc">別Wi-Fi / 4G / 5G同士のダイレクト高速通信</span>
+                                        </div>
+                                        <span class="material-symbols-outlined check-icon hidden">check</span>
+                                    </li>
+                                    <li class="dropdown-menu-item" data-value="DROPZONE_LOCAL">
+                                        <span class="material-symbols-outlined">laptop_mac</span>
+                                        <div class="item-text-group">
+                                            <span class="item-title">🚀 DropZone PC Bridge (Go Local)</span>
+                                            <span class="item-desc">PCのGoローカルサーバー経由でディスク即時保存</span>
+                                        </div>
+                                        <span class="material-symbols-outlined check-icon hidden">check</span>
+                                    </li>
+                                    <li class="dropdown-menu-item" data-value="CLOUD_RELAY">
+                                        <span class="material-symbols-outlined">cloud</span>
+                                        <div class="item-text-group">
+                                            <span class="item-title">☁️ クラウドストレージリレイ</span>
+                                            <span class="item-desc">オフライン時や厳重プロキシ環境での安全なクラウド保存</span>
+                                        </div>
+                                        <span class="material-symbols-outlined check-icon hidden">check</span>
+                                    </li>
+                                </ul>
                             </div>
                         </div>
 

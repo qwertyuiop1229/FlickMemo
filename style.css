@@ -1179,62 +1179,122 @@ body.is-extension-popup {
     gap: 1rem;
 }
 
-/* ★ Material 3 独自カスタムドロップダウンデザイン */
-.transfer-mode-selector-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-}
-
-.custom-dropdown-label {
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--m3-primary);
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-}
-
-.custom-select-wrapper {
+/* ★ 100% 独自デザイン Material 3 カスタムドロップダウン */
+.m3-custom-dropdown {
     position: relative;
     width: 100%;
 }
 
-.m3-custom-select {
+.dropdown-trigger-btn {
     width: 100%;
-    appearance: none;
-    -webkit-appearance: none;
-    -moz-appearance: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     background: var(--m3-surface-container);
     color: var(--m3-text);
     border: 1px solid var(--m3-border);
     border-radius: var(--m3-radius-md);
-    padding: 0.75rem 2.5rem 0.75rem 1rem;
-    font-size: 0.88rem !important;
+    padding: 0.75rem 1rem;
+    font-size: 0.88rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s var(--m3-motion-curve);
     outline: none;
 }
 
-.m3-custom-select:hover {
+.dropdown-trigger-btn:hover {
     background: var(--m3-surface-hover);
     border-color: var(--m3-primary);
 }
 
-.m3-custom-select:focus {
-    border-color: var(--m3-primary);
-    box-shadow: 0 0 0 2px rgba(168, 199, 250, 0.2);
+.selected-mode-text {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
-.select-arrow {
-    position: absolute;
-    right: 0.8rem;
-    top: 50%;
-    transform: translateY(-50%);
+.dropdown-arrow {
     color: var(--m3-primary);
-    pointer-events: none;
+    transition: transform 0.2s ease;
+}
+
+.m3-custom-dropdown.open .dropdown-arrow {
+    transform: rotate(180deg);
+}
+
+.dropdown-menu-list {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: #1e1f20;
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    list-style: none;
+    z-index: 100;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 0.4rem;
+    backdrop-filter: blur(12px);
+    animation: fadeInDown 0.15s var(--m3-motion-curve);
+}
+
+@keyframes fadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.dropdown-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.7rem 0.8rem;
+    border-radius: var(--m3-radius-sm);
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.dropdown-menu-item:hover {
+    background: var(--m3-surface-hover);
+}
+
+.dropdown-menu-item.selected {
+    background: #042f66;
+    color: var(--m3-primary);
+}
+
+.dropdown-menu-item span.material-symbols-outlined {
     font-size: 20px;
+    color: var(--m3-primary);
+}
+
+.item-text-group {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.item-title {
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.item-desc {
+    font-size: 0.72rem;
+    color: var(--m3-text-muted);
+}
+
+.check-icon {
+    font-size: 18px !important;
+    color: var(--m3-primary) !important;
 }
 
 /* 送信先マイデバイス一覧 */

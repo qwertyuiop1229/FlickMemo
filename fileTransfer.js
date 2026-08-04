@@ -20,6 +20,8 @@ export class FileTransferManager {
         this.receivedSize = 0;
         this.incomingFileInfo = null;
 
+        this.activeListeners = [];
+
         this.initLocalGoServerCheck();
     }
 
@@ -53,14 +55,12 @@ export class FileTransferManager {
             if (res.ok) {
                 const data = await res.json();
                 this.localGoServerUrl = data.url || 'http://localhost:8080';
-                console.log("🚀 DropZone Go Local Server Detected:", this.localGoServerUrl);
             }
         } catch (e) {
             this.localGoServerUrl = null;
         }
     }
 
-    // Googleアカウントに紐づくマイデバイスのオンライン状態を登録・待機
     startDevicePresence() {
         const user = this.auth.currentUser;
         if (!user) return;
@@ -103,30 +103,39 @@ export class FileTransferManager {
         if (!user) return;
         const devRef = ref(this.db, `users/${user.uid}/devices/${this.deviceId}`);
         remove(devRef);
+        this.cleanupPeerConnection();
     }
 
-    // スマート自動判定ロジック (Smart Adaptive Selector)
+    cleanupPeerConnection() {
+        if (this.dataChannel) {
+            try { this.dataChannel.close(); } catch (e) {}
+            this.dataChannel = null;
+        }
+        if (this.peerConnection) {
+            try { this.peerConnection.close(); } catch (e) {}
+            this.peerConnection = null;
+        }
+        this.receiveBuffer = [];
+        this.receivedSize = 0;
+        this.incomingFileInfo = null;
+    }
+
     determineOptimalMode(targetDevice, file) {
         if (this.currentMode !== 'AUTO') {
             return this.currentMode;
         }
-
-        // 1. ローカル Go サーバーが検出されている場合
         if (this.localGoServerUrl && file.size > 50 * 1024 * 1024) {
             return 'DROPZONE_LOCAL';
         }
-
-        // 2. 受信側がオンラインかつ直接P2P可能
         if (targetDevice && targetDevice.online) {
             return 'LAN_P2P';
         }
-
-        // 3. フォールバック: クラウドストレージ転送
         return 'CLOUD_RELAY';
     }
 
-    // WebRTC ピア接続作成
     createPeerConnection(targetDeviceId) {
+        this.cleanupPeerConnection();
+
         const config = {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -146,7 +155,6 @@ export class FileTransferManager {
         };
 
         pc.oniceconnectionstatechange = () => {
-            console.log("ICE Connection State:", pc.iceConnectionState);
             if (pc.iceConnectionState === 'connected') {
                 this.onStatusUpdate('p2p_connected', { targetDeviceId });
             } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
@@ -157,14 +165,12 @@ export class FileTransferManager {
         return pc;
     }
 
-    // 接続開始（送信側）
     async connectToDevice(targetDeviceId) {
         const user = this.auth.currentUser;
         if (!user) throw new Error("ログインしてください");
 
         this.peerConnection = this.createPeerConnection(targetDeviceId);
 
-        // DataChannelの生成
         this.dataChannel = this.peerConnection.createDataChannel("flickmemo_transfer", {
             ordered: true
         });
@@ -174,7 +180,6 @@ export class FileTransferManager {
         const offer = await this.peerConnection.createOffer();
         await this.peerConnection.setLocalDescription(offer);
 
-        // シグナリング情報をFirebaseに書き込み
         const sigRef = ref(this.db, `users/${user.uid}/signaling/${targetDeviceId}`);
         await set(sigRef, {
             fromDeviceId: this.deviceId,
@@ -182,34 +187,41 @@ export class FileTransferManager {
             timestamp: Date.now()
         });
 
-        // Answer の受領待機
+        // ★ Answer受領ハンドラ（重複実行・InvalidStateError防止のガード条件つき）
         const ansRef = ref(this.db, `users/${user.uid}/answers/${this.deviceId}`);
-        onValue(ansRef, async (snapshot) => {
+        const handleAnswerSnapshot = async (snapshot) => {
             const data = snapshot.val();
             if (data && data.answer) {
-                const answer = JSON.parse(data.answer);
-                if (this.peerConnection.signalingState !== 'stable') {
-                    await this.peerConnection.setRemoteDescription(answer);
+                try {
+                    const answer = JSON.parse(data.answer);
+                    if (this.peerConnection && this.peerConnection.signalingState === 'have-local-offer') {
+                        await this.peerConnection.setRemoteDescription(answer);
+                        off(ansRef, 'value', handleAnswerSnapshot);
+                        remove(ansRef);
+                    }
+                } catch (err) {
+                    console.warn("setRemoteDescription skipped:", err.message);
                 }
-                remove(ansRef);
             }
-        });
+        };
+        onValue(ansRef, handleAnswerSnapshot);
 
-        // Candidate の受領待機
+        // Candidate受領ハンドラ
         const candRef = ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`);
-        onValue(candRef, (snapshot) => {
+        const handleCandSnapshot = (snapshot) => {
             const data = snapshot.val() || {};
             Object.values(data).forEach(async (candStr) => {
                 try {
-                    const cand = JSON.parse(candStr);
-                    await this.peerConnection.addIceCandidate(cand);
+                    if (this.peerConnection && this.peerConnection.signalingState !== 'closed') {
+                        const cand = JSON.parse(candStr);
+                        await this.peerConnection.addIceCandidate(cand);
+                    }
                 } catch (e) {}
             });
-            remove(candRef);
-        });
+        };
+        onValue(candRef, handleCandSnapshot);
     }
 
-    // 接続要求受信（受信側）
     async handleIncomingOffer(fromDeviceId, offerStr) {
         const user = this.auth.currentUser;
         if (!user) return;
@@ -233,26 +245,24 @@ export class FileTransferManager {
             timestamp: Date.now()
         });
 
-        // Candidate 待機
         const candRef = ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`);
         onValue(candRef, (snapshot) => {
             const data = snapshot.val() || {};
             Object.values(data).forEach(async (candStr) => {
                 try {
-                    const cand = JSON.parse(candStr);
-                    await this.peerConnection.addIceCandidate(cand);
+                    if (this.peerConnection && this.peerConnection.signalingState !== 'closed') {
+                        const cand = JSON.parse(candStr);
+                        await this.peerConnection.addIceCandidate(cand);
+                    }
                 } catch (e) {}
             });
-            remove(candRef);
         });
     }
 
-    // DataChannel イベント設定
     setupDataChannelHandlers(dc) {
         dc.binaryType = 'arraybuffer';
 
         dc.onopen = () => {
-            console.log("DataChannel Open!");
             this.onStatusUpdate('channel_open');
         };
 
@@ -269,6 +279,7 @@ export class FileTransferManager {
                         const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
                         const safeName = this.sanitizeFilename(this.incomingFileInfo.name);
                         this.onFileReceived(blob, safeName);
+                        // 即時メモリ解放（GC促進）
                         this.receiveBuffer = [];
                         this.receivedSize = 0;
                         this.incomingFileInfo = null;
@@ -285,16 +296,17 @@ export class FileTransferManager {
 
         dc.onclose = () => {
             this.onStatusUpdate('channel_close');
+            this.cleanupPeerConnection();
         };
     }
 
-    // 高速チャンク分割送信 (64KB ArrayBuffer Chunking with LowThreshold Backpressure)
+    // ★ 超節電・超省メモリ (Sub-10MB RAM) ストリーミングスライス送信
     async sendFileP2P(file) {
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-            throw new Error("P2P接続が確立されていません");
+            throw new Error("P2P接続が確立されていません。送信先デバイスを選択してください。");
         }
 
-        const CHUNK_SIZE = 64 * 1024; // 64KB
+        const CHUNK_SIZE = 64 * 1024; // 64KB chunks
         const header = {
             type: 'file_header',
             name: file.name,
@@ -304,37 +316,37 @@ export class FileTransferManager {
 
         this.dataChannel.send(JSON.stringify(header));
 
-        const arrayBuffer = await file.arrayBuffer();
         let offset = 0;
-        const total = arrayBuffer.byteLength;
+        const total = file.size;
 
-        this.dataChannel.bufferedAmountLowThreshold = 256 * 1024; // 256KB
+        this.dataChannel.bufferedAmountLowThreshold = 256 * 1024; // 256KB threshold
 
-        const sendNextChunk = () => {
+        const readAndSendChunk = async () => {
             while (offset < total) {
                 if (this.dataChannel.bufferedAmount > 1024 * 1024) {
-                    // バッファ溢れ防止
-                    this.dataChannel.onbufferedamountlow = () => {
-                        this.dataChannel.onbufferedamountlow = null;
-                        sendNextChunk();
-                    };
-                    return;
+                    // バックプレッシャー（メモリ溢れ完全防止）
+                    await new Promise(resolve => {
+                        this.dataChannel.onbufferedamountlow = () => {
+                            this.dataChannel.onbufferedamountlow = null;
+                            resolve();
+                        };
+                    });
                 }
 
-                const chunk = arrayBuffer.slice(offset, offset + CHUNK_SIZE);
-                this.dataChannel.send(chunk);
-                offset += chunk.byteLength;
+                const slice = file.slice(offset, offset + CHUNK_SIZE);
+                const buffer = await slice.arrayBuffer(); // ★ 全体ではなく 64KB のみメモリ読み込み
+                this.dataChannel.send(buffer);
+
+                offset += buffer.byteLength;
                 this.onProgress(offset, total, file.name, 'send');
             }
 
-            // 送信完了ヘッダー
             this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
         };
 
-        sendNextChunk();
+        await readAndSendChunk();
     }
 
-    // セキュリティ：パス・トラバーサルおよびXSS防止ファイル名サニタイズ
     sanitizeFilename(name) {
         if (!name) return 'download_file';
         let clean = name.replace(/[\/\?%*:|"<>]/g, '_');

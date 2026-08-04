@@ -32,7 +32,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.28";
+const APP_VERSION = "1.1.29";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1287,13 +1287,62 @@ async function startFileSendProcess(files) {
     }
 }
 
-if (transferModeSelect) {
-    transferModeSelect.onchange = () => {
-        if (transferManager) {
-            transferManager.currentMode = transferModeSelect.value;
-            showToast(`送信モードを「${transferModeSelect.options[transferModeSelect.selectedIndex].text}」に変更しました`);
+const btnHeaderTransfer = document.getElementById('btn-header-transfer');
+if (btnHeaderTransfer) {
+    btnHeaderTransfer.onclick = () => {
+        if (tabTransfer) tabTransfer.click();
+    };
+}
+
+// 100% カスタム Material 3 ドロップダウンロジック
+const customDropdown = document.getElementById('custom-mode-dropdown');
+const dropdownTrigger = document.getElementById('dropdown-trigger');
+const dropdownMenuList = document.getElementById('dropdown-menu-list');
+const selectedModeText = document.getElementById('selected-mode-text');
+
+if (dropdownTrigger && dropdownMenuList) {
+    dropdownTrigger.onclick = (e) => {
+        e.stopPropagation();
+        const isOpen = !dropdownMenuList.classList.contains('hidden');
+        if (isOpen) {
+            dropdownMenuList.classList.add('hidden');
+            customDropdown?.classList.remove('open');
+        } else {
+            dropdownMenuList.classList.remove('hidden');
+            customDropdown?.classList.add('open');
         }
     };
+
+    document.addEventListener('click', () => {
+        dropdownMenuList.classList.add('hidden');
+        customDropdown?.classList.remove('open');
+    });
+
+    dropdownMenuList.querySelectorAll('.dropdown-menu-item').forEach(item => {
+        item.onclick = (e) => {
+            e.stopPropagation();
+            const val = item.getAttribute('data-value');
+            const titleText = item.querySelector('.item-title').textContent;
+
+            dropdownMenuList.querySelectorAll('.dropdown-menu-item').forEach(i => {
+                i.classList.remove('selected');
+                const chk = i.querySelector('.check-icon');
+                if (chk) chk.classList.add('hidden');
+            });
+            item.classList.add('selected');
+            const currentChk = item.querySelector('.check-icon');
+            if (currentChk) currentChk.classList.remove('hidden');
+
+            selectedModeText.innerHTML = `<span class="material-symbols-outlined mode-icon">bolt</span> ${escapeHTML(titleText)}`;
+            dropdownMenuList.classList.add('hidden');
+            customDropdown?.classList.remove('open');
+
+            if (transferManager) {
+                transferManager.currentMode = val;
+                showToast(`送信モードを「${titleText}」に変更しました`);
+            }
+        };
+    });
 }
 
 tabNotes.onclick = () => {
@@ -1308,6 +1357,11 @@ tabNotes.onclick = () => {
     noteBody.classList.remove('hidden');
     if (noteTitleInput) noteTitleInput.classList.remove('hidden');
     renderList(searchInput.value);
+
+    // ★ コードブロック表示の復元
+    if (activeNoteId && currentNotes[activeNoteId]) {
+        updateAutoCodeRender(true);
+    }
 };
 
 tabTransfer.onclick = () => {
@@ -1337,6 +1391,11 @@ tabTrash.onclick = () => {
     noteBody.classList.remove('hidden');
     if (noteTitleInput) noteTitleInput.classList.remove('hidden');
     renderList(searchInput.value);
+
+    // ★ ゴミ箱移動時のコードブロック表示の復元
+    if (activeNoteId && currentNotes[activeNoteId]) {
+        updateAutoCodeRender(true);
+    }
 };
 
 btnPin.onclick = () => {
