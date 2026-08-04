@@ -75,9 +75,6 @@
                     <button id="tab-notes" class="tab-btn active">
                         <span class="material-symbols-outlined">description</span> メモ
                     </button>
-                    <button id="tab-transfer" class="tab-btn">
-                        <span class="material-symbols-outlined">send_and_archive</span> ファイル送信
-                    </button>
                     <button id="tab-trash" class="tab-btn">
                         <span class="material-symbols-outlined">delete</span> ゴミ箱
                     </button>
@@ -145,9 +142,15 @@
 
                 <div id="note-code-view" class="m3-code-view hidden"></div>
 
-                <!-- ファイル送信・受信用パネル -->
+                <!-- ファイル送信・受信用全画面パネル -->
                 <div id="transfer-panel" class="transfer-panel hidden">
                     <div class="transfer-header-card">
+                        <div class="transfer-top-bar">
+                            <button id="btn-back-to-notes" class="m3-button btn-secondary-sm">
+                                <span class="material-symbols-outlined">arrow_back</span> メモ一覧に戻る
+                            </button>
+                            <h2><span class="material-symbols-outlined">send_and_archive</span> 最速マルチファイル送信</h2>
+                        </div>
                         <div class="transfer-mode-selector-group">
                             <label class="custom-dropdown-label">
                                 <span class="material-symbols-outlined">bolt</span> 送信モードを選択

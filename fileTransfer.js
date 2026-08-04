@@ -1,4 +1,4 @@
-import { getDatabase, ref, set, push, onValue, off, remove, get } from "firebase/database";
+import { getDatabase, ref, set, push, onValue, off, remove, get, onDisconnect } from "firebase/database";
 
 export class FileTransferManager {
     constructor(auth, db, onStatusUpdate, onFileReceived, onProgress) {
@@ -19,8 +19,7 @@ export class FileTransferManager {
         this.receiveBuffer = [];
         this.receivedSize = 0;
         this.incomingFileInfo = null;
-
-        this.activeListeners = [];
+        this.heartbeatTimer = null;
 
         this.initLocalGoServerCheck();
     }
@@ -66,15 +65,30 @@ export class FileTransferManager {
         if (!user) return;
 
         const devRef = ref(this.db, `users/${user.uid}/devices/${this.deviceId}`);
-        set(devRef, {
-            id: this.deviceId,
-            name: this.deviceName,
-            online: true,
-            updatedAt: Date.now()
-        });
+        const signalingRef = ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`);
+        const answersRef = ref(this.db, `users/${user.uid}/answers/${this.deviceId}`);
+
+        // ★ 切断時（タブ閉鎖・ネット切断・リロード時）の自動削除設定
+        onDisconnect(devRef).remove();
+        onDisconnect(signalingRef).remove();
+        onDisconnect(answersRef).remove();
+
+        const updatePresence = () => {
+            set(devRef, {
+                id: this.deviceId,
+                name: this.deviceName,
+                online: true,
+                updatedAt: Date.now()
+            });
+        };
+
+        updatePresence();
+
+        // 10秒おきの定期ハートビート（生存確認）
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = setInterval(updatePresence, 10000);
 
         // 相手からのシグナリング待機
-        const signalingRef = ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`);
         onValue(signalingRef, (snapshot) => {
             const data = snapshot.val();
             if (data && data.offer) {
@@ -83,15 +97,19 @@ export class FileTransferManager {
             }
         });
 
-        // 同一ユーザーのアクティブデバイス一覧監視
+        // 同一ユーザーのアクティブデバイス一覧監視 (25秒以上更新のないノードは自動除外)
         const allDevicesRef = ref(this.db, `users/${user.uid}/devices`);
         onValue(allDevicesRef, (snapshot) => {
             const data = snapshot.val() || {};
             this.activeDevices = {};
             const now = Date.now();
             Object.keys(data).forEach(id => {
-                if (id !== this.deviceId && (now - (data[id].updatedAt || 0) < 60000)) {
-                    this.activeDevices[id] = data[id];
+                const dev = data[id];
+                if (id !== this.deviceId && dev && (now - (dev.updatedAt || 0) < 25000)) {
+                    this.activeDevices[id] = dev;
+                } else if (dev && (now - (dev.updatedAt || 0) >= 25000)) {
+                    // 古い残存ノードをクリーンアップ
+                    remove(ref(this.db, `users/${user.uid}/devices/${id}`));
                 }
             });
             this.onStatusUpdate('devices_updated', this.activeDevices);
@@ -99,10 +117,18 @@ export class FileTransferManager {
     }
 
     stopDevicePresence() {
+        clearInterval(this.heartbeatTimer);
         const user = this.auth.currentUser;
-        if (!user) return;
-        const devRef = ref(this.db, `users/${user.uid}/devices/${this.deviceId}`);
-        remove(devRef);
+        if (user) {
+            const devRef = ref(this.db, `users/${user.uid}/devices/${this.deviceId}`);
+            const signalingRef = ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`);
+            const answersRef = ref(this.db, `users/${user.uid}/answers/${this.deviceId}`);
+            const candidatesRef = ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`);
+            remove(devRef);
+            remove(signalingRef);
+            remove(answersRef);
+            remove(candidatesRef);
+        }
         this.cleanupPeerConnection();
     }
 
@@ -187,7 +213,6 @@ export class FileTransferManager {
             timestamp: Date.now()
         });
 
-        // ★ Answer受領ハンドラ（重複実行・InvalidStateError防止のガード条件つき）
         const ansRef = ref(this.db, `users/${user.uid}/answers/${this.deviceId}`);
         const handleAnswerSnapshot = async (snapshot) => {
             const data = snapshot.val();
@@ -206,7 +231,6 @@ export class FileTransferManager {
         };
         onValue(ansRef, handleAnswerSnapshot);
 
-        // Candidate受領ハンドラ
         const candRef = ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`);
         const handleCandSnapshot = (snapshot) => {
             const data = snapshot.val() || {};
@@ -300,13 +324,12 @@ export class FileTransferManager {
         };
     }
 
-    // ★ 超節電・超省メモリ (Sub-10MB RAM) ストリーミングスライス送信
     async sendFileP2P(file) {
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
             throw new Error("P2P接続が確立されていません。送信先デバイスを選択してください。");
         }
 
-        const CHUNK_SIZE = 64 * 1024; // 64KB chunks
+        const CHUNK_SIZE = 64 * 1024;
         const header = {
             type: 'file_header',
             name: file.name,
@@ -319,12 +342,11 @@ export class FileTransferManager {
         let offset = 0;
         const total = file.size;
 
-        this.dataChannel.bufferedAmountLowThreshold = 256 * 1024; // 256KB threshold
+        this.dataChannel.bufferedAmountLowThreshold = 256 * 1024;
 
         const readAndSendChunk = async () => {
             while (offset < total) {
                 if (this.dataChannel.bufferedAmount > 1024 * 1024) {
-                    // バックプレッシャー（メモリ溢れ完全防止）
                     await new Promise(resolve => {
                         this.dataChannel.onbufferedamountlow = () => {
                             this.dataChannel.onbufferedamountlow = null;
@@ -334,7 +356,7 @@ export class FileTransferManager {
                 }
 
                 const slice = file.slice(offset, offset + CHUNK_SIZE);
-                const buffer = await slice.arrayBuffer(); // ★ 全体ではなく 64KB のみメモリ読み込み
+                const buffer = await slice.arrayBuffer();
                 this.dataChannel.send(buffer);
 
                 offset += buffer.byteLength;

@@ -1160,6 +1160,26 @@ body.is-extension-popup {
    ファイル送信 (DropZone 統合) & Material 3 カスタムドロップダウン スタイル
    ========================================================================== */
 
+.main-layout.view-transfer .sidebar,
+.main-layout.view-transfer .editor-toolbar,
+.main-layout.view-transfer .m3-title-input,
+.main-layout.view-transfer .m3-text-area,
+.main-layout.view-transfer .m3-code-view {
+    display: none !important;
+}
+
+.main-layout.view-transfer .editor-area {
+    width: 100% !important;
+    position: relative !important;
+    transform: none !important;
+    z-index: 10 !important;
+    padding: 1rem;
+}
+
+.main-layout.view-transfer #transfer-panel {
+    display: flex !important;
+}
+
 .transfer-panel {
     display: flex;
     flex-direction: column;
@@ -1177,6 +1197,42 @@ body.is-extension-popup {
     display: flex;
     flex-direction: column;
     gap: 1rem;
+}
+
+.transfer-top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.8rem;
+    border-bottom: 1px solid var(--m3-border);
+}
+
+.transfer-top-bar h2 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--m3-primary);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.btn-secondary-sm {
+    background: var(--m3-surface-container);
+    color: var(--m3-text);
+    border: 1px solid var(--m3-border);
+    padding: 0.4rem 0.9rem;
+    border-radius: var(--m3-radius-full);
+    font-size: 0.8rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: all 0.2s ease;
+}
+
+.btn-secondary-sm:hover {
+    background: var(--m3-surface-hover);
+    border-color: var(--m3-primary);
 }
 
 /* ★ 100% 独自デザイン Material 3 カスタムドロップダウン */
