@@ -1573,6 +1573,22 @@ body.is-extension-popup {
     animation: pulse 1.5s infinite;
 }
 
+.guest-receiver-banner {
+    background: rgba(43, 114, 219, 0.12);
+    border: 1px dashed var(--m3-primary);
+    border-radius: var(--m3-radius-lg);
+    padding: 1.8rem 1.2rem;
+    text-align: center;
+    color: var(--m3-primary);
+    font-size: 0.88rem;
+    font-weight: 500;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+}
+
 .status-pulse {
     animation: pulse 1.5s infinite;
 }

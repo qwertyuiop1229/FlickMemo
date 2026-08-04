@@ -327,11 +327,18 @@
                             <div class="staged-action-row">
                                 <button id="btn-add-more-files" class="m3-button btn-secondary-sm" type="button">
                                     <span class="material-symbols-outlined">add</span> 追加
-                                </button>
-                                <button id="btn-start-send" class="m3-button btn-primary-sm" type="button">
-                                    <span class="material-symbols-outlined">send</span> 送信開始
-                                </button>
-                            </div>
+                        <!-- ★ ゲストユーザー用 受信専用インフォバナー -->
+                        <div id="guest-receiver-banner" class="guest-receiver-banner hidden">
+                            <span class="material-symbols-outlined status-pulse">downloading</span>
+                            <span>ゲストモード（ファイル受信専用）: 相手端末からのファイル送信を待機中...</span>
+                        </div>
+
+                        <!-- ★ 受信・送信履歴（接続後画面へ配置） -->
+                        <div class="transfers-history-card">
+                            <h4><span class="material-symbols-outlined">history</span> 受信・送信履歴</h4>
+                            <ul id="transfer-history-list" class="transfer-history-list">
+                                <li class="empty-history">履歴はありません</li>
+                            </ul>
                         </div>
                     </div>
 
@@ -347,13 +354,6 @@
                             <span id="transfer-status-label">転送中...</span>
                             <span id="transfer-percent">0%</span>
                         </div>
-                    </div>
-
-                    <div class="transfers-history-card">
-                        <h4><span class="material-symbols-outlined">history</span> 受信・送信履歴</h4>
-                        <ul id="transfer-history-list" class="transfer-history-list">
-                            <li class="empty-history">履歴はありません</li>
-                        </ul>
                     </div>
                 </div>
             </main>
@@ -442,11 +442,14 @@
 
                         <div class="setting-item-box" style="margin-top:1rem;">
                             <div class="setting-text">
-                                <div class="setting-label">サインアウト</div>
-                                <div class="setting-desc">このデバイスからログアウトします</div>
+                                <div id="settings-account-label" class="setting-label">サインアウト</div>
+                                <div id="settings-account-desc" class="setting-desc">このデバイスからログアウトします</div>
                             </div>
                             <button id="btn-settings-logout-action" class="m3-button btn-danger-sm">
                                 <span class="material-symbols-outlined" style="font-size:16px;">logout</span> ログアウト
+                            </button>
+                            <button id="btn-settings-login-action" class="m3-button btn-primary-sm hidden">
+                                <span class="material-symbols-outlined" style="font-size:16px;">login</span> Googleでログイン
                             </button>
                         </div>
                     </div>

@@ -35,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.20";
+const APP_VERSION = "1.3.22";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1193,8 +1193,35 @@ const transferStepSession = document.getElementById('transfer-step-session');
 const sessionDeviceName = document.getElementById('session-device-name');
 const btnDisconnectSession = document.getElementById('btn-disconnect-session');
 const transferLockBanner = document.getElementById('transfer-lock-banner');
+const guestReceiverBanner = document.getElementById('guest-receiver-banner');
+const targetSegmentedTabs = document.querySelector('.target-segmented-tabs');
+const roomSectionBoxFirst = document.querySelector('.room-section-box:first-child');
+const roomDividerBadge = document.querySelector('.room-divider-badge');
+const btnSettingsLoginAction = document.getElementById('btn-settings-login-action');
+
+function applyGuestUIRestrictions() {
+    if (isGuestMode) {
+        if (targetSegmentedTabs) targetSegmentedTabs.classList.add('hidden');
+        if (targetPanelDevices) targetPanelDevices.classList.add('hidden');
+        if (targetPanelRoom) targetPanelRoom.classList.remove('hidden');
+        if (roomSectionBoxFirst) roomSectionBoxFirst.classList.add('hidden');
+        if (roomDividerBadge) roomDividerBadge.classList.add('hidden');
+
+        if (dropzoneArea) dropzoneArea.classList.add('hidden');
+        if (stagedFilesCard) stagedFilesCard.classList.add('hidden');
+        if (guestReceiverBanner) guestReceiverBanner.classList.remove('hidden');
+    } else {
+        if (targetSegmentedTabs) targetSegmentedTabs.classList.remove('hidden');
+        if (roomSectionBoxFirst) roomSectionBoxFirst.classList.remove('hidden');
+        if (roomDividerBadge) roomDividerBadge.classList.remove('hidden');
+
+        if (dropzoneArea) dropzoneArea.classList.remove('hidden');
+        if (guestReceiverBanner) guestReceiverBanner.classList.add('hidden');
+    }
+}
 
 function updateTransferSteps(isConnected, devName) {
+    applyGuestUIRestrictions();
     if (isConnected) {
         transferStepConnect?.classList.add('hidden');
         transferStepSession?.classList.remove('hidden');
@@ -1353,6 +1380,10 @@ function renderStagedFilesUI() {
 
 function stageFiles(files) {
     if (!files || files.length === 0) return;
+    if (isGuestMode) {
+        showToast("ゲストモードではファイル送信はできません（受信専用）");
+        return;
+    }
     Array.from(files).forEach(f => stagedFilesQueue.push(f));
     renderStagedFilesUI();
     showToast(`${files.length} 件のファイルを送信リストに追加しました`);
@@ -1404,6 +1435,10 @@ if (btnClearStaged) {
 
 if (btnStartSend) {
     btnStartSend.onclick = async () => {
+        if (isGuestMode) {
+            showToast("ゲストモードではファイル送信はできません（受信専用）");
+            return;
+        }
         if (stagedFilesQueue.length === 0) {
             showToast("送信するファイルを選択してください");
             return;
@@ -1457,6 +1492,7 @@ if (btnStartSend) {
 
 function openTransferView() {
     currentTab = 'transfer';
+    applyGuestUIRestrictions();
     if (mainLayout) mainLayout.classList.add('view-transfer');
     if (transferPanel) transferPanel.classList.remove('hidden');
     tabNotes?.classList.remove('active');
@@ -1799,9 +1835,50 @@ document.querySelectorAll('.settings-tab-btn').forEach(btn => {
 
 btnSettingsTrigger.onclick = () => {
     renderAppVersion();
+
+    // ゲストモード: 設定モーダル内のUI切り替え
+    const settingsNavAccount = document.querySelector('.settings-nav .settings-tab-btn[data-tab="account"]');
+    const settingsNavSystem = document.querySelector('.settings-nav .settings-tab-btn[data-tab="system"]');
+    const accountLabel = document.getElementById('settings-account-label');
+    const accountDesc = document.getElementById('settings-account-desc');
+    const btnLogout = document.getElementById('btn-settings-logout-action');
+    const btnLogin = document.getElementById('btn-settings-login-action');
+
+    if (isGuestMode) {
+        // ゲスト: アカウントタブのラベルをログインに変更、ログアウトボタン非表示
+        if (accountLabel) accountLabel.textContent = 'Googleアカウントでログイン';
+        if (accountDesc) accountDesc.textContent = 'ログインするとメモの同期やデバイス間転送が利用できます';
+        if (btnLogout) btnLogout.classList.add('hidden');
+        if (btnLogin) btnLogin.classList.remove('hidden');
+        // ゲストは「一般・同期」タブも非表示
+        if (settingsNavSystem) settingsNavSystem.classList.add('hidden');
+        // アカウントタブをアクティブにリセット
+        if (settingsNavAccount) settingsNavAccount.click();
+    } else {
+        if (accountLabel) accountLabel.textContent = 'サインアウト';
+        if (accountDesc) accountDesc.textContent = 'このデバイスからログアウトします';
+        if (btnLogout) btnLogout.classList.remove('hidden');
+        if (btnLogin) btnLogin.classList.add('hidden');
+        if (settingsNavSystem) settingsNavSystem.classList.remove('hidden');
+    }
+
     settingsModal.classList.remove('hidden');
 };
 btnSettingsClose.onclick = () => settingsModal.classList.add('hidden');
+
+// 設定内ログイン → Google ログインページへ
+if (btnSettingsLoginAction) {
+    btnSettingsLoginAction.onclick = () => {
+        settingsModal.classList.add('hidden');
+        // ゲストモードを解除してログイン画面へ
+        isGuestMode = false;
+        if (transferManager) transferManager.isGuestMode = false;
+        authContainer.classList.remove('hidden');
+        appContainer.classList.add('hidden');
+        authLoading.classList.add('hidden');
+        authButtons.classList.remove('hidden');
+    };
+}
 
 btnSettingsLogoutAction.onclick = () => {
     settingsModal.classList.add('hidden');
