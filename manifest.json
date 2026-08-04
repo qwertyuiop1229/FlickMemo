@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "FlickMemo - 超軽量リアルタイムメモ帳",
-    "version": "1.3.12",
+    "version": "1.3.14",
     "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
     "action": {
         "default_title": "FlickMemoをサイドパネルで開く"

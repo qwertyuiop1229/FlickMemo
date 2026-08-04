@@ -1,0 +1,21 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "public_rooms": {
+      "$roomId": {
+        ".read": true,
+        ".write": true,
+        "members": {
+          "$deviceId": {
+            ".validate": "newData.hasChildren(['id', 'name', 'joinedAt'])"
+          }
+        }
+      }
+    }
+  }
+}

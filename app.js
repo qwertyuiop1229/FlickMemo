@@ -35,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.12";
+const APP_VERSION = "1.3.14";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1173,6 +1173,21 @@ function renderDeviceChips(devices) {
     });
 }
 
+let autoDismissProgressTimer = null;
+
+function clearTransferHistoryUI() {
+    if (!transferHistoryList) return;
+    transferHistoryList.innerHTML = '<li class="empty-history">履歴はありません</li>';
+}
+
+function scheduleProgressAutoDismiss() {
+    if (autoDismissProgressTimer) clearTimeout(autoDismissProgressTimer);
+    autoDismissProgressTimer = setTimeout(() => {
+        if (transferProgressCard) transferProgressCard.classList.add('hidden');
+        clearTransferHistoryUI();
+    }, 3000);
+}
+
 function handleTransferStatus(event, data) {
     if (event === 'devices_updated') {
         renderDeviceChips(data);
@@ -1187,6 +1202,7 @@ function handleTransferStatus(event, data) {
         selectedTargetDeviceId = null;
         if (transferManager) renderDeviceChips(transferManager.activeDevices);
         showToast("P2P接続が切断されました");
+        scheduleProgressAutoDismiss();
     } else if (event === 'p2p_connected') {
         showToast("デバイス間P2P直接接続が確立しました");
     }
@@ -1204,11 +1220,12 @@ function handleFileReceived(blob, filename) {
 
     showToast(`ファイル「${filename}」を受信・保存しました`);
     addTransferHistory(filename, blob.size, '受信');
-    if (transferProgressCard) transferProgressCard.classList.add('hidden');
+    scheduleProgressAutoDismiss();
 }
 
 function handleTransferProgress(bytes, total, name, direction) {
     if (!transferProgressCard) return;
+    if (autoDismissProgressTimer) clearTimeout(autoDismissProgressTimer);
     transferProgressCard.classList.remove('hidden');
     transferFilename.textContent = `${direction === 'send' ? '送信:' : '受信:'} ${name}`;
 
@@ -1225,6 +1242,10 @@ function handleTransferProgress(bytes, total, name, direction) {
     }
 
     transferStatusLabel.textContent = percent >= 100 ? "完了" : `${(bytes / (1024 * 1024)).toFixed(1)} / ${(total / (1024 * 1024)).toFixed(1)} MB`;
+
+    if (percent >= 100) {
+        scheduleProgressAutoDismiss();
+    }
 }
 
 function addTransferHistory(name, size, type) {
