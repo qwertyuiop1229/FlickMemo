@@ -808,10 +808,19 @@ export class FileTransferManager {
         this.cleanupPeerConnection();
     }
 
+    resetReceiveBuffer() {
+        if (this.receiveBuffer) {
+            this.receiveBuffer.length = 0; // メモリを明示的に即時解放 (iOS Safari/PWA 対策)
+        }
+        this.receiveBuffer = [];
+        this.receivedSize = 0;
+        this.incomingFileInfo = null;
+    }
+
     cleanupPeerConnection() {
         this._connectingTo = null;
+        this.resetReceiveBuffer();
         if (this.dataChannel) {
-            // oncloseを先にnullにして、明示的クリーンアップ時のイベント誤発火を防ぐ
             this.dataChannel.onclose = null;
             this.dataChannel.onmessage = null;
             try { this.dataChannel.close(); } catch (e) {}
@@ -824,9 +833,6 @@ export class FileTransferManager {
             try { this.peerConnection.close(); } catch (e) {}
             this.peerConnection = null;
         }
-        this.receiveBuffer = [];
-        this.receivedSize = 0;
-        this.incomingFileInfo = null;
     }
 
     determineOptimalMode(targetDevice, file) {
@@ -839,16 +845,23 @@ export class FileTransferManager {
         return 'WAN_P2P';
     }
 
-    createPeerConnection(targetDeviceId, basePath) {
+    createPeerConnection(targetDeviceId, basePath, mode = 'AUTO') {
         this.cleanupPeerConnection();
 
-        const config = {
-            iceServers: [
+        // モード別ネットワーク制御アルゴリズム
+        let iceServers = [];
+        if (mode === 'LAN_P2P') {
+            // LAN限定モード: STUNを使わず完全ローカル(mDNS/プライベートIP)のみで接続
+            iceServers = [];
+        } else {
+            // WAN / AUTO モード: Google STUNで別ネットワーク間のP2P接続を確立
+            iceServers = [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-        };
+            ];
+        }
 
+        const config = { iceServers };
         const pc = new RTCPeerConnection(config);
 
         pc.onicecandidate = (event) => {
@@ -878,7 +891,7 @@ export class FileTransferManager {
 
         if (!basePath) throw new Error("通信パスの初期化に失敗しました。送信権限がありません。");
 
-        this.peerConnection = this.createPeerConnection(targetDeviceId, basePath);
+        this.peerConnection = this.createPeerConnection(targetDeviceId, basePath, this.currentMode);
         this.dataChannel = this.peerConnection.createDataChannel("flickmemo_transfer", { ordered: true });
         this.setupDataChannelHandlers(this.dataChannel);
 
@@ -926,7 +939,7 @@ export class FileTransferManager {
 
     async handleIncomingOffer(fromDeviceId, offerStr, basePath) {
         const offer = JSON.parse(offerStr);
-        this.peerConnection = this.createPeerConnection(fromDeviceId, basePath);
+        this.peerConnection = this.createPeerConnection(fromDeviceId, basePath, this.currentMode);
 
         this.peerConnection.ondatachannel = (event) => {
             this.dataChannel = event.channel;
@@ -977,10 +990,9 @@ export class FileTransferManager {
                     } else if (meta.type === 'file_end') {
                         const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
                         const safeName = this.sanitizeFilename(this.incomingFileInfo.name);
-                        this.onFileReceived(blob, safeName);
-                        this.receiveBuffer = [];
-                        this.receivedSize = 0;
-                        this.incomingFileInfo = null;
+                        const actualMode = this.incomingFileInfo.mode || 'LAN_P2P';
+                        this.onFileReceived(blob, safeName, actualMode);
+                        this.resetReceiveBuffer();
                         this.onStatusUpdate('remote_transfer_lock', false);
                     } else if (meta.type === 'TRANSFER_LOCK') {
                         this.onStatusUpdate('remote_transfer_lock', true);
@@ -1022,7 +1034,7 @@ export class FileTransferManager {
         this.onStatusUpdate('p2p_disconnected');
     }
 
-    async sendFileP2P(file) {
+    async sendFileP2P(file, transferMode) {
         if (this.isGuestMode || !this.auth?.currentUser) {
             throw new Error("ファイルを送信するにはGoogleアカウントでのログインが必要です（ゲストは受信のみ利用可能）。");
         }
@@ -1039,7 +1051,8 @@ export class FileTransferManager {
                 type: 'file_header',
                 name: file.name,
                 size: file.size,
-                mime: file.type || 'application/octet-stream'
+                mime: file.type || 'application/octet-stream',
+                mode: transferMode || this.currentMode || 'LAN_P2P'
             };
 
             this.dataChannel.send(JSON.stringify(header));
@@ -1089,7 +1102,7 @@ export class FileTransferManager {
 <file path="package.json">
 {
     "name": "flickmemo",
-    "version": "1.3.38",
+    "version": "1.3.40",
     "type": "module",
     "scripts": {
         "dev": "vite",
@@ -1111,7 +1124,7 @@ export class FileTransferManager {
 {
     "manifest_version": 3,
     "name": "FlickMemo - 超軽量リアルタイムメモ帳",
-    "version": "1.3.38",
+    "version": "1.3.40",
     "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
     "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnZtcft/HI0gK+ZL3h8hCeiVEXsRDwORbrpMDFOlk+AbfB2I7qX8BGU4HBXkh+BmJnRYeRyNG6LZN7TqQN52Pa4jmqeLDB+BUBTlalQUH7KbPxHRGXLiY+1Vf7+utGESY5XsEgGxu/xbs/RVnBirJEuOeo4Llz8Y2D/NbndjkLF9nnUU3lpchzVb6aoa8BbkmlBSN8hG07l7ojR4xajsLUmDlQl2EkimVHFiOIIlQZ5wRYcTjI6T+Ex2rupB0ZU0raCoy3aNloLlxLBjEg/11sNBSstxshd5p6hdb65StYTNgfJmbg6lCte7EYSs3cRSaglQrudtRQtSgK8pk0NqNDwIDAQAB",
     "action": {
@@ -1354,14 +1367,7 @@ export class FileTransferManager {
                                         </div>
                                         <span class="material-symbols-outlined check-icon hidden">check</span>
                                     </li>
-                                    <li class="dropdown-menu-item" data-value="CLOUD_RELAY">
-                                        <span class="material-symbols-outlined">cloud</span>
-                                        <div class="item-text-group">
-                                            <span class="item-title">クラウドストレージリレイ</span>
-                                            <span class="item-desc">オフライン時や厳重プロキシ環境での安全なクラウド保存</span>
-                                        </div>
-                                        <span class="material-symbols-outlined check-icon hidden">check</span>
-                                    </li>
+                                    
                                 </ul>
                             </div>
                         </div>
@@ -3837,7 +3843,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.38";
+const APP_VERSION = "1.3.40";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -5064,6 +5070,8 @@ function handleTransferStatus(event, data) {
     } else if (event === 'channel_open') {
         showToast("P2P転送チャネルが開きました（接続完了）");
         const devName = selectedTargetDeviceId && transferManager?.activeDevices[selectedTargetDeviceId]?.name;
+        settingsModal?.classList.add('hidden'); // 設定モーダルが開いていれば閉じる
+        openTransferView(); // 自動的にファイル送信画面に遷移
         updateTransferSteps(true, devName);
     } else if (event === 'channel_close' || event === 'p2p_disconnected') {
         selectedTargetDeviceId = null;
@@ -5087,7 +5095,7 @@ function handleTransferStatus(event, data) {
     }
 }
 
-function handleFileReceived(blob, filename) {
+function handleFileReceived(blob, filename, mode) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -5095,10 +5103,11 @@ function handleFileReceived(blob, filename) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
 
     showToast(`ファイル「${filename}」を受信・保存しました`);
-    addTransferHistory(filename, blob.size, '受信', transferManager?.currentMode || 'LAN_P2P');
+    addTransferHistory(filename, blob.size, '受信', mode || 'LAN_P2P');
+    setTransferUILock(false);
     scheduleProgressAutoDismiss();
 }
 
@@ -5137,10 +5146,7 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P') {
     if (mode === 'WAN_P2P') {
         modeText = 'ネット (P2P)';
         modeIcon = 'public';
-    } else if (mode === 'CLOUD_RELAY') {
-        modeText = 'クラウド中継';
-        modeIcon = 'cloud';
-    } else if (mode === 'LAN_P2P') {
+    } else {
         modeText = '同一Wi-Fi (P2P)';
         modeIcon = 'bolt';
     }
@@ -5263,6 +5269,35 @@ if (btnClearStaged) {
     };
 }
 
+let isTransferring = false;
+
+function setTransferUILock(isLocked) {
+    isTransferring = isLocked;
+    const elementsToLock = [
+        dropzoneArea,
+        fileInput,
+        btnBrowseFiles,
+        btnClearStaged,
+        btnAddMoreFiles,
+        btnStartSend,
+        btnDisconnectSession,
+        btnLeaveRoom,
+        btnCreateRoom,
+        btnJoinRoom
+    ];
+
+    elementsToLock.forEach(el => {
+        if (el) {
+            if (el.tagName === 'BUTTON' || el.tagName === 'INPUT') {
+                el.disabled = isLocked;
+            } else {
+                el.style.pointerEvents = isLocked ? 'none' : 'auto';
+                el.style.opacity = isLocked ? '0.6' : '1';
+            }
+        }
+    });
+}
+
 if (btnStartSend) {
     btnStartSend.onclick = async () => {
         if (isGuestMode) {
@@ -5280,6 +5315,7 @@ if (btnStartSend) {
         }
 
         let fileToSend = null;
+        setTransferUILock(true); // 送信中の UI 操作をロック
 
         try {
             if (stagedFilesQueue.length === 1) {
@@ -5306,7 +5342,7 @@ if (btnStartSend) {
 
             showToast(`モード [${mode}] で「${fileToSend.name}」の送信を開始します...`);
 
-            await transferManager.sendFileP2P(fileToSend);
+            await transferManager.sendFileP2P(fileToSend, mode);
 
             addTransferHistory(fileToSend.name, fileToSend.size, '送信', mode);
             showToast(`✅ 「${fileToSend.name}」の送信が完了しました！`);
@@ -5316,6 +5352,8 @@ if (btnStartSend) {
         } catch (err) {
             console.error("Send Error:", err);
             showToast("送信失敗: " + (err.message || "接続を確認してください"));
+        } finally {
+            setTransferUILock(false); // UI ロック解除
         }
     };
 }
@@ -5327,7 +5365,11 @@ function openTransferView() {
     applyGuestUIRestrictions();
     if (mainLayout) mainLayout.classList.add('view-transfer');
     if (transferPanel) transferPanel.classList.remove('hidden');
+
+    // 矢印が二重表示（2つ）にならないよう、一覧に戻る矢印を隠して送信画面用の矢印のみ1つ表示
+    if (btnBack) btnBack.classList.add('hidden');
     if (btnBackTransfer) btnBackTransfer.classList.remove('hidden');
+
     tabNotes?.classList.remove('active');
     tabTrash?.classList.remove('active');
     if (dateDisplay) dateDisplay.classList.add('hidden');
@@ -5337,7 +5379,17 @@ function openTransferView() {
 function openNotesView() {
     currentTab = 'notes';
     if (mainLayout) mainLayout.classList.remove('view-transfer');
+
+    // ファイル送信用の戻る矢印を非表示
     if (btnBackTransfer) btnBackTransfer.classList.add('hidden');
+
+    // モバイル画面かつエディタ閲覧中の場合のみ「一覧に戻る」矢印を復元
+    if (window.innerWidth <= 768 && mainLayout?.classList.contains('view-editor')) {
+        if (btnBack) btnBack.classList.remove('hidden');
+    } else {
+        if (btnBack) btnBack.classList.add('hidden');
+    }
+
     tabNotes?.classList.add('active');
     tabTrash?.classList.remove('active');
     btnNew?.classList.remove('hidden');
@@ -5482,14 +5534,18 @@ if (btnCreateRoom) {
         const tm = ensureTransferManager();
         if (!tm) return;
         const newRoomId = 'rm_' + Math.random().toString(36).substring(2, 8);
+        const randomKey = Array.from(window.crypto.getRandomValues(new Uint8Array(16)))
+            .map(b => b.toString(16).padStart(2, '0')).join('');
+
         tm.joinRoom(newRoomId);
         updateRoomUI(newRoomId);
 
-        const shareUrl = `${window.location.origin}${window.location.pathname}?room=${newRoomId}`;
+        // クライアントローカルで処理される #key (ハッシュ) で E2EE 暗号化鍵を共有
+        const shareUrl = `${window.location.origin}${window.location.pathname}?room=${newRoomId}#key=${randomKey}`;
         navigator.clipboard.writeText(shareUrl).then(() => {
-            showToast(`ルーム ${newRoomId} を作成し共有URLをコピーしました！`);
+            showToast(`【E2EE暗号化】共有URL（鍵付き）をコピーしました！`);
         }).catch(() => {
-            showToast(`ルーム ${newRoomId} を作成しました。URL: ${shareUrl}`);
+            showToast(`共有URLを作成しました`);
         });
     };
 }
@@ -5745,9 +5801,15 @@ if (btnSettingsSwitchAction) {
                     });
                 });
             }
-            forceAccountSelect = true;
             await signOut(auth);
-            showToast("キャッシュをクリアしてログアウトしました。「Googleでログイン」を押すとアカウントが再選択できます。");
+            showToast("アカウントを切替中... Googleログイン画面を開きます");
+
+            // アプリのログイン画面で止まらず、そのままダイレクトにGoogleログイン（アカウント選択）を自動起動
+            setTimeout(() => {
+                const googleProvider = new GoogleAuthProvider();
+                googleProvider.setCustomParameters({ prompt: 'select_account' });
+                loginWithProvider(googleProvider);
+            }, 300);
         } catch (err) {
             console.error("Account switch error:", err);
             showToast("切り替え準備に失敗しました: " + (err.message || ""));
@@ -5803,67 +5865,48 @@ async function loginWithProvider(provider) {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
-        if (provider) {
-            provider.setCustomParameters({ prompt: 'select_account' });
+        if (!provider) {
+            provider = new GoogleAuthProvider();
         }
+        provider.setCustomParameters({ prompt: 'select_account' });
 
         const ua = navigator.userAgent;
         const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
 
         // ── Chrome 拡張機能（サイドパネル）環境 ──────────────────────────────
-        if (typeof chrome !== 'undefined' && chrome?.runtime?.id && chrome?.identity) {
-            if (forceAccountSelect && chrome.identity.launchWebAuthFlow) {
-                forceAccountSelect = false;
-                const clientId = "998795111125-0or2js8p7848ht26va94deqhphtrv2o1.apps.googleusercontent.com";
-                const redirectUri = chrome.identity.getRedirectURL();
-                const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&response_type=token&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent('email profile openid')}&prompt=select_account`;
-
-                await new Promise((resolve, reject) => {
-                    chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true }, async (responseUrl) => {
-                        if (chrome.runtime.lastError || !responseUrl) {
-                            reject(new Error(chrome.runtime.lastError?.message || 'アカウント選択がキャンセルされました'));
-                            return;
-                        }
-                        try {
-                            const params = new URLSearchParams(new URL(responseUrl).hash.substring(1));
-                            const accessToken = params.get('access_token');
-                            const idToken = params.get('id_token');
-                            if (!accessToken && !idToken) throw new Error('トークンの取得に失敗しました');
-                            const credential = GoogleAuthProvider.credential(idToken, accessToken);
-                            await setPersistence(auth, browserLocalPersistence);
-                            await signInWithCredential(auth, credential);
-                            resolve();
-                        } catch (err) {
-                            reject(err);
-                        }
-                    });
-                });
-                return;
-            }
-
+        if (typeof chrome !== 'undefined' && chrome?.runtime?.id && chrome?.identity?.getAuthToken) {
             await new Promise((resolve, reject) => {
-                chrome.identity.getAuthToken({ interactive: true }, async (token) => {
-                    if (chrome.runtime.lastError || !token) {
-                        const errMsg = chrome.runtime.lastError?.message || 'Googleトークンの取得に失敗しました';
-                        console.error('chrome.identity.getAuthToken error:', errMsg);
-                        reject(new Error(errMsg));
-                        return;
-                    }
+                // キャッシュトークンがあれば事前にクリアしてアカウント選択画面を確実に発火
+                chrome.identity.getAuthToken({ interactive: false }, (existingToken) => {
+                    const proceedGetToken = () => {
+                        chrome.identity.getAuthToken({ interactive: true }, async (token) => {
+                            if (chrome.runtime.lastError || !token) {
+                                const errMsg = chrome.runtime.lastError?.message || 'Googleトークンの取得に失敗しました';
+                                console.error('chrome.identity.getAuthToken error:', errMsg);
+                                reject(new Error(errMsg));
+                                return;
+                            }
 
-                    try {
-                        const credential = GoogleAuthProvider.credential(null, token);
-                        await setPersistence(auth, browserLocalPersistence);
-                        await signInWithCredential(auth, credential);
-                        resolve();
-                    } catch (err) {
-                        console.error('signInWithCredential error:', err);
-                        if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-token-expired') {
-                            chrome.identity.removeCachedAuthToken({ token }, () => {
-                                console.log('キャッシュされたトークンを削除しました。再度ログインしてください。');
-                            });
-                        }
-                        reject(err);
+                            try {
+                                const credential = GoogleAuthProvider.credential(null, token);
+                                await setPersistence(auth, browserLocalPersistence);
+                                await signInWithCredential(auth, credential);
+                                resolve();
+                            } catch (err) {
+                                console.error('signInWithCredential error:', err);
+                                if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-token-expired') {
+                                    chrome.identity.removeCachedAuthToken({ token }, () => {});
+                                }
+                                reject(err);
+                            }
+                        });
+                    };
+
+                    if (existingToken) {
+                        chrome.identity.removeCachedAuthToken({ token: existingToken }, proceedGetToken);
+                    } else {
+                        proceedGetToken();
                     }
                 });
             });

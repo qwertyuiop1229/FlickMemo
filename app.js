@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.40";
+const APP_VERSION = "1.3.41";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1337,10 +1337,7 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P') {
     if (mode === 'WAN_P2P') {
         modeText = 'ネット (P2P)';
         modeIcon = 'public';
-    } else if (mode === 'CLOUD_RELAY') {
-        modeText = 'クラウド中継';
-        modeIcon = 'cloud';
-    } else if (mode === 'LAN_P2P') {
+    } else {
         modeText = '同一Wi-Fi (P2P)';
         modeIcon = 'bolt';
     }

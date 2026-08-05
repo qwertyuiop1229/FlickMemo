@@ -280,16 +280,23 @@ export class FileTransferManager {
         return 'WAN_P2P';
     }
 
-    createPeerConnection(targetDeviceId, basePath) {
+    createPeerConnection(targetDeviceId, basePath, mode = 'AUTO') {
         this.cleanupPeerConnection();
 
-        const config = {
-            iceServers: [
+        // モード別ネットワーク制御アルゴリズム
+        let iceServers = [];
+        if (mode === 'LAN_P2P') {
+            // LAN限定モード: STUNを使わず完全ローカル(mDNS/プライベートIP)のみで接続
+            iceServers = [];
+        } else {
+            // WAN / AUTO モード: Google STUNで別ネットワーク間のP2P接続を確立
+            iceServers = [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-        };
+            ];
+        }
 
+        const config = { iceServers };
         const pc = new RTCPeerConnection(config);
 
         pc.onicecandidate = (event) => {
@@ -303,7 +310,11 @@ export class FileTransferManager {
             if (pc.iceConnectionState === 'connected') {
                 this.cleanupSignalingData(basePath, targetDeviceId);
                 this.onStatusUpdate('p2p_connected', { targetDeviceId });
-            } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+            } else if (pc.iceConnectionState === 'failed') {
+                this.cleanupSignalingData(basePath, targetDeviceId);
+                console.warn("P2P接続が遮断されました。Zero-Storage WebSocketリレイへフォールバックします。");
+                this.initWebSocketRelayFallback(targetDeviceId, basePath);
+            } else if (pc.iceConnectionState === 'disconnected') {
                 this.cleanupSignalingData(basePath, targetDeviceId);
                 this.onStatusUpdate('p2p_disconnected', { targetDeviceId });
             }
@@ -319,7 +330,7 @@ export class FileTransferManager {
 
         if (!basePath) throw new Error("通信パスの初期化に失敗しました。送信権限がありません。");
 
-        this.peerConnection = this.createPeerConnection(targetDeviceId, basePath);
+        this.peerConnection = this.createPeerConnection(targetDeviceId, basePath, this.currentMode);
         this.dataChannel = this.peerConnection.createDataChannel("flickmemo_transfer", { ordered: true });
         this.setupDataChannelHandlers(this.dataChannel);
 
@@ -367,7 +378,7 @@ export class FileTransferManager {
 
     async handleIncomingOffer(fromDeviceId, offerStr, basePath) {
         const offer = JSON.parse(offerStr);
-        this.peerConnection = this.createPeerConnection(fromDeviceId, basePath);
+        this.peerConnection = this.createPeerConnection(fromDeviceId, basePath, this.currentMode);
 
         this.peerConnection.ondatachannel = (event) => {
             this.dataChannel = event.channel;
@@ -462,19 +473,64 @@ export class FileTransferManager {
         this.onStatusUpdate('p2p_disconnected');
     }
 
+    // P2P 接続不可環境向け Zero-Storage WebSocket パイプリレイ
+    initWebSocketRelayFallback(targetDeviceId, basePath) {
+        if (this.wsRelay) return;
+        try {
+            // 無料標準 HTTPS (443番ポート) パイプソケット
+            const relayUrl = `wss://relay.websocket.org/?room=${this.deviceId}_${targetDeviceId}`;
+            this.wsRelay = new WebSocket(relayUrl);
+            this.wsRelay.binaryType = 'arraybuffer';
+
+            this.wsRelay.onopen = () => {
+                this.isRelayMode = true;
+                this.onStatusUpdate('p2p_connected', { targetDeviceId, isRelay: true });
+            };
+
+            this.wsRelay.onmessage = async (e) => {
+                if (typeof e.data === 'string') {
+                    const meta = JSON.parse(e.data);
+                    if (meta.type === 'file_header') {
+                        this.incomingFileInfo = meta;
+                        this.resetReceiveBuffer();
+                        this.onProgress(0, meta.size, meta.name, 'rec');
+                    } else if (meta.type === 'file_end') {
+                        const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
+                        const safeName = this.sanitizeFilename(this.incomingFileInfo.name);
+                        this.onFileReceived(blob, safeName, 'WAN_P2P');
+                        this.resetReceiveBuffer();
+                    }
+                } else if (e.data instanceof ArrayBuffer) {
+                    const decrypted = await this.decryptChunk(e.data);
+                    this.receiveBuffer.push(decrypted);
+                    this.receivedSize += decrypted.byteLength;
+                    if (this.incomingFileInfo) {
+                        this.onProgress(this.receivedSize, this.incomingFileInfo.size, this.incomingFileInfo.name, 'rec');
+                    }
+                }
+            };
+        } catch (err) {
+            console.error("Relay Fallback Error:", err);
+        }
+    }
+
     async sendFileP2P(file, transferMode) {
         if (this.isGuestMode || !this.auth?.currentUser) {
             throw new Error("ファイルを送信するにはGoogleアカウントでのログインが必要です（ゲストは受信のみ利用可能）。");
         }
 
-        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-            throw new Error("P2P接続が確立されていません。送信先デバイスを選択してください。");
+        const isP2POpen = this.dataChannel && this.dataChannel.readyState === 'open';
+        const isRelayOpen = this.wsRelay && this.wsRelay.readyState === WebSocket.OPEN;
+
+        if (!isP2POpen && !isRelayOpen) {
+            throw new Error("接続が確立されていません。送信先デバイスを選択してください。");
         }
 
         this.sendControlMessage({ type: 'TRANSFER_LOCK' });
 
         try {
-            const CHUNK_SIZE = 64 * 1024;
+            // 最速化アルゴリズム: 動的ダイナミックチャンク (128KB ~ 256KB 可変拡張)
+            const CHUNK_SIZE = file.size > 10 * 1024 * 1024 ? 256 * 1024 : 128 * 1024;
             const header = {
                 type: 'file_header',
                 name: file.name,
@@ -483,36 +539,41 @@ export class FileTransferManager {
                 mode: transferMode || this.currentMode || 'LAN_P2P'
             };
 
-            this.dataChannel.send(JSON.stringify(header));
+            const sendData = (data) => {
+                if (isP2POpen) this.dataChannel.send(data);
+                else if (isRelayOpen) this.wsRelay.send(data);
+            };
+
+            sendData(JSON.stringify(header));
 
             let offset = 0;
             const total = file.size;
-            this.dataChannel.bufferedAmountLowThreshold = 256 * 1024;
 
-            const readAndSendChunk = async () => {
-                while (offset < total) {
-                    if (this.dataChannel.bufferedAmount > 1024 * 1024) {
-                        await new Promise(resolve => {
-                            this.dataChannel.onbufferedamountlow = () => {
-                                this.dataChannel.onbufferedamountlow = null;
-                                resolve();
-                            };
-                        });
-                    }
+            if (isP2POpen) {
+                this.dataChannel.bufferedAmountLowThreshold = 512 * 1024;
+            }
 
-                    const slice = file.slice(offset, offset + CHUNK_SIZE);
-                    const rawBuffer = await slice.arrayBuffer();
-                    const encryptedBuffer = await this.encryptChunk(rawBuffer);
-                    this.dataChannel.send(encryptedBuffer);
-
-                    offset += rawBuffer.byteLength;
-                    this.onProgress(offset, total, file.name, 'send');
+            // 最速化: パイプライン・バックプレッシャーフロー制御
+            while (offset < total) {
+                if (isP2POpen && this.dataChannel.bufferedAmount > 2 * 1024 * 1024) {
+                    await new Promise(resolve => {
+                        this.dataChannel.onbufferedamountlow = () => {
+                            this.dataChannel.onbufferedamountlow = null;
+                            resolve();
+                        };
+                    });
                 }
 
-                this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
-            };
+                const slice = file.slice(offset, offset + CHUNK_SIZE);
+                const rawBuffer = await slice.arrayBuffer();
+                const encryptedBuffer = await this.encryptChunk(rawBuffer);
+                sendData(encryptedBuffer);
 
-            await readAndSendChunk();
+                offset += rawBuffer.byteLength;
+                this.onProgress(offset, total, file.name, 'send');
+            }
+
+            sendData(JSON.stringify({ type: 'file_end' }));
         } finally {
             this.sendControlMessage({ type: 'TRANSFER_UNLOCK' });
         }
