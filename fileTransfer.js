@@ -145,11 +145,12 @@ export class FileTransferManager {
 
     joinRoom(roomId) {
         if (!roomId) return;
-        this.leaveRoom();
+        this.leaveRoom(); // 古いリスナーを全て解除してから入る
         this.currentRoomId = roomId;
         this._myJoinedAt = Date.now();
+        this._roomUnsubscribers = []; // リスナー解除関数の配列
 
-        const roomMemberRef = ref(this.db, `public_rooms/${roomId}/members/${this.deviceId}`);
+        const roomMemberRef  = ref(this.db, `public_rooms/${roomId}/members/${this.deviceId}`);
         const roomSignalingRef = ref(this.db, `public_rooms/${roomId}/signaling/${this.deviceId}`);
         const roomAnswersRef = ref(this.db, `public_rooms/${roomId}/answers/${this.deviceId}`);
 
@@ -162,49 +163,57 @@ export class FileTransferManager {
                 id: this.deviceId,
                 name: this.deviceName,
                 joinedAt: this._myJoinedAt
-            }).catch(err => {
-                console.warn("Room join warning:", err.message);
-            });
+            }).catch(err => console.warn("Room join warning:", err.message));
         } catch (e) {}
 
-        // シグナリングOffer受信 (= 自分は answerer 側)
-        onValue(roomSignalingRef, (snapshot) => {
+        // シグナリングOffer受信リスナー (answerer側)
+        const unsubSignaling = onValue(roomSignalingRef, (snapshot) => {
             const data = snapshot.val();
             if (data && data.offer) {
                 this.handleIncomingOffer(data.fromDeviceId, data.offer, `public_rooms/${roomId}`);
                 remove(roomSignalingRef).catch(() => {});
             }
-        }, (err) => {
-            console.warn("Room signaling error:", err.message);
-        });
+        }, (err) => console.warn("Room signaling error:", err.message));
+        this._roomUnsubscribers.push(unsubSignaling);
 
-        // メンバー変化を監視 — joinedAt が自分より早い人が既にいたら自分が caller になる
-        // (後から入った方がOfferを送る → 先にいた方はsignalingRefを待つだけ)
-        onValue(ref(this.db, `public_rooms/${roomId}/members`), (snapshot) => {
+        // メンバー監視リスナー — 後から入った方がcaller
+        const membersRef = ref(this.db, `public_rooms/${roomId}/members`);
+        const unsubMembers = onValue(membersRef, (snapshot) => {
+            // このルームIDが既に無効なら無視（leaveRoom後に遅れて発火する場合の防御）
+            if (this.currentRoomId !== roomId) return;
+
             const members = snapshot.val() || {};
             const otherIds = Object.keys(members).filter(id => id !== this.deviceId);
             if (otherIds.length > 0) {
                 const otherId = otherIds[0];
                 const otherJoinedAt = members[otherId]?.joinedAt || 0;
-                // 自分が後から入った (joinedAt > other) → 自分が caller (Offer送信側)
                 if (this._myJoinedAt > otherJoinedAt) {
-                    this.onStatusUpdate('room_member_joined', { roomId, otherDeviceId: otherId });
+                    // 既に接続試行中なら重複発火させない
+                    if (!this._connectingTo) {
+                        this._connectingTo = otherId;
+                        this.onStatusUpdate('room_member_joined', { roomId, otherDeviceId: otherId });
+                    }
                 }
-                // 自分が先にいた → answerer として待機。何もしない (signalingRefで受信)
             }
-        }, (err) => {
-            console.warn("Room members error:", err.message);
-        });
+        }, (err) => console.warn("Room members error:", err.message));
+        this._roomUnsubscribers.push(unsubMembers);
 
         this.onStatusUpdate('room_joined', { roomId });
     }
 
     leaveRoom() {
+        // 全てのRTDBリスナーを解除
+        if (this._roomUnsubscribers) {
+            this._roomUnsubscribers.forEach(unsub => { try { unsub(); } catch(e) {} });
+            this._roomUnsubscribers = [];
+        }
+        this._connectingTo = null;
+
         if (this.currentRoomId) {
             const roomId = this.currentRoomId;
-            remove(ref(this.db, `public_rooms/${roomId}/members/${this.deviceId}`));
-            remove(ref(this.db, `public_rooms/${roomId}/signaling/${this.deviceId}`));
-            remove(ref(this.db, `public_rooms/${roomId}/answers/${this.deviceId}`));
+            remove(ref(this.db, `public_rooms/${roomId}/members/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `public_rooms/${roomId}/signaling/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `public_rooms/${roomId}/answers/${this.deviceId}`)).catch(() => {});
             this.currentRoomId = null;
             this.onStatusUpdate('room_left');
         }
@@ -215,20 +224,27 @@ export class FileTransferManager {
         this.leaveRoom();
         const user = this.auth?.currentUser;
         if (user) {
-            remove(ref(this.db, `users/${user.uid}/devices/${this.deviceId}`));
-            remove(ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`));
-            remove(ref(this.db, `users/${user.uid}/answers/${this.deviceId}`));
-            remove(ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`));
+            remove(ref(this.db, `users/${user.uid}/devices/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `users/${user.uid}/answers/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`)).catch(() => {});
         }
         this.cleanupPeerConnection();
     }
 
     cleanupPeerConnection() {
+        this._connectingTo = null;
         if (this.dataChannel) {
+            // oncloseを先にnullにして、明示的クリーンアップ時のイベント誤発火を防ぐ
+            this.dataChannel.onclose = null;
+            this.dataChannel.onmessage = null;
             try { this.dataChannel.close(); } catch (e) {}
             this.dataChannel = null;
         }
         if (this.peerConnection) {
+            this.peerConnection.onicecandidate = null;
+            this.peerConnection.onconnectionstatechange = null;
+            this.peerConnection.ondatachannel = null;
             try { this.peerConnection.close(); } catch (e) {}
             this.peerConnection = null;
         }
