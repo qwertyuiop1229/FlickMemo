@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.35";
+const APP_VERSION = "1.3.36";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -170,6 +170,7 @@ const userName = document.getElementById('user-name');
 const userEmail = document.getElementById('user-email');
 const userProviderTag = document.getElementById('user-provider-tag');
 const btnSettingsLogoutAction = document.getElementById('btn-settings-logout-action');
+const btnSettingsSwitchAction = document.getElementById('btn-settings-switch-action');
 
 const toastMsg = document.getElementById('toast-msg');
 const toastText = document.getElementById('toast-text');
@@ -1857,21 +1858,24 @@ btnSettingsTrigger.onclick = () => {
     const accountDesc = document.getElementById('settings-account-desc');
     const btnLogout = document.getElementById('btn-settings-logout-action');
     const btnLogin = document.getElementById('btn-settings-login-action');
+    const btnSwitch = document.getElementById('btn-settings-switch-action');
 
     if (isGuestMode) {
-        // ゲスト: アカウントタブのラベルをログインに変更、ログアウトボタン非表示
+        // ゲスト: アカウントタブのラベルをログインに変更、ログアウト・切り替えボタン非表示
         if (accountLabel) accountLabel.textContent = 'Googleアカウントでログイン';
         if (accountDesc) accountDesc.textContent = 'ログインするとメモの同期やデバイス間転送が利用できます';
         if (btnLogout) btnLogout.classList.add('hidden');
+        if (btnSwitch) btnSwitch.classList.add('hidden');
         if (btnLogin) btnLogin.classList.remove('hidden');
         // ゲストは「一般・同期」タブも非表示
         if (settingsNavSystem) settingsNavSystem.classList.add('hidden');
         // アカウントタブをアクティブにリセット
         if (settingsNavAccount) settingsNavAccount.click();
     } else {
-        if (accountLabel) accountLabel.textContent = 'サインアウト';
-        if (accountDesc) accountDesc.textContent = 'このデバイスからログアウトします';
+        if (accountLabel) accountLabel.textContent = 'アカウント管理';
+        if (accountDesc) accountDesc.textContent = '別のアカウントへの切り替えまたはサインアウト';
         if (btnLogout) btnLogout.classList.remove('hidden');
+        if (btnSwitch) btnSwitch.classList.remove('hidden');
         if (btnLogin) btnLogin.classList.add('hidden');
         if (settingsNavSystem) settingsNavSystem.classList.remove('hidden');
     }
@@ -1898,6 +1902,33 @@ btnSettingsLogoutAction.onclick = () => {
     settingsModal.classList.add('hidden');
     logoutModal.classList.remove('hidden');
 };
+
+if (btnSettingsSwitchAction) {
+    btnSettingsSwitchAction.onclick = async () => {
+        settingsModal.classList.add('hidden');
+        try {
+            if (typeof chrome !== 'undefined' && chrome?.identity?.removeCachedAuthToken) {
+                // キャッシュされているトークンを取得して破棄
+                await new Promise((resolve) => {
+                    chrome.identity.getAuthToken({ interactive: false }, (token) => {
+                        if (token) {
+                            chrome.identity.removeCachedAuthToken({ token }, () => {
+                                resolve();
+                            });
+                        } else {
+                            resolve();
+                        }
+                    });
+                });
+            }
+            await signOut(auth);
+            showToast("キャッシュをクリアしてログアウトしました。「Googleでログイン」を押すとアカウントが再選択できます。");
+        } catch (err) {
+            console.error("Account switch error:", err);
+            showToast("切り替え準備に失敗しました: " + (err.message || ""));
+        }
+    };
+}
 
 btnUpdateCheck.onclick = async () => {
     setStatus('saving', '最新コード取得＆キャッシュ完全消去中...');

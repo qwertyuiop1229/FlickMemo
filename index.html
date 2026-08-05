@@ -452,13 +452,18 @@
 
                         <div class="setting-item-box" style="margin-top:1rem;">
                             <div class="setting-text">
-                                <div id="settings-account-label" class="setting-label">サインアウト</div>
-                                <div id="settings-account-desc" class="setting-desc">このデバイスからログアウトします</div>
+                                <div id="settings-account-label" class="setting-label">アカウント管理</div>
+                                <div id="settings-account-desc" class="setting-desc">別のアカウントへの切り替えまたはサインアウト</div>
                             </div>
-                            <button id="btn-settings-logout-action" class="m3-button btn-danger-sm">
-                                <span class="material-symbols-outlined" style="font-size:16px;">logout</span> ログアウト
-                            </button>
-                            <button id="btn-settings-login-action" class="m3-button btn-primary-sm hidden">
+                            <div style="display:flex; gap:0.5rem; align-items:center;">
+                                <button id="btn-settings-switch-action" class="m3-button btn-secondary-sm" type="button">
+                                    <span class="material-symbols-outlined" style="font-size:16px;">sync_alt</span> 切り替え
+                                </button>
+                                <button id="btn-settings-logout-action" class="m3-button btn-danger-sm" type="button">
+                                    <span class="material-symbols-outlined" style="font-size:16px;">logout</span> ログアウト
+                                </button>
+                            </div>
+                            <button id="btn-settings-login-action" class="m3-button btn-primary-sm hidden" type="button">
                                 <span class="material-symbols-outlined" style="font-size:16px;">login</span> Googleでログイン
                             </button>
                         </div>
