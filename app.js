@@ -35,7 +35,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.30";
+const APP_VERSION = "1.3.33";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1952,51 +1952,65 @@ async function loginWithProvider(provider) {
         const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
 
-        // Chrome 拡張機能環境（サイドパネルやポップアップ）の場合
-        if (typeof chrome !== 'undefined' && chrome?.identity?.launchWebAuthFlow) {
-            try {
-                const redirectUrl = chrome.identity.getRedirectURL();
-                const webAuthUrl = `https://flickmemo-qwe.web.app/auth.html?extension_redirect=${encodeURIComponent(redirectUrl)}`;
+        // ── Chrome 拡張機能（サイドパネル）環境 ──────────────────────────────
+        // launchWebAuthFlow は Firebase Auth と相性が悪いため
+        // window.open で auth.html を通常のポップアップとして開き postMessage で受信する
+        if (typeof chrome !== 'undefined' && chrome?.runtime?.id) {
+            await new Promise((resolve, reject) => {
+                // web.app ドメインで signInWithPopup が動作するページを開く
+                const authUrl = 'https://flickmemo-qwe.web.app/auth.html';
+                const authWin = window.open(
+                    authUrl,
+                    'flickmemo_auth',
+                    'popup=1,width=480,height=640,left=100,top=80'
+                );
 
-                const responseUrl = await new Promise((resolve, reject) => {
-                    chrome.identity.launchWebAuthFlow({
-                        url: webAuthUrl,
-                        interactive: true
-                    }, (response) => {
-                        if (chrome.runtime.lastError || !response) {
-                            reject(new Error(chrome.runtime.lastError?.message || "ログイン処理がキャンセルされました"));
-                        } else {
-                            resolve(response);
-                        }
-                    });
-                });
-
-                const hashStr = new URL(responseUrl).hash.substring(1);
-                const hashParams = new URLSearchParams(hashStr);
-                const idToken = hashParams.get('id_token');
-
-                if (idToken) {
-                    const credential = GoogleAuthProvider.credential(idToken);
-                    try {
-                        await setPersistence(auth, browserLocalPersistence);
-                    } catch (pErr) {
-                        console.warn("Persistence warning:", pErr);
-                    }
-                    await signInWithCredential(auth, credential);
-                } else {
-                    throw new Error("認証トークンを受信できませんでした");
+                if (!authWin) {
+                    reject(new Error('ポップアップがブロックされました。ブラウザの設定でポップアップを許可してください。'));
+                    return;
                 }
-            } catch (extAuthErr) {
-                console.error("Extension Auth Error:", extAuthErr);
-                await setPersistence(auth, browserLocalPersistence);
-                await signInWithPopup(auth, provider);
-            }
+
+                let settled = false;
+                const settle = (fn, val) => {
+                    if (settled) return;
+                    settled = true;
+                    window.removeEventListener('message', onMessage);
+                    clearTimeout(timer);
+                    fn(val);
+                };
+
+                // auth.html から postMessage で結果を受け取る
+                const onMessage = async (event) => {
+                    if (event.data?.type !== 'FLICKMEMO_AUTH_SUCCESS') return;
+                    const { idToken } = event.data;
+                    if (!idToken) {
+                        settle(reject, new Error('トークンの受信に失敗しました'));
+                        return;
+                    }
+                    try {
+                        const credential = GoogleAuthProvider.credential(idToken);
+                        await setPersistence(auth, browserLocalPersistence);
+                        await signInWithCredential(auth, credential);
+                        settle(resolve);
+                    } catch (err) {
+                        settle(reject, err);
+                    }
+                };
+                window.addEventListener('message', onMessage);
+
+                // 5分でタイムアウト
+                const timer = setTimeout(() => {
+                    settle(reject, new Error('ログインがタイムアウトしました'));
+                    try { authWin.close(); } catch(e) {}
+                }, 5 * 60 * 1000);
+            });
+
         } else if (isIOS || isStandalone) {
-            // iOS Safari / iOS PWA環境ではポップアップウィンドウ開口がブロックされるため、同画面リダイレクトを使用
+            // iOS Safari / iOS PWA: リダイレクト方式
             await setPersistence(auth, browserLocalPersistence);
             await signInWithRedirect(auth, provider);
         } else {
-            // 通常の Web アプリ環境 (flickmemo-qwe.web.app 等)
+            // 通常 Web 環境
             try {
                 await setPersistence(auth, browserLocalPersistence);
             } catch (pErr) {

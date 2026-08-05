@@ -1,5 +1,11 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {
+    getAuth,
+    signInWithPopup,
+    GoogleAuthProvider,
+    setPersistence,
+    browserLocalPersistence
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
     apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
@@ -15,43 +21,40 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
+const msg = document.getElementById('msg');
+function setMsg(text) { if (msg) msg.textContent = text; }
+
 async function performAuth() {
-    const msg = document.getElementById('msg');
+    setMsg("Google 認証を実行しています...");
     try {
         await setPersistence(auth, browserLocalPersistence);
+
         const provider = new GoogleAuthProvider();
         provider.addScope('email');
         provider.addScope('profile');
         provider.setCustomParameters({ prompt: 'select_account' });
 
+        // ★ このページは常に signInWithPopup で認証（web.app ドメインで動作）
         const result = await signInWithPopup(auth, provider);
-        const user = result.user;
-        const credential = GoogleAuthProvider.credentialFromResult(result);
-        const idToken = credential?.idToken || (await user.getIdToken());
+        const idToken = await result.user.getIdToken();
 
-        const urlParams = new URLSearchParams(window.location.search);
-        const extensionRedirect = urlParams.get('extension_redirect');
+        setMsg("ログイン成功！ウィンドウを閉じています...");
 
-        if (extensionRedirect) {
-            if (msg) msg.textContent = "拡張機能へログイン情報を転送しています...";
-            const targetUrl = new URL(extensionRedirect);
-            targetUrl.hash = `id_token=${encodeURIComponent(idToken)}&uid=${encodeURIComponent(user.uid)}`;
-            window.location.href = targetUrl.toString();
-            return;
-        }
-
-        if (msg) msg.textContent = "ログインが成功しました！画面を閉じています...";
-
+        // 開いた元（拡張機能のサイドパネル）に結果を送る
         if (window.opener) {
-            window.opener.postMessage({ type: 'FLICKMEMO_AUTH_SUCCESS', uid: user.uid, idToken: idToken }, '*');
+            window.opener.postMessage({
+                type: 'FLICKMEMO_AUTH_SUCCESS',
+                uid: result.user.uid,
+                idToken: idToken
+            }, '*');
         }
 
         setTimeout(() => window.close(), 600);
     } catch (err) {
-        console.error("Auth window error:", err);
-        if (msg) msg.textContent = "ログインに失敗しました: " + (err.message || "");
+        console.error("Auth error:", err);
+        setMsg("ログインに失敗しました: " + (err.message || ""));
         setTimeout(() => window.close(), 3000);
     }
 }
 
-performAuth();
+performAuth();
