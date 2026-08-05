@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.38";
+const APP_VERSION = "1.3.39";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1524,7 +1524,11 @@ function openTransferView() {
     applyGuestUIRestrictions();
     if (mainLayout) mainLayout.classList.add('view-transfer');
     if (transferPanel) transferPanel.classList.remove('hidden');
+
+    // 矢印が二重表示（2つ）にならないよう、一覧に戻る矢印を隠して送信画面用の矢印のみ1つ表示
+    if (btnBack) btnBack.classList.add('hidden');
     if (btnBackTransfer) btnBackTransfer.classList.remove('hidden');
+
     tabNotes?.classList.remove('active');
     tabTrash?.classList.remove('active');
     if (dateDisplay) dateDisplay.classList.add('hidden');
@@ -1534,7 +1538,17 @@ function openTransferView() {
 function openNotesView() {
     currentTab = 'notes';
     if (mainLayout) mainLayout.classList.remove('view-transfer');
+
+    // ファイル送信用の戻る矢印を非表示
     if (btnBackTransfer) btnBackTransfer.classList.add('hidden');
+
+    // モバイル画面かつエディタ閲覧中の場合のみ「一覧に戻る」矢印を復元
+    if (window.innerWidth <= 768 && mainLayout?.classList.contains('view-editor')) {
+        if (btnBack) btnBack.classList.remove('hidden');
+    } else {
+        if (btnBack) btnBack.classList.add('hidden');
+    }
+
     tabNotes?.classList.add('active');
     tabTrash?.classList.remove('active');
     btnNew?.classList.remove('hidden');
@@ -1942,9 +1956,15 @@ if (btnSettingsSwitchAction) {
                     });
                 });
             }
-            forceAccountSelect = true;
             await signOut(auth);
-            showToast("キャッシュをクリアしてログアウトしました。「Googleでログイン」を押すとアカウントが再選択できます。");
+            showToast("アカウントを切替中... Googleログイン画面を開きます");
+
+            // アプリのログイン画面で止まらず、そのままダイレクトにGoogleログイン（アカウント選択）を自動起動
+            setTimeout(() => {
+                const googleProvider = new GoogleAuthProvider();
+                googleProvider.setCustomParameters({ prompt: 'select_account' });
+                loginWithProvider(googleProvider);
+            }, 300);
         } catch (err) {
             console.error("Account switch error:", err);
             showToast("切り替え準備に失敗しました: " + (err.message || ""));
@@ -2000,67 +2020,48 @@ async function loginWithProvider(provider) {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
-        if (provider) {
-            provider.setCustomParameters({ prompt: 'select_account' });
+        if (!provider) {
+            provider = new GoogleAuthProvider();
         }
+        provider.setCustomParameters({ prompt: 'select_account' });
 
         const ua = navigator.userAgent;
         const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
 
         // ── Chrome 拡張機能（サイドパネル）環境 ──────────────────────────────
-        if (typeof chrome !== 'undefined' && chrome?.runtime?.id && chrome?.identity) {
-            if (forceAccountSelect && chrome.identity.launchWebAuthFlow) {
-                forceAccountSelect = false;
-                const clientId = "998795111125-0or2js8p7848ht26va94deqhphtrv2o1.apps.googleusercontent.com";
-                const redirectUri = chrome.identity.getRedirectURL();
-                const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&response_type=token&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent('email profile openid')}&prompt=select_account`;
-
-                await new Promise((resolve, reject) => {
-                    chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true }, async (responseUrl) => {
-                        if (chrome.runtime.lastError || !responseUrl) {
-                            reject(new Error(chrome.runtime.lastError?.message || 'アカウント選択がキャンセルされました'));
-                            return;
-                        }
-                        try {
-                            const params = new URLSearchParams(new URL(responseUrl).hash.substring(1));
-                            const accessToken = params.get('access_token');
-                            const idToken = params.get('id_token');
-                            if (!accessToken && !idToken) throw new Error('トークンの取得に失敗しました');
-                            const credential = GoogleAuthProvider.credential(idToken, accessToken);
-                            await setPersistence(auth, browserLocalPersistence);
-                            await signInWithCredential(auth, credential);
-                            resolve();
-                        } catch (err) {
-                            reject(err);
-                        }
-                    });
-                });
-                return;
-            }
-
+        if (typeof chrome !== 'undefined' && chrome?.runtime?.id && chrome?.identity?.getAuthToken) {
             await new Promise((resolve, reject) => {
-                chrome.identity.getAuthToken({ interactive: true }, async (token) => {
-                    if (chrome.runtime.lastError || !token) {
-                        const errMsg = chrome.runtime.lastError?.message || 'Googleトークンの取得に失敗しました';
-                        console.error('chrome.identity.getAuthToken error:', errMsg);
-                        reject(new Error(errMsg));
-                        return;
-                    }
+                // キャッシュトークンがあれば事前にクリアしてアカウント選択画面を確実に発火
+                chrome.identity.getAuthToken({ interactive: false }, (existingToken) => {
+                    const proceedGetToken = () => {
+                        chrome.identity.getAuthToken({ interactive: true }, async (token) => {
+                            if (chrome.runtime.lastError || !token) {
+                                const errMsg = chrome.runtime.lastError?.message || 'Googleトークンの取得に失敗しました';
+                                console.error('chrome.identity.getAuthToken error:', errMsg);
+                                reject(new Error(errMsg));
+                                return;
+                            }
 
-                    try {
-                        const credential = GoogleAuthProvider.credential(null, token);
-                        await setPersistence(auth, browserLocalPersistence);
-                        await signInWithCredential(auth, credential);
-                        resolve();
-                    } catch (err) {
-                        console.error('signInWithCredential error:', err);
-                        if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-token-expired') {
-                            chrome.identity.removeCachedAuthToken({ token }, () => {
-                                console.log('キャッシュされたトークンを削除しました。再度ログインしてください。');
-                            });
-                        }
-                        reject(err);
+                            try {
+                                const credential = GoogleAuthProvider.credential(null, token);
+                                await setPersistence(auth, browserLocalPersistence);
+                                await signInWithCredential(auth, credential);
+                                resolve();
+                            } catch (err) {
+                                console.error('signInWithCredential error:', err);
+                                if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-token-expired') {
+                                    chrome.identity.removeCachedAuthToken({ token }, () => {});
+                                }
+                                reject(err);
+                            }
+                        });
+                    };
+
+                    if (existingToken) {
+                        chrome.identity.removeCachedAuthToken({ token: existingToken }, proceedGetToken);
+                    } else {
+                        proceedGetToken();
                     }
                 });
             });
