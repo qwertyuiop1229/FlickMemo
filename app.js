@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.36";
+const APP_VERSION = "1.3.37";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -2252,7 +2252,7 @@ function handleAppExitCleanup() {
 window.addEventListener('beforeunload', handleAppExitCleanup);
 
 // iOS PWA / モバイルのスワイプ終了・ホームボタン長押し強制終了 → P2P クリーンアップ
-// (pagehide の persisted=false = 本当のページ破棄のみ対応)
+// (pagehide の persisted=false =本当のページ破棄のみ対応)
 window.addEventListener('pagehide', (e) => {
     if (!e.persisted) {
         handleAppExitCleanup();

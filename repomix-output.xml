@@ -133,33 +133,6 @@ node_modules/
 .dataconnect
 </file>
 
-<file path=".repomixignore">
-# AI Agent スキルドキュメント（ファイル数が膨大なため一括除外）
-.agents/
-.claude/
-skills-lock.json
-
-# Repomix 自身の出力ファイル
-repomix-output.xml
-repomix-output.*
-
-# ビルド成果物・依存関係・キャッシュ
-node_modules/
-dist/
-build/
-.vite/
-
-# CI/CD・メタデータ・自動化スクリプト
-.github/
-.firebaserc
-version.json
-bump.js
-
-# ドキュメント・ログ（コードのみに絞る場合）
-*.md
-*.log
-</file>
-
 <file path="404.html">
 <!DOCTYPE html>
 <html>
@@ -218,6 +191,33 @@ bump.js
     }
   }
 }
+</file>
+
+<file path=".repomixignore">
+# AI Agent スキルドキュメント（ファイル数が膨大なため一括除外）
+.agents/
+.claude/
+skills-lock.json
+
+# Repomix 自身の出力ファイル
+repomix-output.xml
+repomix-output.*
+
+# ビルド成果物・依存関係・キャッシュ
+node_modules/
+dist/
+build/
+.vite/
+
+# CI/CD・メタデータ・自動化スクリプト
+.github/
+.firebaserc
+version.json
+bump.js
+
+# ドキュメント・ログ（コードのみに絞る場合）
+*.md
+*.log
 </file>
 
 <file path="auth.html">
@@ -1078,7 +1078,7 @@ export class FileTransferManager {
 <file path="package.json">
 {
     "name": "flickmemo",
-    "version": "1.3.34",
+    "version": "1.3.36",
     "type": "module",
     "scripts": {
         "dev": "vite",
@@ -1100,8 +1100,9 @@ export class FileTransferManager {
 {
     "manifest_version": 3,
     "name": "FlickMemo - 超軽量リアルタイムメモ帳",
-    "version": "1.3.34",
+    "version": "1.3.36",
     "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
+    "key": "YOUR_PUBLIC_KEY_HERE",
     "action": {
         "default_title": "FlickMemoをサイドパネルで開く"
     },
@@ -1113,7 +1114,11 @@ export class FileTransferManager {
     },
     "oauth2": {
         "client_id": "998795111125-0or2js8p7848ht26va94deqhphtrv2o1.apps.googleusercontent.com",
-        "scopes": ["email", "profile", "openid"]
+        "scopes": [
+            "email",
+            "profile",
+            "openid"
+        ]
     },
     "permissions": [
         "sidePanel",
@@ -1596,13 +1601,18 @@ export class FileTransferManager {
 
                         <div class="setting-item-box" style="margin-top:1rem;">
                             <div class="setting-text">
-                                <div id="settings-account-label" class="setting-label">サインアウト</div>
-                                <div id="settings-account-desc" class="setting-desc">このデバイスからログアウトします</div>
+                                <div id="settings-account-label" class="setting-label">アカウント管理</div>
+                                <div id="settings-account-desc" class="setting-desc">別のアカウントへの切り替えまたはサインアウト</div>
                             </div>
-                            <button id="btn-settings-logout-action" class="m3-button btn-danger-sm">
-                                <span class="material-symbols-outlined" style="font-size:16px;">logout</span> ログアウト
-                            </button>
-                            <button id="btn-settings-login-action" class="m3-button btn-primary-sm hidden">
+                            <div style="display:flex; gap:0.5rem; align-items:center;">
+                                <button id="btn-settings-switch-action" class="m3-button btn-secondary-sm" type="button">
+                                    <span class="material-symbols-outlined" style="font-size:16px;">sync_alt</span> 切り替え
+                                </button>
+                                <button id="btn-settings-logout-action" class="m3-button btn-danger-sm" type="button">
+                                    <span class="material-symbols-outlined" style="font-size:16px;">logout</span> ログアウト
+                                </button>
+                            </div>
+                            <button id="btn-settings-login-action" class="m3-button btn-primary-sm hidden" type="button">
                                 <span class="material-symbols-outlined" style="font-size:16px;">login</span> Googleでログイン
                             </button>
                         </div>
@@ -3798,7 +3808,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.34";
+const APP_VERSION = "1.3.36";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -3934,6 +3944,7 @@ const userName = document.getElementById('user-name');
 const userEmail = document.getElementById('user-email');
 const userProviderTag = document.getElementById('user-provider-tag');
 const btnSettingsLogoutAction = document.getElementById('btn-settings-logout-action');
+const btnSettingsSwitchAction = document.getElementById('btn-settings-switch-action');
 
 const toastMsg = document.getElementById('toast-msg');
 const toastText = document.getElementById('toast-text');
@@ -5621,21 +5632,24 @@ btnSettingsTrigger.onclick = () => {
     const accountDesc = document.getElementById('settings-account-desc');
     const btnLogout = document.getElementById('btn-settings-logout-action');
     const btnLogin = document.getElementById('btn-settings-login-action');
+    const btnSwitch = document.getElementById('btn-settings-switch-action');
 
     if (isGuestMode) {
-        // ゲスト: アカウントタブのラベルをログインに変更、ログアウトボタン非表示
+        // ゲスト: アカウントタブのラベルをログインに変更、ログアウト・切り替えボタン非表示
         if (accountLabel) accountLabel.textContent = 'Googleアカウントでログイン';
         if (accountDesc) accountDesc.textContent = 'ログインするとメモの同期やデバイス間転送が利用できます';
         if (btnLogout) btnLogout.classList.add('hidden');
+        if (btnSwitch) btnSwitch.classList.add('hidden');
         if (btnLogin) btnLogin.classList.remove('hidden');
         // ゲストは「一般・同期」タブも非表示
         if (settingsNavSystem) settingsNavSystem.classList.add('hidden');
         // アカウントタブをアクティブにリセット
         if (settingsNavAccount) settingsNavAccount.click();
     } else {
-        if (accountLabel) accountLabel.textContent = 'サインアウト';
-        if (accountDesc) accountDesc.textContent = 'このデバイスからログアウトします';
+        if (accountLabel) accountLabel.textContent = 'アカウント管理';
+        if (accountDesc) accountDesc.textContent = '別のアカウントへの切り替えまたはサインアウト';
         if (btnLogout) btnLogout.classList.remove('hidden');
+        if (btnSwitch) btnSwitch.classList.remove('hidden');
         if (btnLogin) btnLogin.classList.add('hidden');
         if (settingsNavSystem) settingsNavSystem.classList.remove('hidden');
     }
@@ -5662,6 +5676,33 @@ btnSettingsLogoutAction.onclick = () => {
     settingsModal.classList.add('hidden');
     logoutModal.classList.remove('hidden');
 };
+
+if (btnSettingsSwitchAction) {
+    btnSettingsSwitchAction.onclick = async () => {
+        settingsModal.classList.add('hidden');
+        try {
+            if (typeof chrome !== 'undefined' && chrome?.identity?.removeCachedAuthToken) {
+                // キャッシュされているトークンを取得して破棄
+                await new Promise((resolve) => {
+                    chrome.identity.getAuthToken({ interactive: false }, (token) => {
+                        if (token) {
+                            chrome.identity.removeCachedAuthToken({ token }, () => {
+                                resolve();
+                            });
+                        } else {
+                            resolve();
+                        }
+                    });
+                });
+            }
+            await signOut(auth);
+            showToast("キャッシュをクリアしてログアウトしました。「Googleでログイン」を押すとアカウントが再選択できます。");
+        } catch (err) {
+            console.error("Account switch error:", err);
+            showToast("切り替え準備に失敗しました: " + (err.message || ""));
+        }
+    };
+}
 
 btnUpdateCheck.onclick = async () => {
     setStatus('saving', '最新コード取得＆キャッシュ完全消去中...');
