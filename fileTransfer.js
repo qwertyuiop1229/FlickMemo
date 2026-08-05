@@ -283,6 +283,12 @@ export class FileTransferManager {
     createPeerConnection(targetDeviceId, basePath, mode = 'AUTO') {
         this.cleanupPeerConnection();
 
+        // 手動でWebリレイ選択時は直接リレイを起動
+        if (mode === 'WEB_RELAY') {
+            this.initWebSocketRelayFallback(targetDeviceId, basePath);
+            return null;
+        }
+
         // モード別ネットワーク制御アルゴリズム
         let iceServers = [];
         if (mode === 'LAN_P2P') {
@@ -497,7 +503,8 @@ export class FileTransferManager {
                     } else if (meta.type === 'file_end') {
                         const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
                         const safeName = this.sanitizeFilename(this.incomingFileInfo.name);
-                        this.onFileReceived(blob, safeName, 'WAN_P2P');
+                        const actualMode = this.incomingFileInfo.mode || 'WEB_RELAY';
+                        this.onFileReceived(blob, safeName, actualMode);
                         this.resetReceiveBuffer();
                     }
                 } else if (e.data instanceof ArrayBuffer) {
@@ -529,6 +536,9 @@ export class FileTransferManager {
         this.sendControlMessage({ type: 'TRANSFER_LOCK' });
 
         try {
+            // 実際の転送モード (リレイモード動作時は WEB_RELAY)
+            const actualMode = isRelayOpen ? 'WEB_RELAY' : (transferMode || this.currentMode || 'LAN_P2P');
+
             // 最速化アルゴリズム: 動的ダイナミックチャンク (128KB ~ 256KB 可変拡張)
             const CHUNK_SIZE = file.size > 10 * 1024 * 1024 ? 256 * 1024 : 128 * 1024;
             const header = {
@@ -536,7 +546,7 @@ export class FileTransferManager {
                 name: file.name,
                 size: file.size,
                 mime: file.type || 'application/octet-stream',
-                mode: transferMode || this.currentMode || 'LAN_P2P'
+                mode: actualMode
             };
 
             const sendData = (data) => {
