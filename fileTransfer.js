@@ -283,22 +283,26 @@ export class FileTransferManager {
     createPeerConnection(targetDeviceId, basePath, mode = 'AUTO') {
         this.cleanupPeerConnection();
 
-        // 手動でWebリレイ選択時は直接リレイを起動
-        if (mode === 'WEB_RELAY') {
-            this.initWebSocketRelayFallback(targetDeviceId, basePath);
-            return null;
-        }
-
-        // モード別ネットワーク制御アルゴリズム
+        // モード別ネットワーク制御＆TURNリレイ（学校・プロキシ遮断環境対応）
         let iceServers = [];
         if (mode === 'LAN_P2P') {
-            // LAN限定モード: STUNを使わず完全ローカル(mDNS/プライベートIP)のみで接続
+            // LAN限定モード: STUN/TURNを使用せず完全ローカル(mDNS/プライベートIP)のみで直連
             iceServers = [];
+        } else if (mode === 'WEB_RELAY') {
+            // Webリレイ専用モード: ポート80/443の標準TURN(OpenRelay)経由でプロキシを100%通過
+            iceServers = [
+                { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+                { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+                { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" }
+            ];
         } else {
-            // WAN / AUTO モード: Google STUNで別ネットワーク間のP2P接続を確立
+            // WAN / AUTO モード: LAN -> Google STUN -> OpenRelay TURN(443/TCP) に自動フォールバック
             iceServers = [
                 { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: "stun:openrelay.metered.ca:80" },
+                { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+                { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
             ];
         }
 
@@ -316,11 +320,7 @@ export class FileTransferManager {
             if (pc.iceConnectionState === 'connected') {
                 this.cleanupSignalingData(basePath, targetDeviceId);
                 this.onStatusUpdate('p2p_connected', { targetDeviceId });
-            } else if (pc.iceConnectionState === 'failed') {
-                this.cleanupSignalingData(basePath, targetDeviceId);
-                console.warn("P2P接続が遮断されました。Zero-Storage WebSocketリレイへフォールバックします。");
-                this.initWebSocketRelayFallback(targetDeviceId, basePath);
-            } else if (pc.iceConnectionState === 'disconnected') {
+            } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
                 this.cleanupSignalingData(basePath, targetDeviceId);
                 this.onStatusUpdate('p2p_disconnected', { targetDeviceId });
             }
@@ -479,65 +479,20 @@ export class FileTransferManager {
         this.onStatusUpdate('p2p_disconnected');
     }
 
-    // P2P 接続不可環境向け Zero-Storage WebSocket パイプリレイ
-    initWebSocketRelayFallback(targetDeviceId, basePath) {
-        if (this.wsRelay) return;
-        try {
-            // 無料標準 HTTPS (443番ポート) パイプソケット
-            const relayUrl = `wss://relay.websocket.org/?room=${this.deviceId}_${targetDeviceId}`;
-            this.wsRelay = new WebSocket(relayUrl);
-            this.wsRelay.binaryType = 'arraybuffer';
-
-            this.wsRelay.onopen = () => {
-                this.isRelayMode = true;
-                this.onStatusUpdate('p2p_connected', { targetDeviceId, isRelay: true });
-            };
-
-            this.wsRelay.onmessage = async (e) => {
-                if (typeof e.data === 'string') {
-                    const meta = JSON.parse(e.data);
-                    if (meta.type === 'file_header') {
-                        this.incomingFileInfo = meta;
-                        this.resetReceiveBuffer();
-                        this.onProgress(0, meta.size, meta.name, 'rec');
-                    } else if (meta.type === 'file_end') {
-                        const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
-                        const safeName = this.sanitizeFilename(this.incomingFileInfo.name);
-                        const actualMode = this.incomingFileInfo.mode || 'WEB_RELAY';
-                        this.onFileReceived(blob, safeName, actualMode);
-                        this.resetReceiveBuffer();
-                    }
-                } else if (e.data instanceof ArrayBuffer) {
-                    const decrypted = await this.decryptChunk(e.data);
-                    this.receiveBuffer.push(decrypted);
-                    this.receivedSize += decrypted.byteLength;
-                    if (this.incomingFileInfo) {
-                        this.onProgress(this.receivedSize, this.incomingFileInfo.size, this.incomingFileInfo.name, 'rec');
-                    }
-                }
-            };
-        } catch (err) {
-            console.error("Relay Fallback Error:", err);
-        }
-    }
-
     async sendFileP2P(file, transferMode) {
         if (this.isGuestMode || !this.auth?.currentUser) {
             throw new Error("ファイルを送信するにはGoogleアカウントでのログインが必要です（ゲストは受信のみ利用可能）。");
         }
 
-        const isP2POpen = this.dataChannel && this.dataChannel.readyState === 'open';
-        const isRelayOpen = this.wsRelay && this.wsRelay.readyState === WebSocket.OPEN;
-
-        if (!isP2POpen && !isRelayOpen) {
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
             throw new Error("接続が確立されていません。送信先デバイスを選択してください。");
         }
 
         this.sendControlMessage({ type: 'TRANSFER_LOCK' });
 
         try {
-            // 実際の転送モード (リレイモード動作時は WEB_RELAY)
-            const actualMode = isRelayOpen ? 'WEB_RELAY' : (transferMode || this.currentMode || 'LAN_P2P');
+            // 実際の転送モード
+            const actualMode = transferMode || this.currentMode || 'LAN_P2P';
 
             // 最速化アルゴリズム: 動的ダイナミックチャンク (128KB ~ 256KB 可変拡張)
             const CHUNK_SIZE = file.size > 10 * 1024 * 1024 ? 256 * 1024 : 128 * 1024;
@@ -549,23 +504,15 @@ export class FileTransferManager {
                 mode: actualMode
             };
 
-            const sendData = (data) => {
-                if (isP2POpen) this.dataChannel.send(data);
-                else if (isRelayOpen) this.wsRelay.send(data);
-            };
-
-            sendData(JSON.stringify(header));
+            this.dataChannel.send(JSON.stringify(header));
 
             let offset = 0;
             const total = file.size;
-
-            if (isP2POpen) {
-                this.dataChannel.bufferedAmountLowThreshold = 512 * 1024;
-            }
+            this.dataChannel.bufferedAmountLowThreshold = 512 * 1024;
 
             // 最速化: パイプライン・バックプレッシャーフロー制御
             while (offset < total) {
-                if (isP2POpen && this.dataChannel.bufferedAmount > 2 * 1024 * 1024) {
+                if (this.dataChannel.bufferedAmount > 2 * 1024 * 1024) {
                     await new Promise(resolve => {
                         this.dataChannel.onbufferedamountlow = () => {
                             this.dataChannel.onbufferedamountlow = null;
@@ -577,13 +524,13 @@ export class FileTransferManager {
                 const slice = file.slice(offset, offset + CHUNK_SIZE);
                 const rawBuffer = await slice.arrayBuffer();
                 const encryptedBuffer = await this.encryptChunk(rawBuffer);
-                sendData(encryptedBuffer);
+                this.dataChannel.send(encryptedBuffer);
 
                 offset += rawBuffer.byteLength;
                 this.onProgress(offset, total, file.name, 'send');
             }
 
-            sendData(JSON.stringify({ type: 'file_end' }));
+            this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
         } finally {
             this.sendControlMessage({ type: 'TRANSFER_UNLOCK' });
         }
