@@ -34,22 +34,35 @@ async function performAuth() {
         provider.addScope('profile');
         provider.setCustomParameters({ prompt: 'select_account' });
 
-        // ★ このページは常に signInWithPopup で認証（web.app ドメインで動作）
         const result = await signInWithPopup(auth, provider);
-        const idToken = await result.user.getIdToken();
+
+        // ★ 重要: Firebase IDトークン(user.getIdToken())ではなく
+        //         Google OAuth クレデンシャル(credentialFromResult)を使う
+        const googleCredential = GoogleAuthProvider.credentialFromResult(result);
+        const googleIdToken   = googleCredential?.idToken;
+        const googleAccessToken = googleCredential?.accessToken;
+
+        if (!googleIdToken && !googleAccessToken) {
+            throw new Error('Google クレデンシャルの取得に失敗しました');
+        }
 
         setMsg("ログイン成功！ウィンドウを閉じています...");
 
-        // 開いた元（拡張機能のサイドパネル）に結果を送る
+        // 拡張機能のサイドパネル（window.opener）に結果を送る
         if (window.opener) {
             window.opener.postMessage({
                 type: 'FLICKMEMO_AUTH_SUCCESS',
                 uid: result.user.uid,
-                idToken: idToken
+                // Google OAuth トークン（Firebase IDトークンとは別物）
+                googleIdToken:    googleIdToken    || null,
+                googleAccessToken: googleAccessToken || null,
+                displayName: result.user.displayName,
+                email: result.user.email,
+                photoURL: result.user.photoURL
             }, '*');
         }
 
-        setTimeout(() => window.close(), 600);
+        setTimeout(() => window.close(), 800);
     } catch (err) {
         console.error("Auth error:", err);
         setMsg("ログインに失敗しました: " + (err.message || ""));

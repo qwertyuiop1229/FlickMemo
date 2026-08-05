@@ -1,18 +1,24 @@
-# AI Agent / Skill 関連（ドキュメント類でトークンを圧迫するため除外）
+# AI Agent スキルドキュメント（ファイル数が膨大なため一括除外）
 .agents/
 .claude/
 skills-lock.json
 
-# CI/CD & Deploy 設定ファイル
+# Repomix 自身の出力ファイル
+repomix-output.xml
+repomix-output.*
+
+# ビルド成果物・依存関係・キャッシュ
+node_modules/
+dist/
+build/
+.vite/
+
+# CI/CD・メタデータ・自動化スクリプト
 .github/
 .firebaserc
+version.json
+bump.js
 
-# Node / npm 関連（自動生成ファイル）
-node_modules/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-
-# OS / 一時ファイル
-.DS_Store
+# ドキュメント・ログ（コードのみに絞る場合）
+*.md
 *.log

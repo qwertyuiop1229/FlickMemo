@@ -7,7 +7,6 @@ import {
     getRedirectResult,
     GoogleAuthProvider,
     signInWithCredential,
-    OAuthProvider,
     signOut,
     onAuthStateChanged,
     setPersistence,
@@ -35,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.33";
+const APP_VERSION = "1.3.35";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1953,56 +1952,37 @@ async function loginWithProvider(provider) {
         const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
 
         // ── Chrome 拡張機能（サイドパネル）環境 ──────────────────────────────
-        // launchWebAuthFlow は Firebase Auth と相性が悪いため
-        // window.open で auth.html を通常のポップアップとして開き postMessage で受信する
-        if (typeof chrome !== 'undefined' && chrome?.runtime?.id) {
+        // chrome.identity.getAuthToken を使ってChromeネイティブのOAuth認証を行う
+        // これがChrome拡張機能での公式推奨・最も確実な方法
+        if (typeof chrome !== 'undefined' && chrome?.runtime?.id && chrome?.identity?.getAuthToken) {
             await new Promise((resolve, reject) => {
-                // web.app ドメインで signInWithPopup が動作するページを開く
-                const authUrl = 'https://flickmemo-qwe.web.app/auth.html';
-                const authWin = window.open(
-                    authUrl,
-                    'flickmemo_auth',
-                    'popup=1,width=480,height=640,left=100,top=80'
-                );
-
-                if (!authWin) {
-                    reject(new Error('ポップアップがブロックされました。ブラウザの設定でポップアップを許可してください。'));
-                    return;
-                }
-
-                let settled = false;
-                const settle = (fn, val) => {
-                    if (settled) return;
-                    settled = true;
-                    window.removeEventListener('message', onMessage);
-                    clearTimeout(timer);
-                    fn(val);
-                };
-
-                // auth.html から postMessage で結果を受け取る
-                const onMessage = async (event) => {
-                    if (event.data?.type !== 'FLICKMEMO_AUTH_SUCCESS') return;
-                    const { idToken } = event.data;
-                    if (!idToken) {
-                        settle(reject, new Error('トークンの受信に失敗しました'));
+                chrome.identity.getAuthToken({ interactive: true }, async (token) => {
+                    // エラーチェック
+                    if (chrome.runtime.lastError || !token) {
+                        const errMsg = chrome.runtime.lastError?.message || 'Googleトークンの取得に失敗しました';
+                        console.error('chrome.identity.getAuthToken error:', errMsg);
+                        reject(new Error(errMsg));
                         return;
                     }
+
                     try {
-                        const credential = GoogleAuthProvider.credential(idToken);
+                        // Google OAuthアクセストークン（第1引数=idToken: null, 第2引数=accessToken: token）
+                        // ※ Firebase IDトークンではなく、GoogleのOAuthアクセストークンを渡す
+                        const credential = GoogleAuthProvider.credential(null, token);
                         await setPersistence(auth, browserLocalPersistence);
                         await signInWithCredential(auth, credential);
-                        settle(resolve);
+                        resolve();
                     } catch (err) {
-                        settle(reject, err);
+                        console.error('signInWithCredential error:', err);
+                        // トークンが無効・期限切れの場合はChromeのキャッシュを削除してユーザーに再試行を促す
+                        if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-token-expired') {
+                            chrome.identity.removeCachedAuthToken({ token }, () => {
+                                console.log('キャッシュされたトークンを削除しました。再度ログインしてください。');
+                            });
+                        }
+                        reject(err);
                     }
-                };
-                window.addEventListener('message', onMessage);
-
-                // 5分でタイムアウト
-                const timer = setTimeout(() => {
-                    settle(reject, new Error('ログインがタイムアウトしました'));
-                    try { authWin.close(); } catch(e) {}
-                }, 5 * 60 * 1000);
+                });
             });
 
         } else if (isIOS || isStandalone) {
@@ -2036,6 +2016,8 @@ async function loginWithProvider(provider) {
             msg = "ポップアップがブラウザにブロックされました。";
         } else if (error.code === 'auth/unauthorized-domain') {
             msg = "Firebase Console の「Authentication > 設定 > 承認済みドメイン」をご確認ください。";
+        } else if (error.message?.includes('OAuth2 not granted or revoked') || error.message?.includes('Not granted')) {
+            msg = "Googleアカウントへのアクセスが拒否されました。Chromeにログイン中のGoogleアカウントを確認してください。";
         }
         alert("ログインに失敗しました: " + msg);
         authLoading.classList.add('hidden');

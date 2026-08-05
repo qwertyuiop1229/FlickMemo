@@ -44,14 +44,16 @@ The content is organized as follows:
 .repomixignore
 404.html
 app.js
-bump.js
+auth.html
+auth.js
+background.js
+database.rules.json
+fileTransfer.js
 firebase.json
 index.html
 manifest.json
 package.json
-README.md
 style.css
-version.json
 vite.config.js
 worker.js
 </directory_structure>
@@ -132,23 +134,29 @@ node_modules/
 </file>
 
 <file path=".repomixignore">
-# AI Agent / Skill 関連（ドキュメント類でトークンを圧迫するため除外）
+# AI Agent スキルドキュメント（ファイル数が膨大なため一括除外）
 .agents/
 .claude/
 skills-lock.json
 
-# CI/CD & Deploy 設定ファイル
+# Repomix 自身の出力ファイル
+repomix-output.xml
+repomix-output.*
+
+# ビルド成果物・依存関係・キャッシュ
+node_modules/
+dist/
+build/
+.vite/
+
+# CI/CD・メタデータ・自動化スクリプト
 .github/
 .firebaserc
+version.json
+bump.js
 
-# Node / npm 関連（自動生成ファイル）
-node_modules/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-
-# OS / 一時ファイル
-.DS_Store
+# ドキュメント・ログ（コードのみに絞る場合）
+*.md
 *.log
 </file>
 
@@ -188,32 +196,161 @@ pnpm-lock.yaml
 </html>
 </file>
 
-<file path="manifest.json">
+<file path="database.rules.json">
 {
-    "manifest_version": 3,
-    "name": "FlickMemo - 超軽量リアルタイムメモ帳",
-    "version": "1.3.0",
-    "description": "即座に書ける、リアルタイム同期の超軽量メモ帳",
-    "action": {
-        "default_popup": "index.html",
-        "default_title": "FlickMemoを開く"
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
     },
-    "side_panel": {
-        "default_path": "index.html"
-    },
-    "permissions": [
-        "sidePanel",
-        "identity",
-        "storage"
-    ],
-    "content_security_policy": {
-        "extension_pages": "script-src 'self'; object-src 'self';"
+    "public_rooms": {
+      "$roomId": {
+        ".read": true,
+        ".write": true,
+        "members": {
+          "$deviceId": {
+            ".validate": "newData.hasChildren(['id', 'name', 'joinedAt'])"
+          }
+        }
+      }
     }
+  }
 }
 </file>
 
-<file path="README.md">
-# FlickMemo
+<file path="auth.html">
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlickMemo - Google ログイン</title>
+    <link rel="icon" href="data:,">
+    <style>
+        body {
+            background: #131314;
+            color: #e3e2e6;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #333537;
+            border-top-color: #a8c7fa;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 1.2rem;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        p {
+            font-size: 0.95rem;
+            color: #c4c6d0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="spinner"></div>
+    <p id="msg">Google 認証を実行しています...</p>
+    <script type="module" src="auth.js"></script>
+</body>
+
+</html>
+</file>
+
+<file path="background.js">
+// 拡張機能アイコンの左クリックで直接サイドパネルを開く設定
+if (typeof chrome !== 'undefined' && chrome?.sidePanel?.setPanelBehavior) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error(error));
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+    if (typeof chrome !== 'undefined' && chrome?.sidePanel?.setPanelBehavior) {
+        chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error(error));
+    }
+
+    // コンテキストメニューの作成
+    chrome.contextMenus.create({
+        id: "add-selection-to-flickmemo",
+        title: "選択したテキストをFlickMemoに追加",
+        contexts: ["selection"]
+    });
+    chrome.contextMenus.create({
+        id: "add-image-to-flickmemo",
+        title: "選択した画像をFlickMemoに追加",
+        contexts: ["image"]
+    });
+    chrome.contextMenus.create({
+        id: "add-page-to-flickmemo",
+        title: "このページのURLとタイトルをFlickMemoに保存",
+        contexts: ["page"]
+    });
+});
+
+// コンテキストメニューがクリックされた時の処理
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+    let textToAdd = "";
+    if (info.menuItemId === "add-selection-to-flickmemo" && info.selectionText) {
+        textToAdd = info.selectionText.trim();
+        if (tab && tab.url) {
+            textToAdd += `\n\n出典: ${tab.title || 'Web'} (${tab.url})`;
+        }
+    } else if (info.menuItemId === "add-image-to-flickmemo" && info.srcUrl) {
+        textToAdd = `🖼️ 画像キャプチャ:\n![${tab?.title || '画像'}](${info.srcUrl})`;
+        if (tab && tab.url) {
+            textToAdd += `\n\n出典: ${tab.title || 'Web'} (${tab.url})`;
+        }
+    } else if (info.menuItemId === "add-page-to-flickmemo" && tab) {
+        textToAdd = `📌 ${tab.title || 'Webページ'}\n${tab.url}`;
+    }
+
+    if (!textToAdd) return;
+
+    chrome.storage.local.get(['pendingQuickNote'], (res) => {
+        let currentText = res.pendingQuickNote ? res.pendingQuickNote + "\n\n---\n\n" : "";
+        chrome.storage.local.set({ pendingQuickNote: currentText + textToAdd }, () => {
+            chrome.action.setBadgeText({ text: "NEW" });
+            chrome.action.setBadgeBackgroundColor({ color: "#a8c7fa" });
+            setTimeout(() => chrome.action.setBadgeText({ text: "" }), 3000);
+        });
+    });
+});
+
+// アドレスバー（オムニボックス）検索機能: "fm <キーワード>"
+if (chrome.omnibox) {
+    chrome.omnibox.setDefaultSuggestion({
+        description: 'FlickMemo内で「%s」を検索'
+    });
+
+    chrome.omnibox.onInputEntered.addListener((text) => {
+        chrome.storage.local.set({ extensionSearchQuery: text }, () => {
+            if (chrome.sidePanel && chrome.sidePanel.open) {
+                chrome.windows.getCurrent((win) => {
+                    if (win?.id) {
+                        chrome.sidePanel.open({ windowId: win.id }).catch(() => {});
+                    }
+                });
+            }
+        });
+    });
+}
 </file>
 
 <file path="vite.config.js">
@@ -226,6 +363,7 @@ const copyExtensionFiles = () => ({
     closeBundle() {
         if (!fs.existsSync('dist/icons')) fs.mkdirSync('dist/icons', { recursive: true });
         if (fs.existsSync('manifest.json')) fs.copyFileSync('manifest.json', 'dist/manifest.json');
+        if (fs.existsSync('background.js')) fs.copyFileSync('background.js', 'dist/background.js');
         if (fs.existsSync('icons')) {
             fs.readdirSync('icons').forEach(file => {
                 fs.copyFileSync(`icons/${file}`, `dist/icons/${file}`);
@@ -235,11 +373,13 @@ const copyExtensionFiles = () => ({
 });
 
 export default defineConfig({
+    base: './',
     build: {
         outDir: 'dist',
         rollupOptions: {
             input: {
-                popup: resolve(__dirname, 'index.html')
+                popup: resolve(__dirname, 'index.html'),
+                auth: resolve(__dirname, 'auth.html')
             },
             output: {
                 entryFileNames: 'assets/[name].js',
@@ -250,78 +390,6 @@ export default defineConfig({
     },
     plugins: [copyExtensionFiles()]
 });
-</file>
-
-<file path="package.json">
-{
-    "name": "flickmemo",
-    "version": "1.3.0",
-    "type": "module",
-    "scripts": {
-        "dev": "vite",
-        "build": "vite build",
-        "deploy": "node bump.js && git add . && git commit -m \"auto deploy: update code and version\" && git push && firebase deploy"
-    },
-    "dependencies": {
-        "firebase": "^10.12.0",
-        "prismjs": "^1.29.0"
-    },
-    "devDependencies": {
-        "vite": "^5.0.0"
-    }
-}
-</file>
-
-<file path="bump.js">
-import fs from 'fs';
-import { execSync } from 'child_process';
-
-try {
-    // 1. Gitのステータスをチェックしてコード変更があるか判定
-    const gitStatus = execSync('git status --porcelain').toString();
-
-    const hasCodeChanges = gitStatus.split('\n').some(line => {
-        const file = line.trim().split(/\s+/)[1];
-        return file && !file.includes('version.json') && !file.includes('app.js');
-    });
-
-    if (!hasCodeChanges) {
-        console.log("ℹ️ コードの変更がないため、version.json のバージョン数字は維持してデプロイします。");
-    } else {
-        // 2. マスターファイル version.json を読み込んで +1 カウントアップ
-        const versionData = JSON.parse(fs.readFileSync('version.json', 'utf8'));
-        const parts = versionData.version.split('.');
-        parts[2] = parseInt(parts[2], 10) + 1; // パッチバージョンを +1
-        const newVersion = parts.join('.');
-        versionData.version = newVersion;
-        fs.writeFileSync('version.json', JSON.stringify(versionData, null, 2));
-
-        // 3. version.json から読み取った最新バージョンを app.js 内に同期埋め込み
-        let appJsContent = fs.readFileSync('app.js', 'utf8');
-        appJsContent = appJsContent.replace(
-            /const APP_VERSION = "[^"]+";/,
-            `const APP_VERSION = "${newVersion}";`
-        );
-        fs.writeFileSync('app.js', appJsContent);
-
-        console.log(`⚡ version.json を参照して更新＆コードへ同期完了: v${newVersion}`);
-    }
-} catch (err) {
-    console.error("バージョン更新エラー:", err);
-}
-</file>
-
-<file path="firebase.json">
-{
-  "hosting": {
-    "public": ".",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ]
-  }
-}
 </file>
 
 <file path="worker.js">
@@ -404,6 +472,675 @@ self.onmessage = e => {
 };
 </file>
 
+<file path="auth.js">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {
+    getAuth,
+    signInWithPopup,
+    GoogleAuthProvider,
+    setPersistence,
+    browserLocalPersistence
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+const firebaseConfig = {
+    apiKey: "AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE",
+    authDomain: "flickmemo-qwe.web.app",
+    databaseURL: "https://flickmemo-qwe-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "flickmemo-qwe",
+    storageBucket: "flickmemo-qwe.firebasestorage.app",
+    messagingSenderId: "998795111125",
+    appId: "1:998795111125:web:8e40535e8f2623283a105c",
+    measurementId: "G-ZDRMZ5VLY9"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+
+const msg = document.getElementById('msg');
+function setMsg(text) { if (msg) msg.textContent = text; }
+
+async function performAuth() {
+    setMsg("Google 認証を実行しています...");
+    try {
+        await setPersistence(auth, browserLocalPersistence);
+
+        const provider = new GoogleAuthProvider();
+        provider.addScope('email');
+        provider.addScope('profile');
+        provider.setCustomParameters({ prompt: 'select_account' });
+
+        const result = await signInWithPopup(auth, provider);
+
+        // ★ 重要: Firebase IDトークン(user.getIdToken())ではなく
+        //         Google OAuth クレデンシャル(credentialFromResult)を使う
+        const googleCredential = GoogleAuthProvider.credentialFromResult(result);
+        const googleIdToken   = googleCredential?.idToken;
+        const googleAccessToken = googleCredential?.accessToken;
+
+        if (!googleIdToken && !googleAccessToken) {
+            throw new Error('Google クレデンシャルの取得に失敗しました');
+        }
+
+        setMsg("ログイン成功！ウィンドウを閉じています...");
+
+        // 拡張機能のサイドパネル（window.opener）に結果を送る
+        if (window.opener) {
+            window.opener.postMessage({
+                type: 'FLICKMEMO_AUTH_SUCCESS',
+                uid: result.user.uid,
+                // Google OAuth トークン（Firebase IDトークンとは別物）
+                googleIdToken:    googleIdToken    || null,
+                googleAccessToken: googleAccessToken || null,
+                displayName: result.user.displayName,
+                email: result.user.email,
+                photoURL: result.user.photoURL
+            }, '*');
+        }
+
+        setTimeout(() => window.close(), 800);
+    } catch (err) {
+        console.error("Auth error:", err);
+        setMsg("ログインに失敗しました: " + (err.message || ""));
+        setTimeout(() => window.close(), 3000);
+    }
+}
+
+performAuth();
+</file>
+
+<file path="firebase.json">
+{
+  "database": {
+    "rules": "database.rules.json"
+  },
+  "hosting": {
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  }
+}
+</file>
+
+<file path="fileTransfer.js">
+import { getDatabase, ref, set, push, onValue, off, remove, get, onDisconnect } from "firebase/database";
+
+export class FileTransferManager {
+    constructor(auth, db, onStatusUpdate, onFileReceived, onProgress) {
+        this.auth = auth;
+        this.db = db;
+        this.onStatusUpdate = onStatusUpdate || (() => {});
+        this.onFileReceived = onFileReceived || (() => {});
+        this.onProgress = onProgress || (() => {});
+
+        this.deviceId = this.getOrCreateDeviceId();
+        this.deviceName = this.detectDeviceName();
+        this.peerConnection = null;
+        this.dataChannel = null;
+        this.activeDevices = {};
+        this.currentMode = 'AUTO';
+        this.localGoServerUrl = null;
+
+        this.receiveBuffer = [];
+        this.receivedSize = 0;
+        this.incomingFileInfo = null;
+        this.heartbeatTimer = null;
+        this.currentRoomId = null;
+
+        this.isE2EEEnabled = true;
+        this.isGuestMode = false;
+        this.cryptoKey = null;
+    }
+
+    getOrCreateDeviceId() {
+        let id = localStorage.getItem('flickmemo_device_id');
+        if (!id) {
+            id = 'dev_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString(36);
+            localStorage.setItem('flickmemo_device_id', id);
+        }
+        return id;
+    }
+
+    detectDeviceName() {
+        const ua = navigator.userAgent.toLowerCase();
+        let name = "Web Browser";
+        if (ua.includes("iphone")) name = "iPhone";
+        else if (ua.includes("ipad")) name = "iPad";
+        else if (ua.includes("android")) name = "Android";
+        else if (ua.includes("macintosh") || ua.includes("mac os x")) name = "Mac";
+        else if (ua.includes("windows")) name = "Windows PC";
+        else if (ua.includes("linux")) name = "Linux PC";
+        return `${name} (${this.deviceId.substring(4, 8)})`;
+    }
+
+    async initLocalGoServerCheck() {
+        // Go local server checks bypassed for pure JS/WebRTC simplicity
+        this.localGoServerUrl = null;
+    }
+
+    async generateEncryptionKey() {
+        if (!this.cryptoKey) {
+            const keyMaterial = new TextEncoder().encode("FlickMemo_AES256_GCM_SecretKey_2026");
+            const hash = await window.crypto.subtle.digest("SHA-256", keyMaterial);
+            this.cryptoKey = await window.crypto.subtle.importKey(
+                "raw",
+                hash,
+                { name: "AES-GCM" },
+                false,
+                ["encrypt", "decrypt"]
+            );
+        }
+        return this.cryptoKey;
+    }
+
+    async encryptChunk(buffer) {
+        if (!this.isE2EEEnabled) return buffer;
+        const key = await this.generateEncryptionKey();
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const encrypted = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, buffer);
+        const combined = new Uint8Array(iv.byteLength + encrypted.byteLength);
+        combined.set(iv, 0);
+        combined.set(new Uint8Array(encrypted), iv.byteLength);
+        return combined.buffer;
+    }
+
+    async decryptChunk(buffer) {
+        if (!this.isE2EEEnabled) return buffer;
+        try {
+            const key = await this.generateEncryptionKey();
+            const iv = buffer.slice(0, 12);
+            const data = buffer.slice(12);
+            return await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(iv) }, key, data);
+        } catch (e) {
+            return buffer;
+        }
+    }
+
+    startDevicePresence() {
+        if (this.isGuestMode) return;
+        const user = this.auth?.currentUser;
+        if (!user) return;
+
+        const devRef = ref(this.db, `users/${user.uid}/devices/${this.deviceId}`);
+        const signalingRef = ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`);
+        const answersRef = ref(this.db, `users/${user.uid}/answers/${this.deviceId}`);
+
+        onDisconnect(devRef).remove();
+        onDisconnect(signalingRef).remove();
+        onDisconnect(answersRef).remove();
+
+        const updatePresence = () => {
+            set(devRef, {
+                id: this.deviceId,
+                name: this.deviceName,
+                online: true,
+                updatedAt: Date.now()
+            });
+        };
+
+        updatePresence();
+
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = setInterval(updatePresence, 20000);
+
+        onValue(signalingRef, (snapshot) => {
+            const data = snapshot.val();
+            if (data && data.offer) {
+                this.handleIncomingOffer(data.fromDeviceId, data.offer, `users/${user.uid}`);
+                remove(signalingRef);
+            }
+        });
+
+        const allDevicesRef = ref(this.db, `users/${user.uid}/devices`);
+        onValue(allDevicesRef, (snapshot) => {
+            const data = snapshot.val() || {};
+            this.activeDevices = {};
+            const now = Date.now();
+            Object.keys(data).forEach(id => {
+                const dev = data[id];
+                if (id !== this.deviceId && dev && (now - (dev.updatedAt || 0) < 25000)) {
+                    this.activeDevices[id] = dev;
+                } else if (dev && (now - (dev.updatedAt || 0) >= 25000)) {
+                    remove(ref(this.db, `users/${user.uid}/devices/${id}`));
+                }
+            });
+            this.onStatusUpdate('devices_updated', this.activeDevices);
+        });
+    }
+
+    joinRoom(roomId) {
+        if (!roomId) return;
+        this.leaveRoom(); // 古いリスナーを全て解除してから入る
+        this.currentRoomId = roomId;
+        this._myJoinedAt = Date.now();
+        this._roomUnsubscribers = []; // リスナー解除関数の配列
+
+        const roomMemberRef  = ref(this.db, `public_rooms/${roomId}/members/${this.deviceId}`);
+        const roomSignalingRef = ref(this.db, `public_rooms/${roomId}/signaling/${this.deviceId}`);
+        const roomAnswersRef = ref(this.db, `public_rooms/${roomId}/answers/${this.deviceId}`);
+
+        try {
+            onDisconnect(roomMemberRef).remove().catch(() => {});
+            onDisconnect(roomSignalingRef).remove().catch(() => {});
+            onDisconnect(roomAnswersRef).remove().catch(() => {});
+
+            set(roomMemberRef, {
+                id: this.deviceId,
+                name: this.deviceName,
+                joinedAt: this._myJoinedAt
+            }).catch(err => console.warn("Room join warning:", err.message));
+        } catch (e) {}
+
+        // シグナリングOffer受信リスナー (answerer側)
+        const unsubSignaling = onValue(roomSignalingRef, (snapshot) => {
+            const data = snapshot.val();
+            if (data && data.offer) {
+                this.handleIncomingOffer(data.fromDeviceId, data.offer, `public_rooms/${roomId}`);
+                remove(roomSignalingRef).catch(() => {});
+            }
+        }, (err) => console.warn("Room signaling error:", err.message));
+        this._roomUnsubscribers.push(unsubSignaling);
+
+        // メンバー監視リスナー — 後から入った方がcaller
+        const membersRef = ref(this.db, `public_rooms/${roomId}/members`);
+        const unsubMembers = onValue(membersRef, (snapshot) => {
+            // このルームIDが既に無効なら無視（leaveRoom後に遅れて発火する場合の防御）
+            if (this.currentRoomId !== roomId) return;
+
+            const members = snapshot.val() || {};
+            const otherIds = Object.keys(members).filter(id => id !== this.deviceId);
+            if (otherIds.length > 0) {
+                const otherId = otherIds[0];
+                const otherJoinedAt = members[otherId]?.joinedAt || 0;
+                if (this._myJoinedAt > otherJoinedAt) {
+                    // 既に接続試行中なら重複発火させない
+                    if (!this._connectingTo) {
+                        this._connectingTo = otherId;
+                        this.onStatusUpdate('room_member_joined', { roomId, otherDeviceId: otherId });
+                    }
+                }
+            }
+        }, (err) => console.warn("Room members error:", err.message));
+        this._roomUnsubscribers.push(unsubMembers);
+
+        this.onStatusUpdate('room_joined', { roomId });
+    }
+
+    leaveRoom() {
+        // 全てのRTDBリスナーを解除
+        if (this._roomUnsubscribers) {
+            this._roomUnsubscribers.forEach(unsub => { try { unsub(); } catch(e) {} });
+            this._roomUnsubscribers = [];
+        }
+        this._connectingTo = null;
+
+        if (this.currentRoomId) {
+            const roomId = this.currentRoomId;
+            remove(ref(this.db, `public_rooms/${roomId}/members/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `public_rooms/${roomId}/signaling/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `public_rooms/${roomId}/answers/${this.deviceId}`)).catch(() => {});
+            this.currentRoomId = null;
+            this.onStatusUpdate('room_left');
+        }
+    }
+
+    stopDevicePresence() {
+        clearInterval(this.heartbeatTimer);
+        this.leaveRoom();
+        const user = this.auth?.currentUser;
+        if (user) {
+            remove(ref(this.db, `users/${user.uid}/devices/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `users/${user.uid}/answers/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`)).catch(() => {});
+        }
+        this.cleanupPeerConnection();
+    }
+
+    cleanupPeerConnection() {
+        this._connectingTo = null;
+        if (this.dataChannel) {
+            // oncloseを先にnullにして、明示的クリーンアップ時のイベント誤発火を防ぐ
+            this.dataChannel.onclose = null;
+            this.dataChannel.onmessage = null;
+            try { this.dataChannel.close(); } catch (e) {}
+            this.dataChannel = null;
+        }
+        if (this.peerConnection) {
+            this.peerConnection.onicecandidate = null;
+            this.peerConnection.onconnectionstatechange = null;
+            this.peerConnection.ondatachannel = null;
+            try { this.peerConnection.close(); } catch (e) {}
+            this.peerConnection = null;
+        }
+        this.receiveBuffer = [];
+        this.receivedSize = 0;
+        this.incomingFileInfo = null;
+    }
+
+    determineOptimalMode(targetDevice, file) {
+        if (this.currentMode !== 'AUTO') {
+            return this.currentMode;
+        }
+        if (targetDevice && targetDevice.online) {
+            return 'LAN_P2P';
+        }
+        return 'WAN_P2P';
+    }
+
+    createPeerConnection(targetDeviceId, basePath) {
+        this.cleanupPeerConnection();
+
+        const config = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+
+        const pc = new RTCPeerConnection(config);
+
+        pc.onicecandidate = (event) => {
+            if (event.candidate && targetDeviceId && basePath) {
+                const candRef = ref(this.db, `${basePath}/candidates/${targetDeviceId}`);
+                push(candRef, JSON.stringify(event.candidate));
+            }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            if (pc.iceConnectionState === 'connected') {
+                this.onStatusUpdate('p2p_connected', { targetDeviceId });
+            } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                this.onStatusUpdate('p2p_disconnected', { targetDeviceId });
+            }
+        };
+
+        return pc;
+    }
+
+    async connectToDevice(targetDeviceId, isRoom = false) {
+        const basePath = isRoom && this.currentRoomId 
+            ? `public_rooms/${this.currentRoomId}` 
+            : (this.auth?.currentUser ? `users/${this.auth.currentUser.uid}` : null);
+
+        if (!basePath) throw new Error("通信パスの初期化に失敗しました。送信権限がありません。");
+
+        this.peerConnection = this.createPeerConnection(targetDeviceId, basePath);
+        this.dataChannel = this.peerConnection.createDataChannel("flickmemo_transfer", { ordered: true });
+        this.setupDataChannelHandlers(this.dataChannel);
+
+        const offer = await this.peerConnection.createOffer();
+        await this.peerConnection.setLocalDescription(offer);
+
+        const sigRef = ref(this.db, `${basePath}/signaling/${targetDeviceId}`);
+        await set(sigRef, {
+            fromDeviceId: this.deviceId,
+            offer: JSON.stringify(offer),
+            timestamp: Date.now()
+        });
+
+        const ansRef = ref(this.db, `${basePath}/answers/${this.deviceId}`);
+        const handleAnswerSnapshot = async (snapshot) => {
+            const data = snapshot.val();
+            if (data && data.answer) {
+                try {
+                    const answer = JSON.parse(data.answer);
+                    if (this.peerConnection && this.peerConnection.signalingState === 'have-local-offer') {
+                        await this.peerConnection.setRemoteDescription(answer);
+                        off(ansRef, 'value', handleAnswerSnapshot);
+                        remove(ansRef);
+                    }
+                } catch (err) {
+                    console.warn("setRemoteDescription skipped:", err.message);
+                }
+            }
+        };
+        onValue(ansRef, handleAnswerSnapshot);
+
+        const candRef = ref(this.db, `${basePath}/candidates/${this.deviceId}`);
+        onValue(candRef, (snapshot) => {
+            const data = snapshot.val() || {};
+            Object.values(data).forEach(async (candStr) => {
+                try {
+                    if (this.peerConnection && this.peerConnection.signalingState !== 'closed') {
+                        const cand = JSON.parse(candStr);
+                        await this.peerConnection.addIceCandidate(cand);
+                    }
+                } catch (e) {}
+            });
+        });
+    }
+
+    async handleIncomingOffer(fromDeviceId, offerStr, basePath) {
+        const offer = JSON.parse(offerStr);
+        this.peerConnection = this.createPeerConnection(fromDeviceId, basePath);
+
+        this.peerConnection.ondatachannel = (event) => {
+            this.dataChannel = event.channel;
+            this.setupDataChannelHandlers(this.dataChannel);
+        };
+
+        await this.peerConnection.setRemoteDescription(offer);
+        const answer = await this.peerConnection.createAnswer();
+        await this.peerConnection.setLocalDescription(answer);
+
+        const ansRef = ref(this.db, `${basePath}/answers/${fromDeviceId}`);
+        await set(ansRef, {
+            fromDeviceId: this.deviceId,
+            answer: JSON.stringify(answer),
+            timestamp: Date.now()
+        });
+
+        const candRef = ref(this.db, `${basePath}/candidates/${this.deviceId}`);
+        onValue(candRef, (snapshot) => {
+            const data = snapshot.val() || {};
+            Object.values(data).forEach(async (candStr) => {
+                try {
+                    if (this.peerConnection && this.peerConnection.signalingState !== 'closed') {
+                        const cand = JSON.parse(candStr);
+                        await this.peerConnection.addIceCandidate(cand);
+                    }
+                } catch (e) {}
+            });
+        });
+    }
+
+    setupDataChannelHandlers(dc) {
+        dc.binaryType = 'arraybuffer';
+
+        dc.onopen = () => {
+            this.onStatusUpdate('channel_open');
+        };
+
+        dc.onmessage = async (event) => {
+            if (typeof event.data === 'string') {
+                try {
+                    const meta = JSON.parse(event.data);
+                    if (meta.type === 'file_header') {
+                        this.incomingFileInfo = meta;
+                        this.receiveBuffer = [];
+                        this.receivedSize = 0;
+                        this.onProgress(0, meta.size, meta.name, 'rec');
+                    } else if (meta.type === 'file_end') {
+                        const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
+                        const safeName = this.sanitizeFilename(this.incomingFileInfo.name);
+                        this.onFileReceived(blob, safeName);
+                        this.receiveBuffer = [];
+                        this.receivedSize = 0;
+                        this.incomingFileInfo = null;
+                        this.onStatusUpdate('remote_transfer_lock', false);
+                    } else if (meta.type === 'TRANSFER_LOCK') {
+                        this.onStatusUpdate('remote_transfer_lock', true);
+                    } else if (meta.type === 'TRANSFER_UNLOCK') {
+                        this.onStatusUpdate('remote_transfer_lock', false);
+                    } else if (meta.type === 'EXPLICIT_DISCONNECT') {
+                        this.cleanupPeerConnection();
+                        this.onStatusUpdate('p2p_disconnected');
+                    }
+                } catch (e) {}
+            } else if (event.data instanceof ArrayBuffer) {
+                const decrypted = await this.decryptChunk(event.data);
+                this.receiveBuffer.push(decrypted);
+                this.receivedSize += decrypted.byteLength;
+                if (this.incomingFileInfo) {
+                    this.onProgress(this.receivedSize, this.incomingFileInfo.size, this.incomingFileInfo.name, 'rec');
+                }
+            }
+        };
+
+        dc.onclose = () => {
+            this.onStatusUpdate('channel_close');
+            this.cleanupPeerConnection();
+        };
+    }
+
+    sendControlMessage(msg) {
+        if (this.dataChannel && this.dataChannel.readyState === 'open') {
+            try {
+                this.dataChannel.send(JSON.stringify(msg));
+            } catch (e) {}
+        }
+    }
+
+    disconnect() {
+        this.sendControlMessage({ type: 'EXPLICIT_DISCONNECT' });
+        this.leaveRoom();
+        this.cleanupPeerConnection();
+        this.onStatusUpdate('p2p_disconnected');
+    }
+
+    async sendFileP2P(file) {
+        if (this.isGuestMode || !this.auth?.currentUser) {
+            throw new Error("ファイルを送信するにはGoogleアカウントでのログインが必要です（ゲストは受信のみ利用可能）。");
+        }
+
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            throw new Error("P2P接続が確立されていません。送信先デバイスを選択してください。");
+        }
+
+        this.sendControlMessage({ type: 'TRANSFER_LOCK' });
+
+        try {
+            const CHUNK_SIZE = 64 * 1024;
+            const header = {
+                type: 'file_header',
+                name: file.name,
+                size: file.size,
+                mime: file.type || 'application/octet-stream'
+            };
+
+            this.dataChannel.send(JSON.stringify(header));
+
+            let offset = 0;
+            const total = file.size;
+            this.dataChannel.bufferedAmountLowThreshold = 256 * 1024;
+
+            const readAndSendChunk = async () => {
+                while (offset < total) {
+                    if (this.dataChannel.bufferedAmount > 1024 * 1024) {
+                        await new Promise(resolve => {
+                            this.dataChannel.onbufferedamountlow = () => {
+                                this.dataChannel.onbufferedamountlow = null;
+                                resolve();
+                            };
+                        });
+                    }
+
+                    const slice = file.slice(offset, offset + CHUNK_SIZE);
+                    const rawBuffer = await slice.arrayBuffer();
+                    const encryptedBuffer = await this.encryptChunk(rawBuffer);
+                    this.dataChannel.send(encryptedBuffer);
+
+                    offset += rawBuffer.byteLength;
+                    this.onProgress(offset, total, file.name, 'send');
+                }
+
+                this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
+            };
+
+            await readAndSendChunk();
+        } finally {
+            this.sendControlMessage({ type: 'TRANSFER_UNLOCK' });
+        }
+    }
+
+    sanitizeFilename(name) {
+        if (!name) return 'download_file';
+        let clean = name.replace(/[\/\?%*:|"<>]/g, '_');
+        clean = clean.replace(/\.\./g, '_');
+        return clean.trim() || 'download_file';
+    }
+}
+</file>
+
+<file path="package.json">
+{
+    "name": "flickmemo",
+    "version": "1.3.34",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "deploy": "node bump.js && npm run build && git add . && git commit -m \"auto deploy: update code and version\" && git push && firebase deploy"
+    },
+    "dependencies": {
+        "firebase": "^10.12.0",
+        "jszip": "^3.10.1",
+        "prismjs": "^1.29.0"
+    },
+    "devDependencies": {
+        "vite": "^5.0.0"
+    }
+}
+</file>
+
+<file path="manifest.json">
+{
+    "manifest_version": 3,
+    "name": "FlickMemo - 超軽量リアルタイムメモ帳",
+    "version": "1.3.34",
+    "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
+    "action": {
+        "default_title": "FlickMemoをサイドパネルで開く"
+    },
+    "side_panel": {
+        "default_path": "index.html"
+    },
+    "background": {
+        "service_worker": "background.js"
+    },
+    "oauth2": {
+        "client_id": "998795111125-0or2js8p7848ht26va94deqhphtrv2o1.apps.googleusercontent.com",
+        "scopes": ["email", "profile", "openid"]
+    },
+    "permissions": [
+        "sidePanel",
+        "identity",
+        "storage",
+        "contextMenus",
+        "tabs",
+        "windows"
+    ],
+    "omnibox": {
+        "keyword": "fm"
+    },
+    "commands": {
+        "_execute_action": {
+            "suggested_key": {
+                "default": "Ctrl+Shift+M",
+                "mac": "Command+Shift+M"
+            },
+            "description": "FlickMemoを開く"
+        }
+    },
+    "content_security_policy": {
+        "extension_pages": "script-src 'self'; object-src 'self';"
+    }
+}
+</file>
+
 <file path="index.html">
 <!DOCTYPE html>
 <html lang="ja">
@@ -419,15 +1156,9 @@ self.onmessage = e => {
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
     <link rel="stylesheet" href="style.css">
-    <script type="importmap">
-{
-    "imports": {
-    "firebase/app": "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js",
-    "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js",
-    "firebase/database": "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js"
-        }
-}
-</script>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
 </head>
 
 <body>
@@ -453,6 +1184,9 @@ self.onmessage = e => {
                 <button id="btn-google" class="m3-button btn-google">
                     <span class="material-symbols-outlined">login</span> Google でログイン
                 </button>
+                <button id="btn-guest-login" class="btn-text-subtle" type="button">
+                    ログインせずに使う (オフラインメモ / 受信のみ)
+                </button>
             </div>
         </div>
     </div>
@@ -474,13 +1208,15 @@ self.onmessage = e => {
                     <span class="status-dot"></span>
                     <span id="status-text">同期完了</span>
                 </div>
+                <button id="btn-header-transfer" class="m3-icon-button" title="最速ファイル送信">
+                    <span class="material-symbols-outlined">send_and_archive</span>
+                </button>
                 <button id="btn-settings-trigger" class="m3-icon-button" title="設定">
                     <span class="material-symbols-outlined">settings</span>
                 </button>
             </div>
         </header>
 
-        <!-- ★ main-layout を基準にバッジを絶対配置 -->
         <div class="main-layout" id="main-layout">
             <aside class="sidebar" id="sidebar-container">
                 <div class="sidebar-tabs">
@@ -495,7 +1231,7 @@ self.onmessage = e => {
                 <div class="sidebar-top">
                     <div class="m3-search-bar">
                         <span class="material-symbols-outlined">search</span>
-                        <input type="text" id="search-input" placeholder="検索...">
+                        <input type="text" id="search-input" placeholder="検索... (Ctrl+F)">
                     </div>
                     <button id="btn-new" class="m3-fab-button">
                         <span class="material-symbols-outlined">add</span> 新しいメモ
@@ -519,7 +1255,7 @@ self.onmessage = e => {
                 </div>
             </aside>
 
-            <main class="editor-area">
+            <main class="editor-area" id="editor-area">
                 <div class="editor-toolbar hidden" id="editor-toolbar">
                     <div class="toolbar-group">
                         <button id="btn-undo" class="m3-icon-button" title="元に戻す (Undo)" disabled>
@@ -550,14 +1286,232 @@ self.onmessage = e => {
                 <input type="text" id="note-title-input" class="m3-title-input hidden" placeholder="タイトル（未入力時は自動抽出）"
                     disabled>
 
-                <!-- テキスト入力欄 -->
                 <textarea id="note-body" class="m3-text-area" placeholder="メモを入力..." disabled></textarea>
 
-                <!-- 自動変身コードビュー -->
                 <div id="note-code-view" class="m3-code-view hidden"></div>
+
+                <!-- ファイル送信・受信用全画面パネル -->
+                <div id="transfer-panel" class="transfer-panel hidden">
+                    <div class="transfer-header-card">
+                        <div class="transfer-top-bar">
+                            <div class="transfer-header-left">
+                                <button id="btn-back-to-notes" class="m3-icon-button" title="メモに戻る">
+                                    <span class="material-symbols-outlined">arrow_back</span>
+                                </button>
+                                <h2><span class="material-symbols-outlined">send_and_archive</span> ファイル送信</h2>
+                            </div>
+                        </div>
+                        <div class="transfer-mode-selector-group">
+                            <label class="custom-dropdown-label">
+                                <span class="material-symbols-outlined">bolt</span> 送信モードを選択
+                            </label>
+                            <!-- 100% 独自デザイン Material 3 カスタムドロップダウン -->
+                            <div class="m3-custom-dropdown" id="custom-mode-dropdown">
+                                <button type="button" class="dropdown-trigger-btn" id="dropdown-trigger">
+                                    <span id="selected-mode-text" class="selected-mode-text">
+                                        <span class="material-symbols-outlined mode-icon">auto_awesome</span> 自動判別（スマート最適化）
+                                    </span>
+                                    <span class="material-symbols-outlined dropdown-arrow">expand_more</span>
+                                </button>
+                                <ul class="dropdown-menu-list hidden" id="dropdown-menu-list">
+                                    <li class="dropdown-menu-item selected" data-value="AUTO">
+                                        <span class="material-symbols-outlined">auto_awesome</span>
+                                        <div class="item-text-group">
+                                            <span class="item-title">自動判別（スマート最適化）</span>
+                                            <span class="item-desc">ネットワーク環境やファイルサイズを自動解析して最適化</span>
+                                        </div>
+                                        <span class="material-symbols-outlined check-icon">check</span>
+                                    </li>
+                                    <li class="dropdown-menu-item" data-value="LAN_P2P">
+                                        <span class="material-symbols-outlined">bolt</span>
+                                        <div class="item-text-group">
+                                            <span class="item-title">同一Wi-Fi / LAN WebRTC P2P</span>
+                                            <span class="item-desc">同一ネットワーク内・サーバー中継なし・回線速度上限</span>
+                                        </div>
+                                        <span class="material-symbols-outlined check-icon hidden">check</span>
+                                    </li>
+                                    <li class="dropdown-menu-item" data-value="WAN_P2P">
+                                        <span class="material-symbols-outlined">public</span>
+                                        <div class="item-text-group">
+                                            <span class="item-title">インターネット P2P (STUN)</span>
+                                            <span class="item-desc">別Wi-Fi / 4G / 5G同士のダイレクト通信</span>
+                                        </div>
+                                        <span class="material-symbols-outlined check-icon hidden">check</span>
+                                    </li>
+                                    <li class="dropdown-menu-item" data-value="CLOUD_RELAY">
+                                        <span class="material-symbols-outlined">cloud</span>
+                                        <div class="item-text-group">
+                                            <span class="item-title">クラウドストレージリレイ</span>
+                                            <span class="item-desc">オフライン時や厳重プロキシ環境での安全なクラウド保存</span>
+                                        </div>
+                                        <span class="material-symbols-outlined check-icon hidden">check</span>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+
+                    <!-- STEP 1: 接続先選択・接続画面 -->
+                    <div id="transfer-step-connect" class="transfer-step-connect">
+                        <!-- ★ 暗号化設定トグル -->
+                        <div class="e2ee-toggle-card">
+                            <div class="e2ee-label-group">
+                                <span class="material-symbols-outlined">lock</span>
+                                <span>暗号化</span>
+                            </div>
+                            <label class="m3-switch">
+                                <input type="checkbox" id="toggle-e2ee" checked>
+                                <span class="m3-switch-slider"></span>
+                            </label>
+                        </div>
+
+                        <!-- ★ 送信先選択 セグメントタブ -->
+                        <div class="target-segmented-tabs">
+                            <button id="btn-target-tab-devices" class="target-tab-btn active" type="button">
+                                <span class="material-symbols-outlined">devices</span> マイデバイス
+                            </button>
+                            <button id="btn-target-tab-room" class="target-tab-btn" type="button">
+                                <span class="material-symbols-outlined">link</span> 合言葉・共有リンク
+                            </button>
+                        </div>
+
+                        <!-- 1. マイデバイスパネル -->
+                        <div id="target-panel-devices" class="target-panel-content">
+                            <div id="device-chip-list" class="device-chip-list">
+                                <span class="no-device-text">他デバイスを検索中...</span>
+                            </div>
+                        </div>
+
+                        <!-- 2. 合言葉・共有リンクパネル -->
+                        <div id="target-panel-room" class="target-panel-content hidden">
+                            <div class="room-action-container">
+                                <!-- 共有リンク発行セクション -->
+                                <div class="room-section-box">
+                                    <div class="room-section-header">
+                                        <span class="material-symbols-outlined">share</span>
+                                        <span>方法1: ワンタップ共有リンクを発行</span>
+                                    </div>
+                                    <p class="room-section-desc">発行されたリンクを開くだけで、相手と即座にP2P接続できます</p>
+                                    <button id="btn-create-room" class="m3-button btn-primary-sm full-width" type="button">
+                                        <span class="material-symbols-outlined">add_link</span> 共有URLを発行してコピー
+                                    </button>
+                                </div>
+
+                                <div class="room-divider-badge"><span>または (OR)</span></div>
+
+                                <!-- 合言葉接続セクション -->
+                                <div class="room-section-box">
+                                    <div class="room-section-header">
+                                        <span class="material-symbols-outlined">key</span>
+                                        <span>方法2: 合言葉を入力して接続</span>
+                                    </div>
+                                    <p class="room-section-desc">同じ合言葉 (例: 123456 / room_a) を入力した端末同士で接続します</p>
+                                    <div class="room-input-group">
+                                        <input type="text" id="room-code-input" class="m3-text-input" placeholder="合言葉 (例: 123456) を入力...">
+                                        <button id="btn-join-room" class="m3-button btn-secondary-sm" type="button">
+                                            <span class="material-symbols-outlined">meeting_room</span> 接続
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- アクティブ接続待機ステータスカード -->
+                                <div id="room-active-status" class="room-active-status hidden">
+                                    <div class="room-status-info">
+                                        <span class="material-symbols-outlined status-pulse">sensors</span>
+                                        <span id="room-status-text">現在の合言葉: 123456 (相手の接続を待機中...)</span>
+                                    </div>
+                                    <button id="btn-leave-room" class="m3-icon-button-danger" title="切断" type="button">
+                                        <span class="material-symbols-outlined">close</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- STEP 2: 接続完了・ファイル受送信画面（接続時のみ表示） -->
+                    <div id="transfer-step-session" class="transfer-step-session hidden">
+                        <!-- 接続中ヘッダーカード -->
+                        <div class="session-connected-card">
+                            <div class="session-info-group">
+                                <span class="material-symbols-outlined session-connected-icon">swap_horizontal_circle</span>
+                                <div>
+                                    <div id="session-device-name" class="session-device-name">接続中: 相手端末</div>
+                                    <div class="session-sub-text">双方向でファイルを何度でも送受信できます</div>
+                                </div>
+                            </div>
+                            <button id="btn-disconnect-session" class="m3-icon-button-danger" title="切断" type="button">
+                                <span class="material-symbols-outlined">link_off</span>
+                            </button>
+                        </div>
+
+                        <!-- 相手の送信中ロック警告バナー -->
+                        <div id="transfer-lock-banner" class="transfer-lock-banner hidden">
+                            <span class="material-symbols-outlined">sync</span>
+                            <span>相手端末がファイル送信中です。完了までお待ちください...</span>
+                        </div>
+
+                        <!-- ドロップゾーン -->
+                        <div id="dropzone-area" class="dropzone-area">
+                            <input type="file" id="file-input" class="hidden" multiple>
+                            <div class="dropzone-content">
+                                <span class="material-symbols-outlined dropzone-icon">upload_file</span>
+                                <p class="dropzone-hint">クリックまたはドラッグ＆ドロップでファイルを選択</p>
+                                <button id="btn-browse-files" class="m3-button btn-secondary-sm" type="button">
+                                    <span class="material-symbols-outlined">folder_open</span> ファイルを選択
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 送信ファイル待機エリア -->
+                        <div id="staged-files-card" class="staged-files-card hidden">
+                            <div class="staged-card-header">
+                                <span class="staged-title">
+                                    <span class="material-symbols-outlined">description</span>
+                                    送信ファイル (<span id="staged-file-count">0</span>件)
+                                </span>
+                                <button id="btn-clear-staged" class="btn-text-danger" type="button">クリア</button>
+                            </div>
+                            <ul id="staged-file-list" class="staged-file-list"></ul>
+                            <div class="staged-action-row">
+                                <button id="btn-add-more-files" class="m3-button btn-secondary-sm" type="button">
+                                    <span class="material-symbols-outlined">add</span> 追加
+                                </button>
+                                <button id="btn-start-send" class="m3-button btn-primary-lg" type="button">
+                                    <span class="material-symbols-outlined">send</span> 送信開始
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- ゲストユーザー用 受信専用インフォバナー -->
+                        <div id="guest-receiver-banner" class="guest-receiver-banner hidden">
+                            <span class="material-symbols-outlined">downloading</span>
+                            <span>ゲストモード（受信専用）<br>相手端末からファイルが届くと自動でダウンロードされます</span>
+                        </div>
+
+                        <!-- 受信・送信履歴 -->
+                        <div class="transfers-history-card">
+                            <h4><span class="material-symbols-outlined">history</span> 受信・送信履歴</h4>
+                            <ul id="transfer-history-list" class="transfer-history-list">
+                                <li class="empty-history">履歴はありません</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div id="transfer-progress-card" class="transfer-progress-card hidden">
+                        <div class="progress-info-row">
+                            <span id="transfer-filename" class="transfer-filename">filename.zip</span>
+                            <span id="transfer-speed" class="transfer-speed">0.0 MB/s</span>
+                        </div>
+                        <div class="m3-progress-bar-bg">
+                            <div id="transfer-progress-fill" class="m3-progress-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <div class="progress-sub-row">
+                            <span id="transfer-status-label">転送中...</span>
+                            <span id="transfer-percent">0%</span>
+                        </div>
+                    </div>
+                </div>
             </main>
 
-            <!-- ★ スクロール領域に依存せず、画面右下・左下に完全に固定表示されるバッジ -->
             <div id="date-display" class="date-display-floating hidden">--月--日</div>
             <div id="char-count" class="char-count-floating hidden">0 文字</div>
         </div>
@@ -642,11 +1596,14 @@ self.onmessage = e => {
 
                         <div class="setting-item-box" style="margin-top:1rem;">
                             <div class="setting-text">
-                                <div class="setting-label">サインアウト</div>
-                                <div class="setting-desc">このデバイスからログアウトします</div>
+                                <div id="settings-account-label" class="setting-label">サインアウト</div>
+                                <div id="settings-account-desc" class="setting-desc">このデバイスからログアウトします</div>
                             </div>
                             <button id="btn-settings-logout-action" class="m3-button btn-danger-sm">
                                 <span class="material-symbols-outlined" style="font-size:16px;">logout</span> ログアウト
+                            </button>
+                            <button id="btn-settings-login-action" class="m3-button btn-primary-sm hidden">
+                                <span class="material-symbols-outlined" style="font-size:16px;">login</span> Googleでログイン
                             </button>
                         </div>
                     </div>
@@ -695,24 +1652,10 @@ self.onmessage = e => {
         <button id="btn-toast-action" class="snackbar-action hidden">元に戻す</button>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-typescript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-css.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
-
     <script type="module" src="app.js"></script>
 </body>
 
 </html>
-</file>
-
-<file path="version.json">
-{
-  "version": "1.1.16"
-}
 </file>
 
 <file path="style.css">
@@ -775,7 +1718,6 @@ html {
 
 ::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.15);
-    /* 常に薄く見えるためドラッグしやすい */
     border-radius: var(--m3-radius-full);
     transition: background 0.2s ease;
 }
@@ -1281,7 +2223,6 @@ select {
 }
 
 /* Editor */
-/* ★ .editor-area 自体は position: relative を外すか、バッジを外の main-layout に追従させる */
 .editor-area {
     flex: 1;
     display: flex;
@@ -1329,7 +2270,6 @@ select {
     font-weight: 400;
 }
 
-/* ★ 文字被りを100%防止するための超巨大な余白 */
 .m3-text-area {
     flex: 1;
     background: transparent;
@@ -1424,7 +2364,6 @@ select {
     border-color: var(--m3-border);
 }
 
-/* ★ バッジをスクロールコンテナ外（.main-layout）の右下・左下に完全固定（被りなし） */
 .date-display-floating {
     position: absolute;
     bottom: 1.2rem;
@@ -1814,8 +2753,6 @@ select {
         left: 1.5rem;
     }
 
-    /* スマホ時はサイドバーがないので左寄せ直す */
-
     .settings-dialog-discord {
         position: fixed;
         inset: 0;
@@ -1847,18 +2784,997 @@ select {
         padding: 0.5rem;
     }
 }
+
+/* Chrome拡張機能ポップアップ・サイドパネル最適化 */
+body.is-extension-popup {
+    width: 100%;
+    height: 100vh;
+    max-width: 800px;
+    max-height: 600px;
+}
+
+@media (max-width: 480px) {
+    body:not(.is-extension-popup) {
+        width: 100%;
+        height: 100%;
+        height: -webkit-fill-available;
+        height: 100dvh;
+        max-height: none !important;
+    }
+
+    .date-display-floating {
+        bottom: 0.5rem;
+        font-size: 0.68rem;
+    }
+
+    .char-count-floating {
+        bottom: 0.5rem;
+        font-size: 0.68rem;
+    }
+
+    .m3-title-input {
+        font-size: 1.1rem;
+    }
+
+    /* モバイル: 転送パネル最適化 */
+    .session-connected-card {
+        padding: 0.6rem 0.8rem;
+    }
+
+    .session-device-name {
+        font-size: 0.82rem;
+    }
+
+    .session-sub-text {
+        display: none; /* スマホでは補足テキスト非表示 */
+    }
+
+    .dropzone-area {
+        padding: 1rem 0.8rem;
+    }
+
+    .dropzone-icon {
+        font-size: 30px;
+        margin-bottom: 0.2rem;
+    }
+
+    .dropzone-hint {
+        font-size: 0.77rem;
+    }
+
+    .staged-card-header .staged-title {
+        font-size: 0.82rem;
+    }
+
+    .staged-action-row {
+        gap: 0.4rem;
+    }
+
+    .room-section-box {
+        padding: 0.7rem 0.8rem;
+    }
+
+    .room-section-desc {
+        font-size: 0.72rem;
+    }
+}
+
+/* ==========================================================================
+   ファイル送信 (DropZone 統合) & Material 3 カスタムドロップダウン スタイル
+   ========================================================================== */
+
+.main-layout.view-transfer .sidebar,
+.main-layout.view-transfer .editor-toolbar,
+.main-layout.view-transfer .m3-title-input,
+.main-layout.view-transfer .m3-text-area,
+.main-layout.view-transfer .m3-code-view {
+    display: none !important;
+}
+
+.main-layout.view-transfer .editor-area {
+    width: 100% !important;
+    position: relative !important;
+    transform: none !important;
+    z-index: 10 !important;
+    padding: 1rem;
+}
+
+.main-layout.view-transfer #transfer-panel {
+    display: flex !important;
+}
+
+.transfer-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+    height: 100%;
+    padding: 0.5rem 0.2rem;
+    overflow-y: auto;
+}
+
+.transfer-header-card {
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-lg);
+    padding: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.transfer-top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.8rem;
+    border-bottom: 1px solid var(--m3-border);
+}
+
+.transfer-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+.transfer-top-bar h2 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--m3-primary);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.btn-secondary-sm {
+    background: var(--m3-surface-container);
+    color: var(--m3-text);
+    border: 1px solid var(--m3-border);
+    padding: 0.4rem 0.9rem;
+    border-radius: var(--m3-radius-full);
+    font-size: 0.8rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: all 0.2s ease;
+}.transfer-mode-selector-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.custom-dropdown-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--m3-text-muted);
+    line-height: 1;
+}
+
+.custom-dropdown-label .material-symbols-outlined {
+    font-size: 1.1rem;
+    color: var(--m3-primary);
+    line-height: 1;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+/* ★ 100% 独自デザイン Material 3 カスタムドロップダウン */
+.m3-custom-dropdown {
+    position: relative;
+    width: 100%;
+}
+
+.dropdown-trigger-btn {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--m3-surface-container);
+    color: var(--m3-text);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 0.75rem 1rem;
+    font-size: 0.88rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s var(--m3-motion-curve);
+    outline: none;
+}
+
+.dropdown-trigger-btn:hover {
+    background: var(--m3-surface-hover);
+    border-color: var(--m3-primary);
+}
+
+.selected-mode-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    line-height: 1;
+}
+
+.selected-mode-text .mode-icon {
+    font-size: 1.15rem;
+    color: var(--m3-primary);
+    line-height: 1;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.dropdown-arrow {
+    color: var(--m3-primary);
+    transition: transform 0.2s ease;
+}
+
+.m3-custom-dropdown.open .dropdown-arrow {
+    transform: rotate(180deg);
+}
+
+.dropdown-menu-list {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    width: 100%;
+    background: #232427 !important;
+    border: 1px solid #3c4043 !important;
+    border-radius: var(--m3-radius-md);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85) !important;
+    z-index: 1000;
+    overflow: hidden;
+    list-style: none;
+    padding: 0.4rem 0;
+    opacity: 1 !important;
+    animation: fadeInDown 0.15s ease-out;
+}
+
+@keyframes fadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* STEP 1: 接続先選択画面 */
+.transfer-step-connect {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+/* 送信先セグメントタブ */
+.target-segmented-tabs {
+    display: flex;
+    background: var(--m3-surface-container-high);
+    border-radius: var(--m3-radius-full);
+    padding: 0.25rem;
+    gap: 0.25rem;
+    border: 1px solid var(--m3-border);
+    margin-top: 0.4rem;
+}
+
+.target-tab-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    background: transparent;
+    border: none;
+    color: var(--m3-text-muted);
+    padding: 0.5rem 1rem;
+    border-radius: var(--m3-radius-full);
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.target-tab-btn:hover {
+    color: var(--m3-text);
+}
+
+.target-tab-btn.active {
+    background: var(--m3-surface);
+    color: var(--m3-primary);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.target-panel-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.room-action-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.room-section-box {
+    background: var(--m3-surface-container);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.room-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--m3-primary);
+}
+
+.room-section-desc {
+    font-size: 0.76rem;
+    color: var(--m3-text-muted);
+    margin: 0;
+}
+
+.room-divider-badge {
+    text-align: center;
+    position: relative;
+    margin: 0.2rem 0;
+}
+
+.room-divider-badge:before {
+    content: "";
+    position: absolute;
+    top: 50%; left: 0; right: 0;
+    height: 1px;
+    background: var(--m3-border);
+    z-index: 1;
+}
+
+.room-divider-badge span {
+    position: relative;
+    z-index: 2;
+    background: var(--m3-surface);
+    padding: 0 0.8rem;
+    font-size: 0.72rem;
+    color: var(--m3-text-muted);
+}
+
+.room-input-group {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.full-width {
+    width: 100%;
+    justify-content: center;
+}
+
+.m3-text-input {
+    flex: 1;
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 0.5rem 0.8rem;
+    color: var(--m3-text);
+    font-size: 0.82rem;
+    outline: none;
+}
+
+.m3-text-input:focus {
+    border-color: var(--m3-primary);
+}
+
+.m3-icon-button-danger {
+    background: transparent;
+    border: none;
+    color: var(--m3-danger);
+    width: 32px;
+    height: 32px;
+    border-radius: var(--m3-radius-full);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.m3-icon-button-danger:hover {
+    background: rgba(234, 67, 53, 0.15);
+}
+
+.room-active-status {
+    background: rgba(43, 114, 219, 0.15);
+    border: 1px solid var(--m3-primary);
+    border-radius: var(--m3-radius-md);
+    padding: 0.7rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.room-status-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    color: var(--m3-primary);
+    font-weight: 500;
+}
+
+/* STEP 2: 接続中セッションヘッダー */
+.session-connected-card {
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-primary);
+    border-radius: var(--m3-radius-lg);
+    padding: 0.75rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    box-shadow: 0 2px 10px rgba(43, 114, 219, 0.12);
+}
+
+.session-connected-icon {
+    color: #34a853;
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.session-info-group {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.session-device-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--m3-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.session-sub-text {
+    font-size: 0.73rem;
+    color: var(--m3-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.btn-danger-sm {
+    background: rgba(234, 67, 53, 0.15);
+    color: var(--m3-danger);
+    border: 1px solid var(--m3-danger);
+    border-radius: var(--m3-radius-full);
+    padding: 0.4rem 0.9rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: all 0.2s ease;
+}
+
+.btn-danger-sm:hover {
+    background: var(--m3-danger);
+    color: #ffffff;
+}
+
+/* transfer-step-session: flex column with gaps between cards */
+.transfer-step-session {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+}
+
+/* 送信開始 コンパクトボタン（飛行機アイコン小さめ） */
+.btn-primary-lg {
+    background: var(--m3-primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--m3-radius-full);
+    padding: 0.45rem 1.1rem;
+    font-size: 0.83rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: all 0.18s ease;
+    box-shadow: 0 1px 6px rgba(43, 114, 219, 0.28);
+    white-space: nowrap;
+}
+
+.btn-primary-lg:hover {
+    filter: brightness(1.1);
+}
+
+.btn-primary-lg:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ドロップゾーン hint テキスト */
+.dropzone-hint {
+    font-size: 0.82rem;
+    color: var(--m3-text-muted);
+    margin: 0.25rem 0 0.5rem;
+}
+
+.transfer-lock-banner {
+    background: rgba(251, 188, 4, 0.15);
+    border: 1px solid #fbbc04;
+    color: #fbbc04;
+    border-radius: var(--m3-radius-md);
+    padding: 0.7rem 1rem;
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    animation: pulse 1.5s infinite;
+}
+
+.status-pulse-green {
+    color: #34a853;
+}
+
+.guest-receiver-banner {
+    background: rgba(43, 114, 219, 0.12);
+    border: 1px dashed var(--m3-primary);
+    border-radius: var(--m3-radius-lg);
+    padding: 1.8rem 1.2rem;
+    text-align: center;
+    color: var(--m3-primary);
+    font-size: 0.88rem;
+    font-weight: 500;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+}
+
+.status-pulse {
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 0.4; }
+    50% { opacity: 1; }
+    100% { opacity: 0.4; }
+}
+
+.dropdown-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.dropdown-menu-item:hover {
+    background: var(--m3-surface-hover);
+}
+
+.dropdown-menu-item.selected {
+    background: rgba(168, 199, 250, 0.12);
+    color: var(--m3-primary);
+}
+
+.item-text-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    flex: 1;
+}
+
+.item-title {
+    font-size: 0.88rem;
+    font-weight: 500;
+}
+
+.item-desc {
+    font-size: 0.72rem;
+    color: var(--m3-text-muted);
+}
+
+.check-icon {
+    font-size: 18px !important;
+    color: var(--m3-primary) !important;
+}
+
+.btn-text-subtle {
+    background: transparent;
+    border: none;
+    color: var(--m3-text-muted);
+    font-size: 0.78rem;
+    cursor: pointer;
+    text-decoration: underline;
+    margin-top: 0.8rem;
+    transition: color 0.2s ease;
+}
+
+.btn-text-subtle:hover {
+    color: var(--m3-text);
+}
+
+.e2ee-toggle-card {
+    background: var(--m3-surface-container);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 0.6rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.e2ee-label-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--m3-primary);
+}
+
+.m3-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+}
+
+.m3-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.m3-switch-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: var(--m3-border);
+    transition: .3s;
+    border-radius: 20px;
+}
+
+.m3-switch-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: var(--m3-text);
+    transition: .3s;
+    border-radius: 50%;
+}
+
+.m3-switch input:checked + .m3-switch-slider {
+    background-color: var(--m3-primary);
+}
+
+.m3-switch input:checked + .m3-switch-slider:before {
+    transform: translateX(16px);
+    background-color: #042f66;
+}
+
+/* 送信先マイデバイス一覧 */
+.device-list-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.device-list-title {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--m3-text-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    line-height: 1;
+}
+
+.device-list-title .material-symbols-outlined {
+    font-size: 1.1rem;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+.device-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.device-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--m3-surface-container);
+    border: 1px solid var(--m3-border);
+    color: var(--m3-text);
+    padding: 0.4rem 0.8rem;
+    border-radius: var(--m3-radius-full);
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.device-chip:hover,
+.device-chip.selected {
+    background: #042f66;
+    border-color: var(--m3-primary);
+    color: var(--m3-primary);
+}
+
+.no-device-text {
+    font-size: 0.78rem;
+    color: var(--m3-text-muted);
+    font-style: italic;
+}
+
+/* ドラッグ＆ドロップエリア */
+.dropzone-area {
+    background: rgba(30, 31, 32, 0.5);
+    border: 2px dashed var(--m3-border);
+    border-radius: var(--m3-radius-lg);
+    padding: 1.4rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.25s var(--m3-motion-curve);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ★ 送信ファイル待機エリア */
+.staged-files-card {
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-primary-border);
+    border-radius: var(--m3-radius-lg);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.staged-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--m3-border);
+}
+
+.staged-title {
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: var(--m3-primary);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.btn-text-danger {
+    background: transparent;
+    border: none;
+    color: var(--m3-danger);
+    font-size: 0.78rem;
+    cursor: pointer;
+}
+
+.staged-file-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.staged-file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--m3-surface-container);
+    border-radius: var(--m3-radius-sm);
+    padding: 0.5rem 0.8rem;
+    font-size: 0.82rem;
+}
+
+.staged-file-item .file-name {
+    color: var(--m3-text);
+    max-width: 70%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.staged-file-item .file-size {
+    color: var(--m3-text-muted);
+    font-size: 0.75rem;
+    margin-left: 0.5rem;
+}
+
+.btn-remove-staged {
+    background: transparent;
+    border: none;
+    color: var(--m3-text-muted);
+    cursor: pointer;
+    padding: 0.2rem;
+}
+
+.btn-remove-staged:hover {
+    color: var(--m3-danger);
+}
+
+.staged-action-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--m3-border);
+    margin-top: 0.4rem;
+}
+
+.dropzone-area:hover,
+.dropzone-area.dragover {
+    border-color: var(--m3-primary);
+    background: rgba(168, 199, 250, 0.08);
+}
+
+.dropzone-icon {
+    font-size: 40px;
+    color: var(--m3-primary);
+    margin-bottom: 0.4rem;
+    opacity: 0.75;
+}
+
+.dropzone-content h3 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    margin-bottom: 0.3rem;
+}
+
+.dropzone-content p {
+    font-size: 0.8rem;
+    color: var(--m3-text-muted);
+    margin-bottom: 1.2rem;
+}
+
+.btn-primary-sm {
+    background: var(--m3-primary);
+    color: var(--m3-on-primary);
+    padding: 0.5rem 1.2rem;
+    border-radius: var(--m3-radius-full);
+    border: none;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+}
+
+/* プログレスカード */
+.transfer-progress-card {
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.progress-info-row,
+.progress-sub-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+}
+
+.transfer-filename {
+    font-weight: 500;
+    color: var(--m3-text);
+    max-width: 70%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.transfer-speed {
+    color: var(--m3-primary);
+    font-weight: 700;
+    font-family: 'Roboto Mono', monospace;
+}
+
+.m3-progress-bar-bg {
+    width: 100%;
+    height: 8px;
+    background: var(--m3-surface-container);
+    border-radius: var(--m3-radius-full);
+    overflow: hidden;
+}
+
+.m3-progress-bar-fill {
+    height: 100%;
+    background: var(--m3-primary);
+    border-radius: var(--m3-radius-full);
+    transition: width 0.15s ease;
+}
+
+.transfers-history-card {
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-lg);
+    padding: 1rem;
+}
+
+.transfers-history-card h4 {
+    font-size: 0.85rem;
+    color: var(--m3-text-muted);
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.transfer-history-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.transfer-history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.8rem;
+    background: var(--m3-surface-container);
+    border-radius: var(--m3-radius-sm);
+    font-size: 0.82rem;
+}
+
+.empty-history {
+    font-size: 0.78rem;
+    color: var(--m3-text-muted);
+    text-align: center;
+    padding: 0.8rem 0;
+}
 </file>
 
 <file path="app.js">
 import { initializeApp } from "firebase/app";
+import JSZip from 'jszip';
 import {
     getAuth,
     signInWithPopup,
+    signInWithRedirect,
+    getRedirectResult,
     GoogleAuthProvider,
     signInWithCredential,
-    OAuthProvider,
     signOut,
-    onAuthStateChanged
+    onAuthStateChanged,
+    setPersistence,
+    browserLocalPersistence
 } from "firebase/auth";
 import {
     getDatabase,
@@ -1871,8 +3787,18 @@ import {
     off
 } from "firebase/database";
 
+import Prism from 'prismjs';
+import 'prismjs/components/prism-javascript';
+import 'prismjs/components/prism-typescript';
+import 'prismjs/components/prism-python';
+import 'prismjs/components/prism-css';
+import 'prismjs/components/prism-markup';
+import 'prismjs/components/prism-json';
+
+import { FileTransferManager } from './fileTransfer.js';
+
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.1.16";
+const APP_VERSION = "1.3.34";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1962,9 +3888,28 @@ const btnNew = document.getElementById('btn-new');
 const btnEmptyTrash = document.getElementById('btn-empty-trash');
 const trashNotice = document.getElementById('trash-notice');
 
-// モーダル・ユーザー情報
+// モーダル・ユーザー情報・タブ
 const tabNotes = document.getElementById('tab-notes');
 const tabTrash = document.getElementById('tab-trash');
+const btnHeaderTransfer = document.getElementById('btn-header-transfer');
+const btnBackToNotes = document.getElementById('btn-back-to-notes');
+const transferPanel = document.getElementById('transfer-panel');
+const deviceChipList = document.getElementById('device-chip-list');
+const dropzoneArea = document.getElementById('dropzone-area');
+const fileInput = document.getElementById('file-input');
+const btnBrowseFiles = document.getElementById('btn-browse-files');
+const transferProgressCard = document.getElementById('transfer-progress-card');
+const transferFilename = document.getElementById('transfer-filename');
+const transferSpeed = document.getElementById('transfer-speed');
+const transferProgressFill = document.getElementById('transfer-progress-fill');
+const transferStatusLabel = document.getElementById('transfer-status-label');
+const transferPercent = document.getElementById('transfer-percent');
+const transferHistoryList = document.getElementById('transfer-history-list');
+
+let transferManager = null;
+let selectedTargetDeviceId = null;
+let transferStartTime = 0;
+
 const deleteModal = document.getElementById('delete-modal');
 const btnDeleteCancel = document.getElementById('btn-delete-cancel');
 const btnDeleteConfirm = document.getElementById('btn-delete-confirm');
@@ -2001,6 +3946,10 @@ let lastMovedToTrashNote = null;
 let currentTab = 'notes';
 let toastTimer = null;
 let currentUserId = null;
+
+// 省メモリ・通信節約用の最適化タイマー＆差分キャッシュ
+let syncDebounceTimer = null;
+let lastSyncedData = {};
 
 function setupScrollFade(element) {
     if (!element) return;
@@ -2223,7 +4172,7 @@ function updateAutoCodeRender(forceRender = false) {
 
     if (hasAnyCode && (forceRender || document.activeElement !== noteBody)) {
         noteCodeView.innerHTML = html;
-        if (window.Prism) {
+        if (Prism) {
             Prism.highlightAllUnder(noteCodeView);
         }
 
@@ -2344,10 +4293,101 @@ function pushTextHistory(text) {
     historyDebounceTimer = setTimeout(() => {
         textHistory = textHistory.slice(0, historyIndex + 1);
         textHistory.push(text);
-        if (textHistory.length > 50) textHistory.shift();
+        if (textHistory.length > 25) textHistory.shift();
         historyIndex = textHistory.length - 1;
         updateUndoRedoButtons();
     }, 300);
+}
+
+// ★ アクティブなリスト項目だけのピンポイントDOM更新（全体DOM全破棄・全再構築を防止して省メモリ＆CPU化）
+function updateActiveNoteItemDOM(id) {
+    if (!id) return;
+    const activeLi = noteList.querySelector(`.note-item.active`);
+    if (!activeLi) {
+        renderList(searchInput.value);
+        return;
+    }
+    const note = currentNotes[id];
+    if (!note) return;
+    const titleSpan = activeLi.querySelector('.title');
+    if (titleSpan) {
+        const titleText = getNoteDisplayTitle(note);
+        if (note.pinned && currentTab === 'notes') {
+            titleSpan.innerHTML = `<span class="material-symbols-outlined pin-icon">push_pin</span> ${escapeHTML(titleText)}`;
+        } else {
+            titleSpan.textContent = titleText;
+        }
+    }
+}
+
+// ★ ローカル即時（0ms）反映＋RTDB通信デバウンス（750ms）で通信量を最少化
+function scheduleSaveNote(id, updatedFields) {
+    if (!id || !currentNotes[id]) return;
+
+    Object.assign(currentNotes[id], updatedFields);
+    currentNotes[id].updatedAt = Date.now();
+
+    updateActiveNoteItemDOM(id);
+    updateTitlePlaceholder(currentNotes[id]);
+    updateEditorFooter();
+
+    setStatus('saving', '保存中...');
+
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = setTimeout(() => {
+        flushPendingSave(id);
+    }, 750);
+}
+
+function flushPendingSave(id) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+
+    const note = id ? currentNotes[id] : (activeNoteId ? currentNotes[activeNoteId] : null);
+    if (!note || !note.id) return;
+
+    saveLocalNote(note);
+
+    const last = lastSyncedData[note.id];
+    if (last && last.body === note.body && last.title === note.title && last.pinned === note.pinned) {
+        setStatus('synced', 'クラウド同期完了');
+        return;
+    }
+
+    lastSyncedData[note.id] = { body: note.body, title: note.title, pinned: note.pinned };
+    syncUpdateNoteFields(note.id, {
+        body: note.body,
+        title: note.title,
+        pinned: note.pinned,
+        updatedAt: note.updatedAt
+    });
+    setStatus('synced', 'クラウド同期完了');
+}
+
+function updateExtensionBadge() {
+    if (typeof chrome !== 'undefined' && chrome?.action?.setBadgeText) {
+        const count = Object.values(currentNotes).filter(n => !n.deletedAt).length;
+        chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
+        chrome.action.setBadgeBackgroundColor({ color: "#28292a" });
+    }
+}
+
+function checkPendingExtensionNotes() {
+    if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+        chrome.storage.local.get(['pendingQuickNote'], (result) => {
+            if (result && result.pendingQuickNote) {
+                const text = result.pendingQuickNote;
+                chrome.storage.local.remove('pendingQuickNote');
+                createNewNote(true);
+                if (activeNoteId && currentNotes[activeNoteId]) {
+                    noteBody.value = text;
+                    handleInput();
+                    flushPendingSave(activeNoteId);
+                    showToast("選択したテキストを新しいメモに追加しました");
+                }
+            }
+        });
+    }
 }
 
 function updateUndoRedoButtons() {
@@ -2359,7 +4399,6 @@ function applyUndoRedoText(targetText) {
     noteBody.value = targetText;
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
 
-    // ★ 履歴復元時も完全なデータ構造で保存（エラー防止）
     const updatedNote = {
         ...currentNotes[activeNoteId],
         id: activeNoteId,
@@ -2517,6 +4556,15 @@ window.addEventListener('beforeunload', () => {
 
 function initAutoNote() {
     if (currentTab !== 'notes') return;
+    const isMobile = window.innerWidth <= 768;
+
+    if (isMobile) {
+        // スマホ閲覧時（幅768px以下）は勝手に新しいメモを作成せず、メモ一覧を表示
+        mainLayout.classList.remove('view-editor');
+        btnBack.classList.add('hidden');
+        return;
+    }
+
     const existingEmpty = Object.values(currentNotes).find(n => !n.deletedAt && (!n.body || !n.body.trim()) && (!n.title || !n.title.trim()));
     if (existingEmpty) {
         selectNote(existingEmpty.id, true);
@@ -2631,6 +4679,9 @@ function renderList(filter = '') {
 }
 
 function selectNote(id, autoFocus = true, isRemoteSync = false) {
+    if (syncDebounceTimer && activeNoteId && activeNoteId !== id) {
+        flushPendingSave(activeNoteId);
+    }
     if (!isRemoteSync) cleanupEmptyNotes(id);
 
     const isSameNote = (activeNoteId === id);
@@ -2641,7 +4692,9 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
     noteBody.disabled = isTrashNote;
     noteTitleInput.disabled = isTrashNote;
 
-    // ★ バグ修正：同じノートが開かれていても他端末での編集をリアルタイムに画面へ反映（フォーカス中のキャレット保護）
+    noteBody.scrollTop = 0;
+    noteCodeView.scrollTop = 0;
+
     if (document.activeElement === noteTitleInput) {
         if (noteTitleInput.value !== (n.title || '')) {
             const start = noteTitleInput.selectionStart;
@@ -2712,22 +4765,13 @@ function updateTitlePlaceholder(note) {
 
 noteTitleInput.oninput = () => {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
-    const val = noteTitleInput.value;
-
-    if (currentNotes[activeNoteId].id) {
-        currentNotes[activeNoteId].title = val;
-        currentNotes[activeNoteId].updatedAt = Date.now();
-
-        saveLocalNote(currentNotes[activeNoteId]);
-        updateTitlePlaceholder(currentNotes[activeNoteId]);
-        renderList(searchInput.value);
-
-        setStatus('saving', 'クラウドに保存中...');
-        syncUpdateNoteFields(activeNoteId, { title: val, updatedAt: currentNotes[activeNoteId].updatedAt });
-    }
+    scheduleSaveNote(activeNoteId, { title: noteTitleInput.value });
 };
 
 function moveToTrash(id) {
+    if (syncDebounceTimer && activeNoteId === id) {
+        flushPendingSave(id);
+    }
     if (!currentNotes[id]) return;
     lastMovedToTrashNote = { ...currentNotes[id] };
 
@@ -2851,24 +4895,609 @@ btnRestoreTrash.onclick = () => {
     selectNote(activeNoteId);
 };
 
-tabNotes.onclick = () => {
+function renderDeviceChips(devices) {
+    if (!deviceChipList) return;
+    deviceChipList.innerHTML = '';
+    const keys = Object.keys(devices || {});
+
+    if (keys.length === 0) {
+        deviceChipList.innerHTML = '<span class="no-device-text">Googleアカウントの他デバイスを検索中...（他端末でFlickMemoを開くと自動表示）</span>';
+        return;
+    }
+
+    keys.forEach(devId => {
+        const dev = devices[devId];
+        const chip = document.createElement('div');
+        chip.className = `device-chip ${selectedTargetDeviceId === devId ? 'selected' : ''}`;
+        chip.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">smartphone</span> ${escapeHTML(dev.name || '端末')}`;
+        chip.onclick = async () => {
+            if (selectedTargetDeviceId === devId && transferManager?.dataChannel?.readyState === 'open') {
+                // すでに接続中をタップした場合は切断して選択解除
+                transferManager.cleanupPeerConnection();
+                selectedTargetDeviceId = null;
+                renderDeviceChips(devices);
+                showToast("接続を切断しました");
+                return;
+            }
+            selectedTargetDeviceId = devId;
+            renderDeviceChips(devices);
+            showToast(`${dev.name} へP2P接続を試みています...`);
+            if (transferManager) {
+                try {
+                    await transferManager.connectToDevice(devId);
+                } catch (e) {
+                    selectedTargetDeviceId = null;
+                    renderDeviceChips(devices);
+                    showToast("接続エラー: " + e.message);
+                }
+            }
+        };
+        deviceChipList.appendChild(chip);
+    });
+}
+
+let autoDismissProgressTimer = null;
+
+function clearTransferHistoryUI() {
+    if (!transferHistoryList) return;
+    transferHistoryList.innerHTML = '<li class="empty-history">履歴はありません</li>';
+}
+
+function scheduleProgressAutoDismiss() {
+    if (autoDismissProgressTimer) clearTimeout(autoDismissProgressTimer);
+    autoDismissProgressTimer = setTimeout(() => {
+        if (transferProgressCard) transferProgressCard.classList.add('hidden');
+        // 履歴はセッション中ずっと残す（接続が切れるまで消さない）
+    }, 4000);
+}
+
+const transferStepConnect = document.getElementById('transfer-step-connect');
+const transferStepSession = document.getElementById('transfer-step-session');
+const sessionDeviceName = document.getElementById('session-device-name');
+const btnDisconnectSession = document.getElementById('btn-disconnect-session');
+const transferLockBanner = document.getElementById('transfer-lock-banner');
+const guestReceiverBanner = document.getElementById('guest-receiver-banner');
+const targetSegmentedTabs = document.querySelector('.target-segmented-tabs');
+const roomSectionBoxFirst = document.querySelector('.room-section-box:first-child');
+const roomDividerBadge = document.querySelector('.room-divider-badge');
+const btnSettingsLoginAction = document.getElementById('btn-settings-login-action');
+const e2eeToggleCard = document.querySelector('.e2ee-toggle-card');
+const modeDropdownWrap = document.getElementById('custom-mode-dropdown');
+
+function applyGuestUIRestrictions() {
+    if (isGuestMode) {
+        // 送信関連UI 完全非表示
+        if (targetSegmentedTabs) targetSegmentedTabs.classList.add('hidden');
+        if (targetPanelDevices) targetPanelDevices.classList.add('hidden');
+        if (targetPanelRoom) targetPanelRoom.classList.remove('hidden');
+        if (roomSectionBoxFirst) roomSectionBoxFirst.classList.add('hidden');
+        if (roomDividerBadge) roomDividerBadge.classList.add('hidden');
+        if (e2eeToggleCard) e2eeToggleCard.classList.add('hidden');
+        if (modeDropdownWrap) modeDropdownWrap.classList.add('hidden');
+
+        if (dropzoneArea) dropzoneArea.classList.add('hidden');
+        if (stagedFilesCard) stagedFilesCard.classList.add('hidden');
+        if (guestReceiverBanner) guestReceiverBanner.classList.remove('hidden');
+    } else {
+        if (targetSegmentedTabs) targetSegmentedTabs.classList.remove('hidden');
+        if (roomSectionBoxFirst) roomSectionBoxFirst.classList.remove('hidden');
+        if (roomDividerBadge) roomDividerBadge.classList.remove('hidden');
+        if (e2eeToggleCard) e2eeToggleCard.classList.remove('hidden');
+        if (modeDropdownWrap) modeDropdownWrap.classList.remove('hidden');
+
+        if (dropzoneArea) dropzoneArea.classList.remove('hidden');
+        if (guestReceiverBanner) guestReceiverBanner.classList.add('hidden');
+    }
+}
+
+function updateTransferSteps(isConnected, devName) {
+    applyGuestUIRestrictions();
+    if (isConnected) {
+        transferStepConnect?.classList.add('hidden');
+        transferStepSession?.classList.remove('hidden');
+        if (sessionDeviceName) {
+            sessionDeviceName.textContent = `接続中: ${devName || '相手端末'}`;
+        }
+    } else {
+        transferStepConnect?.classList.remove('hidden');
+        transferStepSession?.classList.add('hidden');
+        if (transferLockBanner) transferLockBanner.classList.add('hidden');
+        if (btnStartSend) btnStartSend.disabled = false;
+    }
+}
+
+if (btnDisconnectSession) {
+    btnDisconnectSession.onclick = () => {
+        if (transferManager) transferManager.disconnect();
+        updateTransferSteps(false);
+        showToast("接続を切断しました");
+    };
+}
+
+function handleTransferStatus(event, data) {
+    if (event === 'devices_updated') {
+        renderDeviceChips(data);
+    } else if (event === 'room_member_joined') {
+        showToast("相手端末を検出しました！接続中...");
+        if (transferManager && data.otherDeviceId) {
+            transferManager.connectToDevice(data.otherDeviceId, true);
+        }
+    } else if (event === 'channel_open') {
+        showToast("P2P転送チャネルが開きました（接続完了）");
+        const devName = selectedTargetDeviceId && transferManager?.activeDevices[selectedTargetDeviceId]?.name;
+        updateTransferSteps(true, devName);
+    } else if (event === 'channel_close' || event === 'p2p_disconnected') {
+        selectedTargetDeviceId = null;
+        if (transferManager) renderDeviceChips(transferManager.activeDevices);
+        showToast("接続が切断されました");
+        updateTransferSteps(false);
+        updateRoomUI(null); // 接続待機中カードも消す
+        if (autoDismissProgressTimer) clearTimeout(autoDismissProgressTimer);
+        if (transferProgressCard) transferProgressCard.classList.add('hidden');
+        clearTransferHistoryUI();
+    } else if (event === 'p2p_connected') {
+        showToast("デバイス間P2P接続が確立しました");
+        updateTransferSteps(true);
+    } else if (event === 'remote_transfer_lock') {
+        const isLocked = !!data;
+        if (transferLockBanner) {
+            if (isLocked) transferLockBanner.classList.remove('hidden');
+            else transferLockBanner.classList.add('hidden');
+        }
+        if (btnStartSend) btnStartSend.disabled = isLocked;
+    }
+}
+
+function handleFileReceived(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+    showToast(`ファイル「${filename}」を受信・保存しました`);
+    addTransferHistory(filename, blob.size, '受信');
+    scheduleProgressAutoDismiss();
+}
+
+function handleTransferProgress(bytes, total, name, direction) {
+    if (!transferProgressCard) return;
+    if (autoDismissProgressTimer) clearTimeout(autoDismissProgressTimer);
+    transferProgressCard.classList.remove('hidden');
+    transferFilename.textContent = `${direction === 'send' ? '送信:' : '受信:'} ${name}`;
+
+    const percent = Math.min(100, Math.round((bytes / total) * 100));
+    transferProgressFill.style.width = `${percent}%`;
+    transferPercent.textContent = `${percent}%`;
+
+    const now = Date.now();
+    if (!transferStartTime || percent === 0) transferStartTime = now;
+    const elapsedSec = (now - transferStartTime) / 1000;
+    if (elapsedSec > 0.2) {
+        const speedMBs = ((bytes / (1024 * 1024)) / elapsedSec).toFixed(2);
+        transferSpeed.textContent = `${speedMBs} MB/s`;
+    }
+
+    transferStatusLabel.textContent = percent >= 100 ? "完了" : `${(bytes / (1024 * 1024)).toFixed(1)} / ${(total / (1024 * 1024)).toFixed(1)} MB`;
+
+    if (percent >= 100) {
+        scheduleProgressAutoDismiss();
+    }
+}
+
+function addTransferHistory(name, size, type) {
+    if (!transferHistoryList) return;
+    const emptyLi = transferHistoryList.querySelector('.empty-history');
+    if (emptyLi) emptyLi.remove();
+
+    const li = document.createElement('li');
+    li.className = 'transfer-history-item';
+    const sizeStr = (size / (1024 * 1024)).toFixed(2) + ' MB';
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    li.innerHTML = `
+        <div>
+            <strong>${type === '送信' ? '[送信]' : '[受信]'} ${escapeHTML(name)}</strong>
+            <span style="color:var(--m3-text-muted); font-size:0.75rem; margin-left:0.5rem;">(${sizeStr})</span>
+        </div>
+        <span style="color:var(--m3-text-muted); font-size:0.75rem;">${timeStr}</span>
+    `;
+    transferHistoryList.prepend(li);
+}
+
+let stagedFilesQueue = [];
+
+const stagedFilesCard = document.getElementById('staged-files-card');
+const stagedFileList = document.getElementById('staged-file-list');
+const stagedFileCount = document.getElementById('staged-file-count');
+const btnClearStaged = document.getElementById('btn-clear-staged');
+const btnAddMoreFiles = document.getElementById('btn-add-more-files');
+const btnStartSend = document.getElementById('btn-start-send');
+
+function renderStagedFilesUI() {
+    if (!stagedFilesCard || !stagedFileList) return;
+
+    if (stagedFilesQueue.length === 0) {
+        stagedFilesCard.classList.add('hidden');
+        stagedFileList.innerHTML = '';
+        if (stagedFileCount) stagedFileCount.textContent = '0';
+        return;
+    }
+
+    stagedFilesCard.classList.remove('hidden');
+    if (stagedFileCount) stagedFileCount.textContent = stagedFilesQueue.length.toString();
+
+    stagedFileList.innerHTML = '';
+    stagedFilesQueue.forEach((file, index) => {
+        const li = document.createElement('li');
+        li.className = 'staged-file-item';
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+        li.innerHTML = `
+            <div>
+                <span class="file-name">${escapeHTML(file.name)}</span>
+                <span class="file-size">(${sizeMB})</span>
+            </div>
+            <button class="btn-remove-staged" title="削除" type="button">
+                <span class="material-symbols-outlined" style="font-size:18px;">close</span>
+            </button>
+        `;
+        li.querySelector('.btn-remove-staged').onclick = () => {
+            stagedFilesQueue.splice(index, 1);
+            renderStagedFilesUI();
+        };
+        stagedFileList.appendChild(li);
+    });
+}
+
+function stageFiles(files) {
+    if (!files || files.length === 0) return;
+    if (isGuestMode) {
+        showToast("ゲストモードではファイル送信はできません（受信専用）");
+        return;
+    }
+    Array.from(files).forEach(f => stagedFilesQueue.push(f));
+    renderStagedFilesUI();
+    showToast(`${files.length} 件のファイルを送信リストに追加しました`);
+}
+
+// ドロップゾーン＆ファイル選択バインド
+if (dropzoneArea && fileInput && btnBrowseFiles) {
+    btnBrowseFiles.onclick = (e) => {
+        e.stopPropagation();
+        fileInput.click();
+    };
+
+    dropzoneArea.onclick = () => fileInput.click();
+
+    dropzoneArea.ondragover = (e) => {
+        e.preventDefault();
+        dropzoneArea.classList.add('dragover');
+    };
+
+    dropzoneArea.ondragleave = () => dropzoneArea.classList.remove('dragover');
+
+    dropzoneArea.ondrop = (e) => {
+        e.preventDefault();
+        dropzoneArea.classList.remove('dragover');
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            stageFiles(e.dataTransfer.files);
+        }
+    };
+
+    fileInput.onchange = () => {
+        if (fileInput.files && fileInput.files.length > 0) {
+            stageFiles(fileInput.files);
+            fileInput.value = '';
+        }
+    };
+}
+
+if (btnAddMoreFiles) {
+    btnAddMoreFiles.onclick = () => fileInput.click();
+}
+
+if (btnClearStaged) {
+    btnClearStaged.onclick = () => {
+        stagedFilesQueue = [];
+        renderStagedFilesUI();
+        showToast("送信リストをクリアしました");
+    };
+}
+
+if (btnStartSend) {
+    btnStartSend.onclick = async () => {
+        if (isGuestMode) {
+            showToast("ゲストモードではファイル送信はできません（受信専用）");
+            return;
+        }
+        if (stagedFilesQueue.length === 0) {
+            showToast("送信するファイルを選択してください");
+            return;
+        }
+
+        if (!transferManager) {
+            showToast("送信機能が準備できていません");
+            return;
+        }
+
+        let fileToSend = null;
+
+        try {
+            if (stagedFilesQueue.length === 1) {
+                fileToSend = stagedFilesQueue[0];
+            } else {
+                showToast("複数ファイルを軽量ZIP圧縮中...");
+                const zip = new JSZip();
+                stagedFilesQueue.forEach(file => {
+                    zip.file(file.name, file);
+                });
+
+                const zipBlob = await zip.generateAsync({
+                    type: "blob",
+                    compression: "DEFLATE",
+                    compressionOptions: { level: 5 }
+                });
+
+                const todayStr = new Date().toISOString().slice(0, 10);
+                fileToSend = new File([zipBlob], `FlickMemo_Files_${todayStr}.zip`, { type: "application/zip" });
+            }
+
+            const targetDev = selectedTargetDeviceId ? transferManager.activeDevices[selectedTargetDeviceId] : null;
+            const mode = transferManager.determineOptimalMode(targetDev, fileToSend);
+
+            showToast(`モード [${mode}] で「${fileToSend.name}」の送信を開始します...`);
+
+            await transferManager.sendFileP2P(fileToSend);
+
+            addTransferHistory(fileToSend.name, fileToSend.size, '送信');
+            showToast(`✅ 「${fileToSend.name}」の送信が完了しました！`);
+
+            stagedFilesQueue = [];
+            renderStagedFilesUI();
+        } catch (err) {
+            console.error("Send Error:", err);
+            showToast("送信失敗: " + (err.message || "接続を確認してください"));
+        }
+    };
+}
+
+function openTransferView() {
+    currentTab = 'transfer';
+    applyGuestUIRestrictions();
+    if (mainLayout) mainLayout.classList.add('view-transfer');
+    if (transferPanel) transferPanel.classList.remove('hidden');
+    tabNotes?.classList.remove('active');
+    tabTrash?.classList.remove('active');
+    if (dateDisplay) dateDisplay.classList.add('hidden');
+    if (charCount) charCount.classList.add('hidden');
+}
+
+function openNotesView() {
     currentTab = 'notes';
-    tabNotes.classList.add('active');
-    tabTrash.classList.remove('active');
-    btnNew.classList.remove('hidden');
-    btnEmptyTrash.classList.add('hidden');
-    trashNotice.classList.add('hidden');
+    if (mainLayout) mainLayout.classList.remove('view-transfer');
+    tabNotes?.classList.add('active');
+    tabTrash?.classList.remove('active');
+    btnNew?.classList.remove('hidden');
+    btnEmptyTrash?.classList.add('hidden');
+    trashNotice?.classList.add('hidden');
+    if (transferPanel) transferPanel.classList.add('hidden');
+    noteBody?.classList.remove('hidden');
+    if (noteTitleInput) noteTitleInput.classList.remove('hidden');
     renderList(searchInput.value);
-};
+
+    if (activeNoteId && currentNotes[activeNoteId]) {
+        if (dateDisplay) dateDisplay.classList.remove('hidden');
+        if (charCount) charCount.classList.remove('hidden');
+        updateAutoCodeRender(true);
+    }
+}
+
+if (btnHeaderTransfer) {
+    btnHeaderTransfer.onclick = () => {
+        openTransferView();
+    };
+}
+
+if (btnBackToNotes) {
+    btnBackToNotes.onclick = () => {
+        openNotesView();
+    };
+}
+
+// 100% 独自デザイン Material 3 カスタムドロップダウンロジック
+const customDropdown = document.getElementById('custom-mode-dropdown');
+const dropdownTrigger = document.getElementById('dropdown-trigger');
+const dropdownMenuList = document.getElementById('dropdown-menu-list');
+const selectedModeText = document.getElementById('selected-mode-text');
+
+if (dropdownTrigger && dropdownMenuList) {
+    dropdownTrigger.onclick = (e) => {
+        e.stopPropagation();
+        const isOpen = !dropdownMenuList.classList.contains('hidden');
+        if (isOpen) {
+            dropdownMenuList.classList.add('hidden');
+            customDropdown?.classList.remove('open');
+        } else {
+            dropdownMenuList.classList.remove('hidden');
+            customDropdown?.classList.add('open');
+        }
+    };
+
+    document.addEventListener('click', () => {
+        dropdownMenuList.classList.add('hidden');
+        customDropdown?.classList.remove('open');
+    });
+
+    dropdownMenuList.querySelectorAll('.dropdown-menu-item').forEach(item => {
+        item.onclick = (e) => {
+            e.stopPropagation();
+            const val = item.getAttribute('data-value');
+            const iconElem = item.querySelector('.material-symbols-outlined:not(.check-icon)');
+            const iconName = iconElem ? iconElem.textContent.trim() : 'bolt';
+            const titleText = item.querySelector('.item-title').textContent.trim();
+
+            dropdownMenuList.querySelectorAll('.dropdown-menu-item').forEach(i => {
+                i.classList.remove('selected');
+                const chk = i.querySelector('.check-icon');
+                if (chk) chk.classList.add('hidden');
+            });
+            item.classList.add('selected');
+            const currentChk = item.querySelector('.check-icon');
+            if (currentChk) currentChk.classList.remove('hidden');
+
+            selectedModeText.innerHTML = `<span class="material-symbols-outlined mode-icon">${iconName}</span> ${escapeHTML(titleText)}`;
+            dropdownMenuList.classList.add('hidden');
+            customDropdown?.classList.remove('open');
+
+            if (transferManager) {
+                transferManager.currentMode = val;
+                showToast(`送信モードを「${titleText}」に変更しました`);
+            }
+        };
+    });
+}
+
+// ★ 送信先セグメントタブ 切り替え
+const btnTargetTabDevices = document.getElementById('btn-target-tab-devices');
+const btnTargetTabRoom = document.getElementById('btn-target-tab-room');
+const targetPanelDevices = document.getElementById('target-panel-devices');
+const targetPanelRoom = document.getElementById('target-panel-room');
+
+if (btnTargetTabDevices && btnTargetTabRoom) {
+    btnTargetTabDevices.onclick = () => {
+        btnTargetTabDevices.classList.add('active');
+        btnTargetTabRoom.classList.remove('active');
+        targetPanelDevices?.classList.remove('hidden');
+        targetPanelRoom?.classList.add('hidden');
+    };
+
+    btnTargetTabRoom.onclick = () => {
+        btnTargetTabRoom.classList.add('active');
+        btnTargetTabDevices.classList.remove('active');
+        targetPanelRoom?.classList.remove('hidden');
+        targetPanelDevices?.classList.add('hidden');
+    };
+}
+
+// ★ ワンタイム共有ルーム Event Handlers
+const btnCreateRoom = document.getElementById('btn-create-room');
+const btnJoinRoom = document.getElementById('btn-join-room');
+const btnLeaveRoom = document.getElementById('btn-leave-room');
+const roomCodeInput = document.getElementById('room-code-input');
+const roomActiveStatus = document.getElementById('room-active-status');
+const roomStatusText = document.getElementById('room-status-text');
+
+function updateRoomUI(roomId) {
+    if (roomId) {
+        roomActiveStatus?.classList.remove('hidden');
+        if (roomStatusText) roomStatusText.textContent = `現在の合言葉: ${roomId} (接続待機中...)`;
+        if (roomCodeInput) roomCodeInput.value = roomId;
+    } else {
+        roomActiveStatus?.classList.add('hidden');
+        if (roomCodeInput) roomCodeInput.value = '';
+    }
+}
+
+function ensureTransferManager() {
+    if (!transferManager) {
+        transferManager = new FileTransferManager(
+            auth,
+            db,
+            (event, data) => handleTransferStatus(event, data),
+            (blob, filename) => handleFileReceived(blob, filename),
+            (bytes, total, name, direction) => handleTransferProgress(bytes, total, name, direction)
+        );
+    }
+    if (transferManager) {
+        transferManager.isGuestMode = isGuestMode;
+    }
+    return transferManager;
+}
+
+if (btnCreateRoom) {
+    btnCreateRoom.onclick = () => {
+        const tm = ensureTransferManager();
+        if (!tm) return;
+        const newRoomId = 'rm_' + Math.random().toString(36).substring(2, 8);
+        tm.joinRoom(newRoomId);
+        updateRoomUI(newRoomId);
+
+        const shareUrl = `${window.location.origin}${window.location.pathname}?room=${newRoomId}`;
+        navigator.clipboard.writeText(shareUrl).then(() => {
+            showToast(`ルーム ${newRoomId} を作成し共有URLをコピーしました！`);
+        }).catch(() => {
+            showToast(`ルーム ${newRoomId} を作成しました。URL: ${shareUrl}`);
+        });
+    };
+}
+
+if (btnJoinRoom) {
+    btnJoinRoom.onclick = () => {
+        const val = roomCodeInput?.value.trim();
+        if (!val) {
+            showToast("合言葉を入力してください");
+            return;
+        }
+        const tm = ensureTransferManager();
+        if (!tm) return;
+        tm.joinRoom(val);
+        if (isGuestMode) {
+            // ゲストは「接続待機中」ステータスカードを表示しない (受信専用なので待つだけ)
+            showToast(`合言葉「${val}」で受信待機中...`);
+        } else {
+            updateRoomUI(val);
+            showToast(`合言葉「${val}」で接続待機中...`);
+        }
+    };
+}
+
+if (btnLeaveRoom) {
+    btnLeaveRoom.onclick = () => {
+        if (transferManager) transferManager.disconnect();
+        updateRoomUI(null);
+        updateTransferSteps(false);
+        showToast("切断しました");
+    };
+}
+
+// URL パラメータ `?room=...` の自動接続チェック
+window.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+    const roomParam = params.get('room');
+    if (roomParam) {
+        setTimeout(() => {
+            openTransferView();
+            if (transferManager) {
+                transferManager.joinRoom(roomParam);
+                updateRoomUI(roomParam);
+                showToast(`共有URL経由でルーム ${roomParam} に自動接続しました！`);
+            }
+        }, 800);
+    }
+});
+
+tabNotes.onclick = openNotesView;
 
 tabTrash.onclick = () => {
     currentTab = 'trash';
+    if (mainLayout) mainLayout.classList.remove('view-transfer');
     tabTrash.classList.add('active');
     tabNotes.classList.remove('active');
     btnNew.classList.add('hidden');
     btnEmptyTrash.classList.remove('hidden');
     trashNotice.classList.remove('hidden');
+    if (transferPanel) transferPanel.classList.add('hidden');
+    noteBody.classList.remove('hidden');
+    if (noteTitleInput) noteTitleInput.classList.remove('hidden');
     renderList(searchInput.value);
+
+    if (activeNoteId && currentNotes[activeNoteId]) {
+        if (dateDisplay) dateDisplay.classList.remove('hidden');
+        if (charCount) charCount.classList.remove('hidden');
+        updateAutoCodeRender(true);
+    }
 };
 
 btnPin.onclick = () => {
@@ -2898,37 +5527,32 @@ function updateEditorFooter() {
 }
 
 btnBack.onclick = () => {
+    if (syncDebounceTimer && activeNoteId) {
+        flushPendingSave(activeNoteId);
+    }
+    cleanupEmptyNotes();
     mainLayout.classList.remove('view-editor');
     btnBack.classList.add('hidden');
 };
 
-// ★ 文字タイピング処理（完全なデータのみ送信して無限ループを防止）
+// クイック検索ショートカットキー (Ctrl+F / /)
+window.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+    } else if (e.key === '/' && document.activeElement !== noteBody && document.activeElement !== noteTitleInput && document.activeElement !== searchInput) {
+        e.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+    }
+});
+
 function handleInput() {
     if (!activeNoteId || !currentNotes[activeNoteId]) return;
     const val = noteBody.value;
     pushTextHistory(val);
-
-    const updatedNote = {
-        ...currentNotes[activeNoteId],
-        id: activeNoteId,
-        title: currentNotes[activeNoteId].title || '',
-        body: val,
-        pinned: currentNotes[activeNoteId].pinned || false,
-        codeCollapsed: currentNotes[activeNoteId].codeCollapsed || {},
-        updatedAt: Date.now()
-    };
-
-    // ★ IDがセットされていることを絶対保証
-    if (updatedNote.id) {
-        currentNotes[activeNoteId] = updatedNote;
-        saveLocalNote(updatedNote);
-        updateTitlePlaceholder(updatedNote);
-        updateEditorFooter();
-        renderList(searchInput.value);
-
-        setStatus('saving', 'クラウドに保存中...');
-        syncUpdateNoteFields(activeNoteId, { body: val, updatedAt: updatedNote.updatedAt });
-    }
+    scheduleSaveNote(activeNoteId, { body: val });
 }
 
 noteBody.oninput = handleInput;
@@ -2947,6 +5571,9 @@ noteBody.onblur = () => {
 searchInput.oninput = () => renderList(searchInput.value);
 
 function createNewNote(autoFocus = true) {
+    if (syncDebounceTimer && activeNoteId) {
+        flushPendingSave(activeNoteId);
+    }
     cleanupEmptyNotes();
 
     const newId = 'note_' + Date.now();
@@ -2986,9 +5613,50 @@ document.querySelectorAll('.settings-tab-btn').forEach(btn => {
 
 btnSettingsTrigger.onclick = () => {
     renderAppVersion();
+
+    // ゲストモード: 設定モーダル内のUI切り替え
+    const settingsNavAccount = document.querySelector('.settings-nav .settings-tab-btn[data-tab="account"]');
+    const settingsNavSystem = document.querySelector('.settings-nav .settings-tab-btn[data-tab="system"]');
+    const accountLabel = document.getElementById('settings-account-label');
+    const accountDesc = document.getElementById('settings-account-desc');
+    const btnLogout = document.getElementById('btn-settings-logout-action');
+    const btnLogin = document.getElementById('btn-settings-login-action');
+
+    if (isGuestMode) {
+        // ゲスト: アカウントタブのラベルをログインに変更、ログアウトボタン非表示
+        if (accountLabel) accountLabel.textContent = 'Googleアカウントでログイン';
+        if (accountDesc) accountDesc.textContent = 'ログインするとメモの同期やデバイス間転送が利用できます';
+        if (btnLogout) btnLogout.classList.add('hidden');
+        if (btnLogin) btnLogin.classList.remove('hidden');
+        // ゲストは「一般・同期」タブも非表示
+        if (settingsNavSystem) settingsNavSystem.classList.add('hidden');
+        // アカウントタブをアクティブにリセット
+        if (settingsNavAccount) settingsNavAccount.click();
+    } else {
+        if (accountLabel) accountLabel.textContent = 'サインアウト';
+        if (accountDesc) accountDesc.textContent = 'このデバイスからログアウトします';
+        if (btnLogout) btnLogout.classList.remove('hidden');
+        if (btnLogin) btnLogin.classList.add('hidden');
+        if (settingsNavSystem) settingsNavSystem.classList.remove('hidden');
+    }
+
     settingsModal.classList.remove('hidden');
 };
 btnSettingsClose.onclick = () => settingsModal.classList.add('hidden');
+
+// 設定内ログイン → Google ログインページへ
+if (btnSettingsLoginAction) {
+    btnSettingsLoginAction.onclick = () => {
+        settingsModal.classList.add('hidden');
+        // ゲストモードを解除してログイン画面へ
+        isGuestMode = false;
+        if (transferManager) transferManager.isGuestMode = false;
+        authContainer.classList.remove('hidden');
+        appContainer.classList.add('hidden');
+        authLoading.classList.add('hidden');
+        authButtons.classList.remove('hidden');
+    };
+}
 
 btnSettingsLogoutAction.onclick = () => {
     settingsModal.classList.add('hidden');
@@ -2996,45 +5664,170 @@ btnSettingsLogoutAction.onclick = () => {
 };
 
 btnUpdateCheck.onclick = async () => {
-    setStatus('saving', 'キャッシュをクリア中...');
-    if ('caches' in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map(k => caches.delete(k)));
+    setStatus('saving', '最新コード取得＆キャッシュ完全消去中...');
+    let latestVersionText = "最新";
+    try {
+        const vRes = await fetch(`./version.json?nocache=${Date.now()}`, { cache: 'no-store' });
+        if (vRes.ok) {
+            const vData = await vRes.json();
+            if (vData.version) latestVersionText = `v${vData.version}`;
+        }
+    } catch (e) {}
+
+    try {
+        if ('caches' in window) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map(k => caches.delete(k)));
+        }
+        if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            for (let r of regs) await r.unregister();
+        }
+        localStorage.removeItem('flickmemo_version_cache');
+    } catch (err) {
+        console.error("Cache clear error:", err);
     }
-    if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        for (let r of regs) await r.unregister();
-    }
-    window.location.reload(true);
+    showToast(`最新コード (${latestVersionText}) を取得して再読み込み中...`);
+    setTimeout(() => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('v', Date.now());
+        url.searchParams.set('reload', 'hard');
+        window.location.replace(url.toString());
+    }, 400);
 };
 
-// 認証（Webアプリ / Chrome拡張機能 自動両対応）
+// リダイレクト認証結果のチェック（iOS PWA / Safari リダイレクト対応）
+getRedirectResult(auth).then(result => {
+    if (result && result.user) {
+        console.log("Redirect login successful:", result.user.email);
+    }
+}).catch(err => {
+    console.error("Redirect Result Error:", err);
+});
+
+// 認証処理（Webアプリ / iOS PWA / Chrome拡張機能 自動対応）
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
-        // ★ Chrome 拡張機能環境で chrome.identity が利用可能な場合
-        if (typeof chrome !== 'undefined' && chrome?.identity?.getAuthToken) {
-            chrome.identity.getAuthToken({ interactive: true }, (token) => {
-                if (chrome.runtime.lastError || !token) {
-                    alert("ログイン認証に失敗しました: " + (chrome.runtime.lastError?.message || "トークン取得不可"));
-                    authLoading.classList.add('hidden');
-                    authButtons.classList.remove('hidden');
-                    return;
-                }
-                const credential = GoogleAuthProvider.credential(null, token);
-                signInWithCredential(auth, credential);
+        const ua = navigator.userAgent;
+        const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+
+        // ── Chrome 拡張機能（サイドパネル）環境 ──────────────────────────────
+        // chrome.identity.getAuthToken を使ってChromeネイティブのOAuth認証を行う
+        // これがChrome拡張機能での公式推奨・最も確実な方法
+        if (typeof chrome !== 'undefined' && chrome?.runtime?.id && chrome?.identity?.getAuthToken) {
+            await new Promise((resolve, reject) => {
+                chrome.identity.getAuthToken({ interactive: true }, async (token) => {
+                    // エラーチェック
+                    if (chrome.runtime.lastError || !token) {
+                        const errMsg = chrome.runtime.lastError?.message || 'Googleトークンの取得に失敗しました';
+                        console.error('chrome.identity.getAuthToken error:', errMsg);
+                        reject(new Error(errMsg));
+                        return;
+                    }
+
+                    try {
+                        // Google OAuthアクセストークン（第1引数=idToken: null, 第2引数=accessToken: token）
+                        // ※ Firebase IDトークンではなく、GoogleのOAuthアクセストークンを渡す
+                        const credential = GoogleAuthProvider.credential(null, token);
+                        await setPersistence(auth, browserLocalPersistence);
+                        await signInWithCredential(auth, credential);
+                        resolve();
+                    } catch (err) {
+                        console.error('signInWithCredential error:', err);
+                        // トークンが無効・期限切れの場合はChromeのキャッシュを削除してユーザーに再試行を促す
+                        if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-token-expired') {
+                            chrome.identity.removeCachedAuthToken({ token }, () => {
+                                console.log('キャッシュされたトークンを削除しました。再度ログインしてください。');
+                            });
+                        }
+                        reject(err);
+                    }
+                });
             });
+
+        } else if (isIOS || isStandalone) {
+            // iOS Safari / iOS PWA: リダイレクト方式
+            await setPersistence(auth, browserLocalPersistence);
+            await signInWithRedirect(auth, provider);
         } else {
-            // ★ 通常の Web アプリ環境（Firebase Hosting等）
-            await signInWithPopup(auth, provider);
+            // 通常 Web 環境
+            try {
+                await setPersistence(auth, browserLocalPersistence);
+            } catch (pErr) {
+                console.warn("Persistence set warning:", pErr);
+            }
+            try {
+                await signInWithPopup(auth, provider);
+            } catch (popupErr) {
+                if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/operation-not-supported-in-this-environment') {
+                    console.warn("Popup blocked. Falling back to signInWithRedirect...");
+                    await signInWithRedirect(auth, provider);
+                } else {
+                    throw popupErr;
+                }
+            }
         }
     } catch (error) {
-        alert("ログインに失敗しました: " + error.message);
+        console.error("Login Error:", error);
+        let msg = error.message || "認証に失敗しました";
+        if (error.code === 'auth/popup-closed-by-user') {
+            msg = "ログイン画面が閉じられました。";
+        } else if (error.code === 'auth/popup-blocked') {
+            msg = "ポップアップがブラウザにブロックされました。";
+        } else if (error.code === 'auth/unauthorized-domain') {
+            msg = "Firebase Console の「Authentication > 設定 > 承認済みドメイン」をご確認ください。";
+        } else if (error.message?.includes('OAuth2 not granted or revoked') || error.message?.includes('Not granted')) {
+            msg = "Googleアカウントへのアクセスが拒否されました。Chromeにログイン中のGoogleアカウントを確認してください。";
+        }
+        alert("ログインに失敗しました: " + msg);
         authLoading.classList.add('hidden');
         authButtons.classList.remove('hidden');
     }
+}
+
+let isGuestMode = false;
+
+const btnGuestLogin = document.getElementById('btn-guest-login');
+if (btnGuestLogin) {
+    btnGuestLogin.onclick = () => {
+        isGuestMode = true;
+        const tm = ensureTransferManager();
+        if (tm) tm.isGuestMode = true;
+        authContainer.classList.add('hidden');
+        appContainer.classList.remove('hidden');
+
+        userName.textContent = "ゲストユーザー";
+        userEmail.textContent = "ログインしていません (ローカル保存のみ)";
+        userAvatar.src = getInitialsAvatar("Guest");
+        if (userProviderTag) userProviderTag.textContent = "ゲスト";
+
+        showToast("ゲストモード (ローカルメモ / 合言葉受送信対応)");
+        loadLocalNotesOnly();
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlRoom = urlParams.get('room');
+        if (urlRoom && tm) {
+            openTransferView();
+            if (btnTargetTabRoom) btnTargetTabRoom.click();
+            tm.joinRoom(urlRoom);
+            updateRoomUI(urlRoom);
+            showToast(`共有URL「${urlRoom}」に自動接続しました`);
+        }
+    };
+}
+
+const toggleE2ee = document.getElementById('toggle-e2ee');
+if (toggleE2ee) {
+    toggleE2ee.onchange = () => {
+        if (transferManager) {
+            transferManager.isE2EEEnabled = toggleE2ee.checked;
+            showToast(toggleE2ee.checked ? "AES-256 E2EE暗号化を有効にしました" : "E2EE暗号化をオフにしました");
+        }
+    };
 }
 
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
@@ -3042,6 +5835,8 @@ document.getElementById('btn-google').onclick = () => loginWithProvider(new Goog
 onAuthStateChanged(auth, async user => {
     splashScreen.classList.add('hidden');
     if (user) {
+        isGuestMode = false;
+        if (transferManager) transferManager.isGuestMode = false;
         if (currentUserId !== null && currentUserId !== user.uid) {
             await clearLocalData();
         }
@@ -3068,60 +5863,94 @@ onAuthStateChanged(auth, async user => {
 
         if (userProviderTag) userProviderTag.textContent = "Google";
 
-        // ★ Firebase Realtime Database リアルタイム同期（複数デバイス1文字単位の即時反映＆ループ完全防止）
         if (currentDbRef) {
             off(currentDbRef);
         }
         currentDbRef = ref(db, `users/${user.uid}/notes`);
         onValue(currentDbRef, snapshot => {
-            const remoteNotes = snapshot.val() || {};
+            try {
+                const remoteNotes = snapshot.val() || {};
+                let hasChanges = false;
 
-            // 他端末で完全削除されたノートをローカルから同期削除
-            Object.keys(currentNotes).forEach(id => {
-                if (!remoteNotes[id]) {
-                    delete currentNotes[id];
-                    deleteLocalNote(id);
-                    if (activeNoteId === id) {
-                        activeNoteId = null;
-                        noteTitleInput.value = '';
-                        noteBody.value = '';
-                        noteBody.disabled = true;
-                        noteTitleInput.disabled = true;
-                        editorToolbar.classList.add('hidden');
-                        noteTitleInput.classList.add('hidden');
-                        charCount.classList.add('hidden');
-                        dateDisplay.classList.add('hidden');
-                        noteCodeView.classList.add('hidden');
+                Object.keys(currentNotes).forEach(id => {
+                    if (!remoteNotes[id]) {
+                        delete currentNotes[id];
+                        deleteLocalNote(id);
+                        hasChanges = true;
+                        if (activeNoteId === id) {
+                            activeNoteId = null;
+                            noteTitleInput.value = '';
+                            noteBody.value = '';
+                            noteBody.disabled = true;
+                            noteTitleInput.disabled = true;
+                            editorToolbar.classList.add('hidden');
+                            noteTitleInput.classList.add('hidden');
+                            charCount.classList.add('hidden');
+                            dateDisplay.classList.add('hidden');
+                            noteCodeView.classList.add('hidden');
+                        }
+                    }
+                });
+
+                Object.values(remoteNotes).forEach(n => {
+                    const local = currentNotes[n.id];
+                    if (!local || (n.updatedAt || 0) >= (local.updatedAt || 0)) {
+                        if (!local || JSON.stringify(local) !== JSON.stringify(n)) {
+                            currentNotes[n.id] = n;
+                            saveLocalNote(n);
+                            hasChanges = true;
+                        }
+                    }
+                });
+
+                cleanExpiredTrash();
+                
+                if (hasChanges) {
+                    renderList(searchInput.value);
+                }
+
+                updateExtensionBadge();
+
+                if (activeNoteId && currentNotes[activeNoteId]) {
+                    selectNote(activeNoteId, false, true);
+                } else {
+                    const isMobile = window.innerWidth <= 768;
+                    if (!isMobile) {
+                        const validNotes = Object.values(currentNotes)
+                            .filter(n => !n.deletedAt)
+                            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+                        if (validNotes.length > 0) {
+                            selectNote(validNotes[0].id, false, true);
+                        }
                     }
                 }
-            });
-
-            // リモートの最新ノートデータでローカルマップとIndexedDBを更新
-            Object.values(remoteNotes).forEach(n => {
-                currentNotes[n.id] = n;
-                saveLocalNote(n);
-            });
-
-            cleanExpiredTrash();
-            renderList(searchInput.value);
-
-            // ★ 同期ループ防止：受信ハンドラ内で createNewNote / cleanupEmptyNotes 等の自動書き込み処理を直接呼ばない
-            if (activeNoteId && currentNotes[activeNoteId]) {
-                selectNote(activeNoteId, false, true);
-            } else {
-                const validNotes = Object.values(currentNotes)
-                    .filter(n => !n.deletedAt)
-                    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-
-                if (validNotes.length > 0) {
-                    selectNote(validNotes[0].id, false, true);
-                }
+                setStatus('synced', 'クラウド同期完了');
+                checkPendingExtensionNotes();
+            } catch (err) {
+                console.error("onValue processing error:", err);
+                setStatus('synced', '同期処理中にエラーが発生しました');
             }
-            setStatus('synced', 'クラウド同期完了');
         }, error => {
             console.error("Sync Error:", error);
+            setStatus('offline', '同期オフライン');
         });
+        const tm = ensureTransferManager();
+        tm.startDevicePresence();
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlRoom = urlParams.get('room');
+        if (urlRoom && tm) {
+            openTransferView();
+            if (btnTargetTabRoom) btnTargetTabRoom.click();
+            tm.joinRoom(urlRoom);
+            updateRoomUI(urlRoom);
+            showToast(`共有URL「${urlRoom}」に自動接続しました`);
+        }
     } else {
+        if (transferManager) {
+            transferManager.stopDevicePresence();
+        }
         await clearLocalData();
         if (currentDbRef) {
             off(currentDbRef);
@@ -3133,6 +5962,42 @@ onAuthStateChanged(auth, async user => {
         appContainer.classList.add('hidden');
         authLoading.classList.add('hidden');
         authButtons.classList.remove('hidden');
+    }
+});
+
+// ★ メモ保存のみ（ウィンドウ最小化・バックグラウンド移行では P2P 切断しない）
+function handleNoteSave() {
+    cleanupEmptyNotes();
+    if (activeNoteId && syncDebounceTimer) {
+        flushPendingSave(activeNoteId);
+    }
+}
+
+// ★ アプリ完全終了時のみ P2P を切断（タスクキル・タブ閉じ・スマホスワイプ終了）
+function handleAppExitCleanup() {
+    if (transferManager) {
+        transferManager.stopDevicePresence();
+    }
+    handleNoteSave();
+}
+
+// タブ閉じ / ページ遷移 → P2P も含めて完全クリーンアップ
+window.addEventListener('beforeunload', handleAppExitCleanup);
+
+// iOS PWA / モバイルのスワイプ終了・ホームボタン長押し強制終了 → P2P クリーンアップ
+// (pagehide の persisted=false = 本当のページ破棄のみ対応)
+window.addEventListener('pagehide', (e) => {
+    if (!e.persisted) {
+        handleAppExitCleanup();
+    }
+});
+
+// ウィンドウ最小化・バックグラウンド移行 → メモ保存のみ、P2P 接続は維持
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        handleNoteSave(); // P2P は切断しない
+    } else if (document.visibilityState === 'visible') {
+        checkPendingExtensionNotes();
     }
 });
 </file>

@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "FlickMemo - 超軽量リアルタイムメモ帳",
-    "version": "1.3.33",
+    "version": "1.3.35",
     "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
     "action": {
         "default_title": "FlickMemoをサイドパネルで開く"
@@ -12,12 +12,21 @@
     "background": {
         "service_worker": "background.js"
     },
+    "oauth2": {
+        "client_id": "998795111125-0or2js8p7848ht26va94deqhphtrv2o1.apps.googleusercontent.com",
+        "scopes": [
+            "email",
+            "profile",
+            "openid"
+        ]
+    },
     "permissions": [
         "sidePanel",
         "identity",
         "storage",
         "contextMenus",
-        "tabs"
+        "tabs",
+        "windows"
     ],
     "omnibox": {
         "keyword": "fm"
