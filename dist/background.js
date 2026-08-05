@@ -48,9 +48,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     chrome.storage.local.get(['pendingQuickNote'], (res) => {
         let currentText = res.pendingQuickNote ? res.pendingQuickNote + "\n\n---\n\n" : "";
         chrome.storage.local.set({ pendingQuickNote: currentText + textToAdd }, () => {
-            chrome.action.setBadgeText({ text: "NEW" });
-            chrome.action.setBadgeBackgroundColor({ color: "#a8c7fa" });
-            setTimeout(() => chrome.action.setBadgeText({ text: "" }), 3000);
+            chrome.action.setBadgeText({ text: "" });
         });
     });
 });
@@ -72,4 +70,4 @@ if (chrome.omnibox) {
             }
         });
     });
-}
+}

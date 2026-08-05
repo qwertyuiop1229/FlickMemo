@@ -2092,9 +2092,27 @@ body.is-extension-popup {
     font-size: 0.82rem;
 }
 
+.m3-mode-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.7rem;
+    color: var(--m3-primary);
+    background: var(--m3-surface);
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-full);
+    padding: 0.15rem 0.5rem;
+    margin-top: 0.2rem;
+    width: fit-content;
+}
+
+.m3-mode-badge .material-symbols-outlined {
+    font-size: 13px !important;
+}
+
 .empty-history {
     font-size: 0.78rem;
     color: var(--m3-text-muted);
     text-align: center;
     padding: 0.8rem 0;
-}
+}

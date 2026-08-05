@@ -201,6 +201,20 @@ export class FileTransferManager {
         this.onStatusUpdate('room_joined', { roomId });
     }
 
+    async cleanupSignalingData(basePath, targetDeviceId = null) {
+        if (!basePath || !this.db) return;
+        try {
+            remove(ref(this.db, `${basePath}/signaling/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `${basePath}/answers/${this.deviceId}`)).catch(() => {});
+            remove(ref(this.db, `${basePath}/candidates/${this.deviceId}`)).catch(() => {});
+            if (targetDeviceId) {
+                remove(ref(this.db, `${basePath}/signaling/${targetDeviceId}`)).catch(() => {});
+                remove(ref(this.db, `${basePath}/answers/${targetDeviceId}`)).catch(() => {});
+                remove(ref(this.db, `${basePath}/candidates/${targetDeviceId}`)).catch(() => {});
+            }
+        } catch (e) {}
+    }
+
     leaveRoom() {
         // 全てのRTDBリスナーを解除
         if (this._roomUnsubscribers) {
@@ -211,9 +225,8 @@ export class FileTransferManager {
 
         if (this.currentRoomId) {
             const roomId = this.currentRoomId;
+            this.cleanupSignalingData(`public_rooms/${roomId}`);
             remove(ref(this.db, `public_rooms/${roomId}/members/${this.deviceId}`)).catch(() => {});
-            remove(ref(this.db, `public_rooms/${roomId}/signaling/${this.deviceId}`)).catch(() => {});
-            remove(ref(this.db, `public_rooms/${roomId}/answers/${this.deviceId}`)).catch(() => {});
             this.currentRoomId = null;
             this.onStatusUpdate('room_left');
         }
@@ -224,10 +237,8 @@ export class FileTransferManager {
         this.leaveRoom();
         const user = this.auth?.currentUser;
         if (user) {
+            this.cleanupSignalingData(`users/${user.uid}`);
             remove(ref(this.db, `users/${user.uid}/devices/${this.deviceId}`)).catch(() => {});
-            remove(ref(this.db, `users/${user.uid}/signaling/${this.deviceId}`)).catch(() => {});
-            remove(ref(this.db, `users/${user.uid}/answers/${this.deviceId}`)).catch(() => {});
-            remove(ref(this.db, `users/${user.uid}/candidates/${this.deviceId}`)).catch(() => {});
         }
         this.cleanupPeerConnection();
     }
@@ -284,8 +295,10 @@ export class FileTransferManager {
 
         pc.oniceconnectionstatechange = () => {
             if (pc.iceConnectionState === 'connected') {
+                this.cleanupSignalingData(basePath, targetDeviceId);
                 this.onStatusUpdate('p2p_connected', { targetDeviceId });
             } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                this.cleanupSignalingData(basePath, targetDeviceId);
                 this.onStatusUpdate('p2p_disconnected', { targetDeviceId });
             }
         };

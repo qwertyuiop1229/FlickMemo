@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.37";
+const APP_VERSION = "1.3.38";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -183,6 +183,7 @@ let lastMovedToTrashNote = null;
 let currentTab = 'notes';
 let toastTimer = null;
 let currentUserId = null;
+let forceAccountSelect = false;
 
 // 省メモリ・通信節約用の最適化タイマー＆差分キャッシュ
 let syncDebounceTimer = null;
@@ -603,9 +604,7 @@ function flushPendingSave(id) {
 
 function updateExtensionBadge() {
     if (typeof chrome !== 'undefined' && chrome?.action?.setBadgeText) {
-        const count = Object.values(currentNotes).filter(n => !n.deletedAt).length;
-        chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
-        chrome.action.setBadgeBackgroundColor({ color: "#28292a" });
+        chrome.action.setBadgeText({ text: "" });
     }
 }
 
@@ -1296,7 +1295,7 @@ function handleFileReceived(blob, filename) {
     setTimeout(() => URL.revokeObjectURL(url), 5000);
 
     showToast(`ファイル「${filename}」を受信・保存しました`);
-    addTransferHistory(filename, blob.size, '受信');
+    addTransferHistory(filename, blob.size, '受信', transferManager?.currentMode || 'LAN_P2P');
     scheduleProgressAutoDismiss();
 }
 
@@ -1325,19 +1324,37 @@ function handleTransferProgress(bytes, total, name, direction) {
     }
 }
 
-function addTransferHistory(name, size, type) {
+function addTransferHistory(name, size, type, mode = 'LAN_P2P') {
     if (!transferHistoryList) return;
     const emptyLi = transferHistoryList.querySelector('.empty-history');
     if (emptyLi) emptyLi.remove();
+
+    let modeText = '同一Wi-Fi (P2P)';
+    let modeIcon = 'bolt';
+    if (mode === 'WAN_P2P') {
+        modeText = 'ネット (P2P)';
+        modeIcon = 'public';
+    } else if (mode === 'CLOUD_RELAY') {
+        modeText = 'クラウド中継';
+        modeIcon = 'cloud';
+    } else if (mode === 'LAN_P2P') {
+        modeText = '同一Wi-Fi (P2P)';
+        modeIcon = 'bolt';
+    }
 
     const li = document.createElement('li');
     li.className = 'transfer-history-item';
     const sizeStr = (size / (1024 * 1024)).toFixed(2) + ' MB';
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     li.innerHTML = `
-        <div>
-            <strong>${type === '送信' ? '[送信]' : '[受信]'} ${escapeHTML(name)}</strong>
-            <span style="color:var(--m3-text-muted); font-size:0.75rem; margin-left:0.5rem;">(${sizeStr})</span>
+        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+            <div>
+                <strong>${type === '送信' ? '[送信]' : '[受信]'} ${escapeHTML(name)}</strong>
+                <span style="color:var(--m3-text-muted); font-size:0.75rem; margin-left:0.4rem;">(${sizeStr})</span>
+            </div>
+            <span class="m3-mode-badge">
+                <span class="material-symbols-outlined">${modeIcon}</span> ${modeText}
+            </span>
         </div>
         <span style="color:var(--m3-text-muted); font-size:0.75rem;">${timeStr}</span>
     `;
@@ -1488,7 +1505,7 @@ if (btnStartSend) {
 
             await transferManager.sendFileP2P(fileToSend);
 
-            addTransferHistory(fileToSend.name, fileToSend.size, '送信');
+            addTransferHistory(fileToSend.name, fileToSend.size, '送信', mode);
             showToast(`✅ 「${fileToSend.name}」の送信が完了しました！`);
 
             stagedFilesQueue = [];
@@ -1500,11 +1517,14 @@ if (btnStartSend) {
     };
 }
 
+const btnBackTransfer = document.getElementById('btn-back-transfer');
+
 function openTransferView() {
     currentTab = 'transfer';
     applyGuestUIRestrictions();
     if (mainLayout) mainLayout.classList.add('view-transfer');
     if (transferPanel) transferPanel.classList.remove('hidden');
+    if (btnBackTransfer) btnBackTransfer.classList.remove('hidden');
     tabNotes?.classList.remove('active');
     tabTrash?.classList.remove('active');
     if (dateDisplay) dateDisplay.classList.add('hidden');
@@ -1514,6 +1534,7 @@ function openTransferView() {
 function openNotesView() {
     currentTab = 'notes';
     if (mainLayout) mainLayout.classList.remove('view-transfer');
+    if (btnBackTransfer) btnBackTransfer.classList.add('hidden');
     tabNotes?.classList.add('active');
     tabTrash?.classList.remove('active');
     btnNew?.classList.remove('hidden');
@@ -1537,8 +1558,8 @@ if (btnHeaderTransfer) {
     };
 }
 
-if (btnBackToNotes) {
-    btnBackToNotes.onclick = () => {
+if (btnBackTransfer) {
+    btnBackTransfer.onclick = () => {
         openNotesView();
     };
 }
@@ -1921,6 +1942,7 @@ if (btnSettingsSwitchAction) {
                     });
                 });
             }
+            forceAccountSelect = true;
             await signOut(auth);
             showToast("キャッシュをクリアしてログアウトしました。「Googleでログイン」を押すとアカウントが再選択できます。");
         } catch (err) {
@@ -1978,17 +2000,47 @@ async function loginWithProvider(provider) {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
+        if (provider) {
+            provider.setCustomParameters({ prompt: 'select_account' });
+        }
+
         const ua = navigator.userAgent;
         const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
 
         // ── Chrome 拡張機能（サイドパネル）環境 ──────────────────────────────
-        // chrome.identity.getAuthToken を使ってChromeネイティブのOAuth認証を行う
-        // これがChrome拡張機能での公式推奨・最も確実な方法
-        if (typeof chrome !== 'undefined' && chrome?.runtime?.id && chrome?.identity?.getAuthToken) {
+        if (typeof chrome !== 'undefined' && chrome?.runtime?.id && chrome?.identity) {
+            if (forceAccountSelect && chrome.identity.launchWebAuthFlow) {
+                forceAccountSelect = false;
+                const clientId = "998795111125-0or2js8p7848ht26va94deqhphtrv2o1.apps.googleusercontent.com";
+                const redirectUri = chrome.identity.getRedirectURL();
+                const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&response_type=token&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent('email profile openid')}&prompt=select_account`;
+
+                await new Promise((resolve, reject) => {
+                    chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true }, async (responseUrl) => {
+                        if (chrome.runtime.lastError || !responseUrl) {
+                            reject(new Error(chrome.runtime.lastError?.message || 'アカウント選択がキャンセルされました'));
+                            return;
+                        }
+                        try {
+                            const params = new URLSearchParams(new URL(responseUrl).hash.substring(1));
+                            const accessToken = params.get('access_token');
+                            const idToken = params.get('id_token');
+                            if (!accessToken && !idToken) throw new Error('トークンの取得に失敗しました');
+                            const credential = GoogleAuthProvider.credential(idToken, accessToken);
+                            await setPersistence(auth, browserLocalPersistence);
+                            await signInWithCredential(auth, credential);
+                            resolve();
+                        } catch (err) {
+                            reject(err);
+                        }
+                    });
+                });
+                return;
+            }
+
             await new Promise((resolve, reject) => {
                 chrome.identity.getAuthToken({ interactive: true }, async (token) => {
-                    // エラーチェック
                     if (chrome.runtime.lastError || !token) {
                         const errMsg = chrome.runtime.lastError?.message || 'Googleトークンの取得に失敗しました';
                         console.error('chrome.identity.getAuthToken error:', errMsg);
@@ -1997,15 +2049,12 @@ async function loginWithProvider(provider) {
                     }
 
                     try {
-                        // Google OAuthアクセストークン（第1引数=idToken: null, 第2引数=accessToken: token）
-                        // ※ Firebase IDトークンではなく、GoogleのOAuthアクセストークンを渡す
                         const credential = GoogleAuthProvider.credential(null, token);
                         await setPersistence(auth, browserLocalPersistence);
                         await signInWithCredential(auth, credential);
                         resolve();
                     } catch (err) {
                         console.error('signInWithCredential error:', err);
-                        // トークンが無効・期限切れの場合はChromeのキャッシュを削除してユーザーに再試行を促す
                         if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-token-expired') {
                             chrome.identity.removeCachedAuthToken({ token }, () => {
                                 console.log('キャッシュされたトークンを削除しました。再度ログインしてください。');
