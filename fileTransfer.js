@@ -243,10 +243,19 @@ export class FileTransferManager {
         this.cleanupPeerConnection();
     }
 
+    resetReceiveBuffer() {
+        if (this.receiveBuffer) {
+            this.receiveBuffer.length = 0; // メモリを明示的に即時解放 (iOS Safari/PWA 対策)
+        }
+        this.receiveBuffer = [];
+        this.receivedSize = 0;
+        this.incomingFileInfo = null;
+    }
+
     cleanupPeerConnection() {
         this._connectingTo = null;
+        this.resetReceiveBuffer();
         if (this.dataChannel) {
-            // oncloseを先にnullにして、明示的クリーンアップ時のイベント誤発火を防ぐ
             this.dataChannel.onclose = null;
             this.dataChannel.onmessage = null;
             try { this.dataChannel.close(); } catch (e) {}
@@ -259,9 +268,6 @@ export class FileTransferManager {
             try { this.peerConnection.close(); } catch (e) {}
             this.peerConnection = null;
         }
-        this.receiveBuffer = [];
-        this.receivedSize = 0;
-        this.incomingFileInfo = null;
     }
 
     determineOptimalMode(targetDevice, file) {
@@ -412,10 +418,9 @@ export class FileTransferManager {
                     } else if (meta.type === 'file_end') {
                         const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
                         const safeName = this.sanitizeFilename(this.incomingFileInfo.name);
-                        this.onFileReceived(blob, safeName);
-                        this.receiveBuffer = [];
-                        this.receivedSize = 0;
-                        this.incomingFileInfo = null;
+                        const actualMode = this.incomingFileInfo.mode || 'LAN_P2P';
+                        this.onFileReceived(blob, safeName, actualMode);
+                        this.resetReceiveBuffer();
                         this.onStatusUpdate('remote_transfer_lock', false);
                     } else if (meta.type === 'TRANSFER_LOCK') {
                         this.onStatusUpdate('remote_transfer_lock', true);
@@ -457,7 +462,7 @@ export class FileTransferManager {
         this.onStatusUpdate('p2p_disconnected');
     }
 
-    async sendFileP2P(file) {
+    async sendFileP2P(file, transferMode) {
         if (this.isGuestMode || !this.auth?.currentUser) {
             throw new Error("ファイルを送信するにはGoogleアカウントでのログインが必要です（ゲストは受信のみ利用可能）。");
         }
@@ -474,7 +479,8 @@ export class FileTransferManager {
                 type: 'file_header',
                 name: file.name,
                 size: file.size,
-                mime: file.type || 'application/octet-stream'
+                mime: file.type || 'application/octet-stream',
+                mode: transferMode || this.currentMode || 'LAN_P2P'
             };
 
             this.dataChannel.send(JSON.stringify(header));

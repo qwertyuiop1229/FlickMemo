@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.39";
+const APP_VERSION = "1.3.40";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1261,6 +1261,8 @@ function handleTransferStatus(event, data) {
     } else if (event === 'channel_open') {
         showToast("P2P転送チャネルが開きました（接続完了）");
         const devName = selectedTargetDeviceId && transferManager?.activeDevices[selectedTargetDeviceId]?.name;
+        settingsModal?.classList.add('hidden'); // 設定モーダルが開いていれば閉じる
+        openTransferView(); // 自動的にファイル送信画面に遷移
         updateTransferSteps(true, devName);
     } else if (event === 'channel_close' || event === 'p2p_disconnected') {
         selectedTargetDeviceId = null;
@@ -1284,7 +1286,7 @@ function handleTransferStatus(event, data) {
     }
 }
 
-function handleFileReceived(blob, filename) {
+function handleFileReceived(blob, filename, mode) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1292,10 +1294,11 @@ function handleFileReceived(blob, filename) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
 
     showToast(`ファイル「${filename}」を受信・保存しました`);
-    addTransferHistory(filename, blob.size, '受信', transferManager?.currentMode || 'LAN_P2P');
+    addTransferHistory(filename, blob.size, '受信', mode || 'LAN_P2P');
+    setTransferUILock(false);
     scheduleProgressAutoDismiss();
 }
 
@@ -1460,6 +1463,35 @@ if (btnClearStaged) {
     };
 }
 
+let isTransferring = false;
+
+function setTransferUILock(isLocked) {
+    isTransferring = isLocked;
+    const elementsToLock = [
+        dropzoneArea,
+        fileInput,
+        btnBrowseFiles,
+        btnClearStaged,
+        btnAddMoreFiles,
+        btnStartSend,
+        btnDisconnectSession,
+        btnLeaveRoom,
+        btnCreateRoom,
+        btnJoinRoom
+    ];
+
+    elementsToLock.forEach(el => {
+        if (el) {
+            if (el.tagName === 'BUTTON' || el.tagName === 'INPUT') {
+                el.disabled = isLocked;
+            } else {
+                el.style.pointerEvents = isLocked ? 'none' : 'auto';
+                el.style.opacity = isLocked ? '0.6' : '1';
+            }
+        }
+    });
+}
+
 if (btnStartSend) {
     btnStartSend.onclick = async () => {
         if (isGuestMode) {
@@ -1477,6 +1509,7 @@ if (btnStartSend) {
         }
 
         let fileToSend = null;
+        setTransferUILock(true); // 送信中の UI 操作をロック
 
         try {
             if (stagedFilesQueue.length === 1) {
@@ -1503,7 +1536,7 @@ if (btnStartSend) {
 
             showToast(`モード [${mode}] で「${fileToSend.name}」の送信を開始します...`);
 
-            await transferManager.sendFileP2P(fileToSend);
+            await transferManager.sendFileP2P(fileToSend, mode);
 
             addTransferHistory(fileToSend.name, fileToSend.size, '送信', mode);
             showToast(`✅ 「${fileToSend.name}」の送信が完了しました！`);
@@ -1513,6 +1546,8 @@ if (btnStartSend) {
         } catch (err) {
             console.error("Send Error:", err);
             showToast("送信失敗: " + (err.message || "接続を確認してください"));
+        } finally {
+            setTransferUILock(false); // UI ロック解除
         }
     };
 }
@@ -1693,14 +1728,18 @@ if (btnCreateRoom) {
         const tm = ensureTransferManager();
         if (!tm) return;
         const newRoomId = 'rm_' + Math.random().toString(36).substring(2, 8);
+        const randomKey = Array.from(window.crypto.getRandomValues(new Uint8Array(16)))
+            .map(b => b.toString(16).padStart(2, '0')).join('');
+
         tm.joinRoom(newRoomId);
         updateRoomUI(newRoomId);
 
-        const shareUrl = `${window.location.origin}${window.location.pathname}?room=${newRoomId}`;
+        // クライアントローカルで処理される #key (ハッシュ) で E2EE 暗号化鍵を共有
+        const shareUrl = `${window.location.origin}${window.location.pathname}?room=${newRoomId}#key=${randomKey}`;
         navigator.clipboard.writeText(shareUrl).then(() => {
-            showToast(`ルーム ${newRoomId} を作成し共有URLをコピーしました！`);
+            showToast(`【E2EE暗号化】共有URL（鍵付き）をコピーしました！`);
         }).catch(() => {
-            showToast(`ルーム ${newRoomId} を作成しました。URL: ${shareUrl}`);
+            showToast(`共有URLを作成しました`);
         });
     };
 }
