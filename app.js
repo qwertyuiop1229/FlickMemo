@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.48";
+const APP_VERSION = "1.3.49";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -2402,13 +2402,26 @@ if (btnGuestLogin) {
 }
 
 const toggleE2ee = document.getElementById('toggle-e2ee');
+const toggleSessionE2ee = document.getElementById('toggle-session-e2ee');
+
+function syncE2EEState(enabled, sourceToggle) {
+    if (transferManager) {
+        transferManager.isE2EEEnabled = enabled;
+    }
+    if (toggleE2ee && sourceToggle !== toggleE2ee) {
+        toggleE2ee.checked = enabled;
+    }
+    if (toggleSessionE2ee && sourceToggle !== toggleSessionE2ee) {
+        toggleSessionE2ee.checked = enabled;
+    }
+    showToast(enabled ? "AES-256 E2EE暗号化を有効にしました" : "E2EE暗号化をオフにしました");
+}
+
 if (toggleE2ee) {
-    toggleE2ee.onchange = () => {
-        if (transferManager) {
-            transferManager.isE2EEEnabled = toggleE2ee.checked;
-            showToast(toggleE2ee.checked ? "AES-256 E2EE暗号化を有効にしました" : "E2EE暗号化をオフにしました");
-        }
-    };
+    toggleE2ee.onchange = () => syncE2EEState(toggleE2ee.checked, toggleE2ee);
+}
+if (toggleSessionE2ee) {
+    toggleSessionE2ee.onchange = () => syncE2EEState(toggleSessionE2ee.checked, toggleSessionE2ee);
 }
 
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());

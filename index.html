@@ -300,6 +300,18 @@
                             </button>
                         </div>
 
+                        <!-- ★ 接続セッション内 E2EE 暗号化トグル -->
+                        <div class="e2ee-toggle-card" style="margin-top: 0.75rem; margin-bottom: 0.75rem;">
+                            <div class="e2ee-label-group">
+                                <span class="material-symbols-outlined">lock</span>
+                                <span>AES-256 E2EE暗号化</span>
+                            </div>
+                            <label class="m3-switch">
+                                <input type="checkbox" id="toggle-session-e2ee" checked>
+                                <span class="m3-switch-slider"></span>
+                            </label>
+                        </div>
+
                         <!-- 相手の送信中ロック警告バナー -->
                         <div id="transfer-lock-banner" class="transfer-lock-banner hidden">
                             <span class="material-symbols-outlined">sync</span>

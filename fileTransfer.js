@@ -548,6 +548,50 @@ export class FileTransferManager {
         this.onStatusUpdate('p2p_disconnected');
     }
 
+    async getConnectedTransportMode(requestedMode) {
+        if (requestedMode && requestedMode !== 'AUTO') {
+            return requestedMode;
+        }
+        if (!this.peerConnection) return 'LAN_P2P';
+        try {
+            const stats = await this.peerConnection.getStats();
+            let selectedPairId = null;
+            let localCandMap = new Map();
+
+            stats.forEach(report => {
+                if (report.type === 'transport') {
+                    selectedPairId = report.selectedCandidatePairId;
+                } else if (report.type === 'local-candidate') {
+                    localCandMap.set(report.id, report);
+                }
+            });
+
+            if (!selectedPairId) {
+                stats.forEach(report => {
+                    if (report.type === 'candidate-pair' && (report.selected || report.state === 'succeeded')) {
+                        selectedPairId = report.id;
+                    }
+                });
+            }
+
+            if (selectedPairId) {
+                const pairReport = stats.get(selectedPairId);
+                if (pairReport) {
+                    const localCand = localCandMap.get(pairReport.localCandidateId);
+                    if (localCand) {
+                        const candType = localCand.candidateType; // 'host', 'srflx', 'prflx', 'relay'
+                        if (candType === 'relay') return 'WEB_RELAY';
+                        if (candType === 'srflx' || candType === 'prflx') return 'WAN_P2P';
+                        if (candType === 'host') return 'LAN_P2P';
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn("Stats candidate detection fallback:", e);
+        }
+        return 'LAN_P2P';
+    }
+
     async sendFileP2P(file, transferMode) {
         if (this.isGuestMode || !this.auth?.currentUser) {
             throw new Error("ファイルを送信するにはGoogleアカウントでのログインが必要です（ゲストは受信のみ利用可能）。");
@@ -560,7 +604,7 @@ export class FileTransferManager {
         this.sendControlMessage({ type: 'TRANSFER_LOCK' });
 
         try {
-            const actualMode = transferMode || this.currentMode || 'LAN_P2P';
+            const actualMode = await this.getConnectedTransportMode(transferMode || this.currentMode);
             const isEncrypted = !!this.isE2EEEnabled;
             const isMobile = /iphone|ipad|ipod|android/i.test(navigator.userAgent);
 
