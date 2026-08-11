@@ -176,19 +176,17 @@ export class FileTransferManager {
         }, (err) => console.warn("Room signaling error:", err.message));
         this._roomUnsubscribers.push(unsubSignaling);
 
-        // メンバー監視リスナー — 後から入った方がcaller
+        // メンバー監視リスナー — 決定論的役割分担 (deviceId辞書順でcallerを唯一決定しグレア回避)
         const membersRef = ref(this.db, `public_rooms/${roomId}/members`);
         const unsubMembers = onValue(membersRef, (snapshot) => {
-            // このルームIDが既に無効なら無視（leaveRoom後に遅れて発火する場合の防御）
             if (this.currentRoomId !== roomId) return;
 
             const members = snapshot.val() || {};
             const otherIds = Object.keys(members).filter(id => id !== this.deviceId);
             if (otherIds.length > 0) {
                 const otherId = otherIds[0];
-                const otherJoinedAt = members[otherId]?.joinedAt || 0;
-                if (this._myJoinedAt > otherJoinedAt) {
-                    // 既に接続試行中なら重複発火させない
+                const isCaller = this.deviceId.localeCompare(otherId) > 0;
+                if (isCaller) {
                     if (!this._connectingTo) {
                         this._connectingTo = otherId;
                         this.onStatusUpdate('room_member_joined', { roomId, otherDeviceId: otherId });
@@ -515,14 +513,14 @@ export class FileTransferManager {
         try {
             const actualMode = transferMode || this.currentMode || 'LAN_P2P';
             const isEncrypted = !!this.isE2EEEnabled;
+            const isMobile = /iphone|ipad|ipod|android/i.test(navigator.userAgent);
 
-            // 初期チャンクサイズの決定 (iPhone 17/PC高速環境: 512KB ~ 1MB、低スペック/小ファイル: 128KB ~ 256KB)
-            let chunkSize = 256 * 1024;
-            if (file.size > 20 * 1024 * 1024) {
-                chunkSize = 512 * 1024; // 大容量ファイルは512KB開始
-            } else if (file.size < 2 * 1024 * 1024) {
-                chunkSize = 128 * 1024;
-            }
+            // スマホ (iOS Safari PWA等) と PC でバッファ閾値とチャンクサイズを最適化
+            const MAX_BUFFER = isMobile ? 384 * 1024 : 2 * 1024 * 1024;
+            const LOW_WATERMARK = isMobile ? 128 * 1024 : 512 * 1024;
+            const maxChunkSize = isMobile ? 256 * 1024 : 1024 * 1024;
+
+            let chunkSize = isMobile ? 64 * 1024 : (file.size > 20 * 1024 * 1024 ? 512 * 1024 : 256 * 1024);
 
             const header = {
                 type: 'file_header',
@@ -533,26 +531,29 @@ export class FileTransferManager {
                 encrypted: isEncrypted
             };
 
-            this.dataChannel.send(JSON.stringify(header));
+            if (this.dataChannel && this.dataChannel.readyState === 'open') {
+                this.dataChannel.send(JSON.stringify(header));
+            } else {
+                throw new Error("転送開始前に接続が切断されました。");
+            }
 
             let offset = 0;
             const total = file.size;
 
-            // WebRTC ソケット高効率パイプライン (1MBにバッファ閾値を設定し常時給弾)
-            const MAX_BUFFER = 4 * 1024 * 1024; // 最大4MBまでソケットキューを保持
-            const LOW_WATERMARK = 1024 * 1024; // 1MBを切ったら即補充
-            this.dataChannel.bufferedAmountLowThreshold = LOW_WATERMARK;
+            if (this.dataChannel) {
+                this.dataChannel.bufferedAmountLowThreshold = LOW_WATERMARK;
+            }
 
             let lastTime = Date.now();
             let lastOffset = 0;
 
             while (offset < total) {
-                // 通信切断チェック
+                // 安全なヌルチェック & 接続オープンチェック
                 if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
                     throw new Error("転送中にP2P接続が切断されました。");
                 }
 
-                // バッファフル制御（ノンブロッキング + 10msタイムアウトレースで100%フリーズ回避）
+                // バッファフル制御（ノンブロッキング + 15msタイムアウトレースで絶対フリーズ回避）
                 if (this.dataChannel.bufferedAmount > MAX_BUFFER) {
                     await new Promise(resolve => {
                         let timer = null;
@@ -561,25 +562,27 @@ export class FileTransferManager {
                             if (this.dataChannel) this.dataChannel.onbufferedamountlow = null;
                             resolve();
                         };
-                        this.dataChannel.onbufferedamountlow = onLow;
-                        // イベントを取りこぼした場合でも 10ms で復帰してループ継続
-                        timer = setTimeout(onLow, 10);
+                        if (this.dataChannel) this.dataChannel.onbufferedamountlow = onLow;
+                        timer = setTimeout(onLow, 15);
                     });
                 }
 
-                // 適応型チャンクサイズ動的調整 (速度とバッファドレインをリアルタイム解析)
+                // 切断の二重チェック
+                if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+                    throw new Error("転送中にP2P接続が切断されました。");
+                }
+
+                // 適応型チャンクサイズ動的調整
                 const now = Date.now();
                 const timeDiff = (now - lastTime) / 1000;
                 if (timeDiff >= 0.5) {
                     const bytesSent = offset - lastOffset;
                     const speedMBs = (bytesSent / (1024 * 1024)) / timeDiff;
 
-                    // ドレインが爆速(20MB/s超)ならチャンクを1MBまで拡大して高速化
-                    if (speedMBs > 20 && chunkSize < 1024 * 1024) {
-                        chunkSize = Math.min(1024 * 1024, chunkSize * 2);
-                    } else if (speedMBs < 2 && chunkSize > 64 * 1024) {
-                        // 回線が遅い / 低スぺ端末の場合は 64KB まで縮小して詰まり防止
-                        chunkSize = Math.max(64 * 1024, Math.floor(chunkSize / 2));
+                    if (speedMBs > 15 && chunkSize < maxChunkSize) {
+                        chunkSize = Math.min(maxChunkSize, chunkSize * 2);
+                    } else if (speedMBs < 1.5 && chunkSize > 32 * 1024) {
+                        chunkSize = Math.max(32 * 1024, Math.floor(chunkSize / 2));
                     }
                     lastTime = now;
                     lastOffset = offset;
@@ -593,11 +596,19 @@ export class FileTransferManager {
                     chunkToSend = await this.encryptChunk(rawBuffer);
                 }
 
+                // ヌルチェック付き安全送信
+                if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+                    throw new Error("転送中にP2P接続が切断されました。");
+                }
+
                 try {
                     this.dataChannel.send(chunkToSend);
                 } catch (sendErr) {
-                    // バッファ一時オーバーフロー時は短時間待機して再試行
-                    await new Promise(r => setTimeout(r, 15));
+                    // バッファ一時過負荷時は短時間待機して再送信
+                    await new Promise(r => setTimeout(r, 20));
+                    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+                        throw new Error("転送中にP2P接続が切断されました。");
+                    }
                     this.dataChannel.send(chunkToSend);
                 }
 
@@ -605,8 +616,10 @@ export class FileTransferManager {
                 this.onProgress(offset, total, file.name, 'send');
             }
 
-            // 終了通知
-            this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
+            // 終了通知 (安全送信)
+            if (this.dataChannel && this.dataChannel.readyState === 'open') {
+                this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
+            }
         } finally {
             this.sendControlMessage({ type: 'TRANSFER_UNLOCK' });
         }
