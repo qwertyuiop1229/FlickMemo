@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.55";
+const APP_VERSION = "1.3.56";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -2084,26 +2084,31 @@ btnSettingsTrigger.onclick = () => {
     const accountLabel = document.getElementById('settings-account-label');
     const accountDesc = document.getElementById('settings-account-desc');
     const btnLogout = document.getElementById('btn-settings-logout-action');
-    const btnLogin = document.getElementById('btn-settings-login-action');
     const btnSwitch = document.getElementById('btn-settings-switch-action');
 
     if (isGuestMode) {
-        // ゲスト: アカウントタブのラベルをログインに変更、ログアウト・切り替えボタン非表示
-        if (accountLabel) accountLabel.textContent = 'Googleアカウントでログイン';
-        if (accountDesc) accountDesc.textContent = 'ログインするとメモの同期やデバイス間転送が利用できます';
+        if (accountLabel) accountLabel.textContent = 'Googleアカウントログイン';
+        if (accountDesc) accountDesc.textContent = 'ログインするとメモの同期やファイル送信機能が有効になります';
         if (btnLogout) btnLogout.classList.add('hidden');
-        if (btnSwitch) btnSwitch.classList.add('hidden');
-        if (btnLogin) btnLogin.classList.remove('hidden');
-        // ゲストは「一般・同期」タブも非表示
+        if (btnSwitch) {
+            btnSwitch.classList.remove('hidden');
+            btnSwitch.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">login</span> ログイン`;
+            btnSwitch.onclick = triggerGoogleLogin;
+        }
         if (settingsNavSystem) settingsNavSystem.classList.add('hidden');
-        // アカウントタブをアクティブにリセット
         if (settingsNavAccount) settingsNavAccount.click();
     } else {
         if (accountLabel) accountLabel.textContent = 'アカウント管理';
         if (accountDesc) accountDesc.textContent = '別のアカウントへの切り替えまたはサインアウト';
-        if (btnLogout) btnLogout.classList.remove('hidden');
-        if (btnSwitch) btnSwitch.classList.remove('hidden');
-        if (btnLogin) btnLogin.classList.add('hidden');
+        if (btnLogout) {
+            btnLogout.classList.remove('hidden');
+            btnLogout.onclick = logoutUser;
+        }
+        if (btnSwitch) {
+            btnSwitch.classList.remove('hidden');
+            btnSwitch.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">sync_alt</span> 切り替え`;
+            btnSwitch.onclick = triggerGoogleLogin;
+        }
         if (settingsNavSystem) settingsNavSystem.classList.remove('hidden');
     }
 
