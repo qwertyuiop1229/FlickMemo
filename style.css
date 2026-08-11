@@ -2287,16 +2287,16 @@ body.is-extension-popup {
     max-height: 420px;
     padding: 6px;
     overflow-y: auto;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
     pointer-events: none;
     -webkit-overflow-scrolling: touch;
 }
 
 .m3-toast-container::-webkit-scrollbar {
-    width: 4px;
-}
-.m3-toast-container::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
+    display: none; /* Chrome/Safari */
+    width: 0;
+    height: 0;
 }
 
 .m3-toast-item {
