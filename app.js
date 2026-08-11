@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.49";
+const APP_VERSION = "1.3.50";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1660,14 +1660,11 @@ if (btnStartSend) {
                 fileToSend = new File([zipBlob], zipFileName, { type: "application/zip" });
             }
 
-            const targetDev = selectedTargetDeviceId ? transferManager.activeDevices[selectedTargetDeviceId] : null;
-            const mode = transferManager.determineOptimalMode(targetDev, fileToSend);
+            showToast(`「${fileToSend.name}」の送信を開始します...`);
 
-            showToast(`モード [${mode}] で「${fileToSend.name}」の送信を開始します...`);
+            const actualMode = await transferManager.sendFileP2P(fileToSend);
 
-            await transferManager.sendFileP2P(fileToSend, mode);
-
-            addTransferHistory(fileToSend.name, fileToSend.size, '送信', mode);
+            addTransferHistory(fileToSend.name, fileToSend.size, '送信', actualMode);
             showToast(`✅ 「${fileToSend.name}」の送信が完了しました！`);
 
             stagedFilesQueue = [];

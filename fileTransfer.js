@@ -548,11 +548,11 @@ export class FileTransferManager {
         this.onStatusUpdate('p2p_disconnected');
     }
 
-    async getConnectedTransportMode(requestedMode) {
-        if (requestedMode && requestedMode !== 'AUTO') {
-            return requestedMode;
+    async getConnectedTransportMode() {
+        if (this.currentMode && this.currentMode !== 'AUTO') {
+            return this.currentMode;
         }
-        if (!this.peerConnection) return 'LAN_P2P';
+        if (!this.peerConnection) return 'WAN_P2P';
         try {
             const stats = await this.peerConnection.getStats();
             let selectedPairId = null;
@@ -589,7 +589,7 @@ export class FileTransferManager {
         } catch (e) {
             console.warn("Stats candidate detection fallback:", e);
         }
-        return 'LAN_P2P';
+        return 'WAN_P2P';
     }
 
     async sendFileP2P(file, transferMode) {
@@ -604,7 +604,7 @@ export class FileTransferManager {
         this.sendControlMessage({ type: 'TRANSFER_LOCK' });
 
         try {
-            const actualMode = await this.getConnectedTransportMode(transferMode || this.currentMode);
+            const actualMode = await this.getConnectedTransportMode();
             const isEncrypted = !!this.isE2EEEnabled;
             const isMobile = /iphone|ipad|ipod|android/i.test(navigator.userAgent);
 
