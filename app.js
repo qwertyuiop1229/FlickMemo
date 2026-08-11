@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.46";
+const APP_VERSION = "1.3.47";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1624,18 +1624,40 @@ if (btnStartSend) {
             } else {
                 showToast("複数ファイルを軽量ZIP圧縮中...");
                 const zip = new JSZip();
-                stagedFilesQueue.forEach(file => {
-                    zip.file(file.name, file);
-                });
+                const usedNames = new Map();
+
+                for (let i = 0; i < stagedFilesQueue.length; i++) {
+                    const file = stagedFilesQueue[i];
+                    let name = file.name || `file_${i + 1}`;
+                    
+                    if (usedNames.has(name)) {
+                        const count = usedNames.get(name) + 1;
+                        usedNames.set(name, count);
+                        const extIdx = name.lastIndexOf('.');
+                        if (extIdx > 0) {
+                            name = `${name.substring(0, extIdx)}_${count}${name.substring(extIdx)}`;
+                        } else {
+                            name = `${name}_${count}`;
+                        }
+                    } else {
+                        usedNames.set(name, 1);
+                    }
+
+                    // DOM File から生バイトデータ (ArrayBuffer) を読み出して ZIP に追加
+                    const arrayBuffer = await file.arrayBuffer();
+                    zip.file(name, arrayBuffer);
+                }
 
                 const zipBlob = await zip.generateAsync({
                     type: "blob",
+                    mimeType: "application/zip",
                     compression: "DEFLATE",
                     compressionOptions: { level: 5 }
                 });
 
                 const todayStr = new Date().toISOString().slice(0, 10);
-                fileToSend = new File([zipBlob], `FlickMemo_Files_${todayStr}.zip`, { type: "application/zip" });
+                const zipFileName = `FlickMemo_Files_${todayStr}.zip`;
+                fileToSend = new File([zipBlob], zipFileName, { type: "application/zip" });
             }
 
             const targetDev = selectedTargetDeviceId ? transferManager.activeDevices[selectedTargetDeviceId] : null;

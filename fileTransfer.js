@@ -275,7 +275,9 @@ export class FileTransferManager {
         if (this.currentMode !== 'AUTO') {
             return this.currentMode;
         }
-        if (targetDevice && targetDevice.online) {
+        // AUTO (推奨モード): ネットワーク状態を自動解析し、最適な回線通信を選択
+        const isOnline = targetDevice ? targetDevice.online : true;
+        if (isOnline) {
             return 'LAN_P2P';
         }
         return 'WAN_P2P';
@@ -284,20 +286,31 @@ export class FileTransferManager {
     createPeerConnection(targetDeviceId, basePath, mode = 'AUTO') {
         this.cleanupPeerConnection();
 
-        // モード別ネットワーク制御＆TURNリレイ（学校・プロキシ遮断環境対応）
         let iceServers = [];
+        let iceTransportPolicy = "all";
+
         if (mode === 'LAN_P2P') {
-            // LAN限定モード: STUN/TURNを使用せず完全ローカル(mDNS/プライベートIP)のみで直連
+            // モード1: LAN高速直連 — 外部STUN/TURNを経由せずローカルIP/mDNSのみで最高速転送
             iceServers = [];
+            iceTransportPolicy = "all";
         } else if (mode === 'WEB_RELAY') {
-            // Webリレイ専用モード: ポート80/443の標準TURN(OpenRelay)経由でプロキシを100%通過
+            // モード2: Webリレイ専用 — ポート443/80 TURN Relayを100%強制し、プロキシ/ファイアウォールを突破
             iceServers = [
                 { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
                 { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
                 { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" }
             ];
+            iceTransportPolicy = "relay"; // ★ TURN Relay を 100% 強制
+        } else if (mode === 'WAN_P2P') {
+            // モード3: 広域インターネットP2P — Google STUN 経由で異なるネットワーク間をP2P直連
+            iceServers = [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: "stun:openrelay.metered.ca:80" }
+            ];
+            iceTransportPolicy = "all";
         } else {
-            // WAN / AUTO モード: LAN -> Google STUN -> OpenRelay TURN(443/TCP) に自動フォールバック
+            // AUTO (推奨モード): ローカルP2P -> STUN P2P -> TURN Relay に自動フォールバック
             iceServers = [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
@@ -305,9 +318,10 @@ export class FileTransferManager {
                 { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
                 { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
             ];
+            iceTransportPolicy = "all";
         }
 
-        const config = { iceServers };
+        const config = { iceServers, iceTransportPolicy };
         const pc = new RTCPeerConnection(config);
 
         pc.onicecandidate = (event) => {
