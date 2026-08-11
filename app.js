@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.43";
+const APP_VERSION = "1.3.44";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -52,6 +52,107 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 let currentDbRef = null;
+
+// ★ 全デバイス対応 コンソールログ収集・保持（開発者タブ用）
+const devLogs = [];
+const MAX_DEV_LOGS = 500;
+let currentDevFilter = 'all';
+
+function formatLogArg(arg) {
+    if (arg === null) return 'null';
+    if (arg === undefined) return 'undefined';
+    if (typeof arg === 'object') {
+        try {
+            if (arg instanceof Error) {
+                return `${arg.name}: ${arg.message}\n${arg.stack || ''}`;
+            }
+            return JSON.stringify(arg, null, 2);
+        } catch (e) {
+            return String(arg);
+        }
+    }
+    return String(arg);
+}
+
+function captureLog(level, args) {
+    const timeStr = new Date().toISOString().slice(11, 23);
+    const message = Array.from(args).map(formatLogArg).join(' ');
+    devLogs.push({ time: timeStr, level, message });
+    if (devLogs.length > MAX_DEV_LOGS) {
+        devLogs.shift();
+    }
+    updateDevConsoleUI();
+}
+
+const origLog = console.log;
+const origWarn = console.warn;
+const origError = console.error;
+const origInfo = console.info;
+
+console.log = function (...args) {
+    origLog.apply(console, args);
+    captureLog('log', args);
+};
+
+console.warn = function (...args) {
+    origWarn.apply(console, args);
+    captureLog('warn', args);
+};
+
+console.error = function (...args) {
+    origError.apply(console, args);
+    captureLog('error', args);
+};
+
+console.info = function (...args) {
+    origInfo.apply(console, args);
+    captureLog('info', args);
+};
+
+window.addEventListener('error', (event) => {
+    captureLog('uncaught', [event.error || event.message]);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+    captureLog('uncaught', ['Unhandled Rejection:', event.reason]);
+});
+
+function updateDevConsoleUI() {
+    const viewer = document.getElementById('dev-console-viewer');
+    const logCountElem = document.getElementById('dev-log-count');
+    if (!viewer) return;
+
+    const filtered = devLogs.filter(item => {
+        if (currentDevFilter === 'all') return true;
+        if (currentDevFilter === 'error') return item.level === 'error' || item.level === 'uncaught';
+        if (currentDevFilter === 'warn') return item.level === 'warn';
+        if (currentDevFilter === 'info') return item.level === 'info' || item.level === 'log';
+        return true;
+    });
+
+    if (logCountElem) logCountElem.textContent = devLogs.length;
+
+    if (filtered.length === 0) {
+        viewer.innerHTML = `<div class="dev-log-empty">該当するコンソールログはありません</div>`;
+        return;
+    }
+
+    const html = filtered.map(item => `
+        <div class="dev-log-entry ${item.level}">
+            <div class="dev-log-header">
+                <span class="dev-log-badge ${item.level}">${item.level.toUpperCase()}</span>
+                <span class="dev-log-time">[${item.time}]</span>
+            </div>
+            <div class="dev-log-body">${escapeHTML(item.message)}</div>
+        </div>
+    `).join('');
+
+    const isScrolledToBottom = viewer.scrollHeight - viewer.clientHeight <= viewer.scrollTop + 40;
+    viewer.innerHTML = html;
+    if (isScrolledToBottom) {
+        viewer.scrollTop = viewer.scrollHeight;
+    }
+}
 
 // 完全保存
 function syncSaveNote(note) {
@@ -1286,15 +1387,21 @@ function handleTransferStatus(event, data) {
     }
 }
 
+const activeBlobUrls = new Set();
+
 function handleFileReceived(blob, filename, mode) {
     const url = URL.createObjectURL(blob);
+    activeBlobUrls.add(url);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setTimeout(() => {
+        URL.revokeObjectURL(url);
+        activeBlobUrls.delete(url);
+    }, 1500);
 
     showToast(`ファイル「${filename}」を受信・保存しました`);
     addTransferHistory(filename, blob.size, '受信', mode || 'LAN_P2P');
@@ -2044,6 +2151,70 @@ btnUpdateCheck.onclick = async () => {
     }, 400);
 };
 
+// ★ 開発者タブ コンソールログ コピー・クリア・フィルターイベント
+const btnDevCopyAll = document.getElementById('btn-dev-copy-all');
+const btnDevClearLogs = document.getElementById('btn-dev-clear-logs');
+
+if (btnDevCopyAll) {
+    btnDevCopyAll.onclick = () => {
+        if (devLogs.length === 0) {
+            showToast("コピーするコンソールログがありません");
+            return;
+        }
+        const textToCopy = devLogs.map(item => `[${item.time}] [${item.level.toUpperCase()}] ${item.message}`).join('\n\n');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                showToast(`コンソール全体をコピーしました (${devLogs.length}件)`);
+            }).catch(() => {
+                fallbackCopyText(textToCopy);
+            });
+        } else {
+            fallbackCopyText(textToCopy);
+        }
+    };
+}
+
+function fallbackCopyText(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        showToast(`コンソール全体をコピーしました (${devLogs.length}件)`);
+    } catch (e) {
+        showToast("コピーに失敗しました");
+    }
+    document.body.removeChild(ta);
+}
+
+if (btnDevClearLogs) {
+    btnDevClearLogs.onclick = () => {
+        devLogs.length = 0;
+        updateDevConsoleUI();
+        showToast("コンソールログをクリアしました");
+    };
+}
+
+document.querySelectorAll('.dev-filter-btn').forEach(btn => {
+    btn.onclick = () => {
+        document.querySelectorAll('.dev-filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentDevFilter = btn.getAttribute('data-filter') || 'all';
+        updateDevConsoleUI();
+    };
+});
+
+// ★ スマホ等でのステータスドットタップイベント（状況テキストをトースト表示）
+if (statusBar) {
+    statusBar.onclick = () => {
+        const text = statusText?.textContent || '同期完了';
+        showToast(`ステータス: ${text}`);
+    };
+}
+
 // リダイレクト認証結果のチェック（iOS PWA / Safari リダイレクト対応）
 getRedirectResult(auth).then(result => {
     if (result && result.user) {
@@ -2329,11 +2500,19 @@ function handleNoteSave() {
     }
 }
 
-// ★ アプリ完全終了時のみ P2P を切断（タスクキル・タブ閉じ・スマホスワイプ終了）
+// ★ アプリ完全終了時のみ P2P を切断（タスクキル・タブ閉じ・スマホスワイプ終了・メモリ完全解放）
 function handleAppExitCleanup() {
+    // アクティブな全 Blob URL を一括破棄（iOS Safari メモリリーク防止）
+    activeBlobUrls.forEach(url => {
+        try { URL.revokeObjectURL(url); } catch (e) {}
+    });
+    activeBlobUrls.clear();
+
     if (transferManager) {
         transferManager.stopDevicePresence();
+        transferManager.resetReceiveBuffer();
     }
+    stagedFilesQueue = [];
     handleNoteSave();
 }
 

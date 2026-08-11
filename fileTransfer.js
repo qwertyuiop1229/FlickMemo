@@ -316,11 +316,31 @@ export class FileTransferManager {
             }
         };
 
+        let disconnectGraceTimer = null;
         pc.oniceconnectionstatechange = () => {
-            if (pc.iceConnectionState === 'connected') {
+            if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                if (disconnectGraceTimer) {
+                    clearTimeout(disconnectGraceTimer);
+                    disconnectGraceTimer = null;
+                }
                 this.cleanupSignalingData(basePath, targetDeviceId);
                 this.onStatusUpdate('p2p_connected', { targetDeviceId });
-            } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+            } else if (pc.iceConnectionState === 'disconnected') {
+                // 一時的な回線揺らぎ・バックグラウンド移行対策: 即座に切断せず7秒間の復旧猶予を設ける
+                if (!disconnectGraceTimer) {
+                    disconnectGraceTimer = setTimeout(() => {
+                        disconnectGraceTimer = null;
+                        if (this.peerConnection && (this.peerConnection.iceConnectionState === 'disconnected' || this.peerConnection.iceConnectionState === 'failed')) {
+                            this.cleanupSignalingData(basePath, targetDeviceId);
+                            this.onStatusUpdate('p2p_disconnected', { targetDeviceId });
+                        }
+                    }, 7000);
+                }
+            } else if (pc.iceConnectionState === 'failed') {
+                if (disconnectGraceTimer) {
+                    clearTimeout(disconnectGraceTimer);
+                    disconnectGraceTimer = null;
+                }
                 this.cleanupSignalingData(basePath, targetDeviceId);
                 this.onStatusUpdate('p2p_disconnected', { targetDeviceId });
             }
@@ -429,8 +449,7 @@ export class FileTransferManager {
                     const meta = JSON.parse(event.data);
                     if (meta.type === 'file_header') {
                         this.incomingFileInfo = meta;
-                        this.receiveBuffer = [];
-                        this.receivedSize = 0;
+                        this.resetReceiveBuffer();
                         this.onProgress(0, meta.size, meta.name, 'rec');
                     } else if (meta.type === 'file_end') {
                         const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
@@ -449,9 +468,12 @@ export class FileTransferManager {
                     }
                 } catch (e) {}
             } else if (event.data instanceof ArrayBuffer) {
-                const decrypted = await this.decryptChunk(event.data);
-                this.receiveBuffer.push(decrypted);
-                this.receivedSize += decrypted.byteLength;
+                let payload = event.data;
+                if (this.incomingFileInfo && this.incomingFileInfo.encrypted) {
+                    payload = await this.decryptChunk(event.data);
+                }
+                this.receiveBuffer.push(payload);
+                this.receivedSize += payload.byteLength;
                 if (this.incomingFileInfo) {
                     this.onProgress(this.receivedSize, this.incomingFileInfo.size, this.incomingFileInfo.name, 'rec');
                 }
@@ -491,45 +513,99 @@ export class FileTransferManager {
         this.sendControlMessage({ type: 'TRANSFER_LOCK' });
 
         try {
-            // 実際の転送モード
             const actualMode = transferMode || this.currentMode || 'LAN_P2P';
+            const isEncrypted = !!this.isE2EEEnabled;
 
-            // 最速化アルゴリズム: 動的ダイナミックチャンク (128KB ~ 256KB 可変拡張)
-            const CHUNK_SIZE = file.size > 10 * 1024 * 1024 ? 256 * 1024 : 128 * 1024;
+            // 初期チャンクサイズの決定 (iPhone 17/PC高速環境: 512KB ~ 1MB、低スペック/小ファイル: 128KB ~ 256KB)
+            let chunkSize = 256 * 1024;
+            if (file.size > 20 * 1024 * 1024) {
+                chunkSize = 512 * 1024; // 大容量ファイルは512KB開始
+            } else if (file.size < 2 * 1024 * 1024) {
+                chunkSize = 128 * 1024;
+            }
+
             const header = {
                 type: 'file_header',
                 name: file.name,
                 size: file.size,
                 mime: file.type || 'application/octet-stream',
-                mode: actualMode
+                mode: actualMode,
+                encrypted: isEncrypted
             };
 
             this.dataChannel.send(JSON.stringify(header));
 
             let offset = 0;
             const total = file.size;
-            this.dataChannel.bufferedAmountLowThreshold = 512 * 1024;
 
-            // 最速化: パイプライン・バックプレッシャーフロー制御
+            // WebRTC ソケット高効率パイプライン (1MBにバッファ閾値を設定し常時給弾)
+            const MAX_BUFFER = 4 * 1024 * 1024; // 最大4MBまでソケットキューを保持
+            const LOW_WATERMARK = 1024 * 1024; // 1MBを切ったら即補充
+            this.dataChannel.bufferedAmountLowThreshold = LOW_WATERMARK;
+
+            let lastTime = Date.now();
+            let lastOffset = 0;
+
             while (offset < total) {
-                if (this.dataChannel.bufferedAmount > 2 * 1024 * 1024) {
+                // 通信切断チェック
+                if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+                    throw new Error("転送中にP2P接続が切断されました。");
+                }
+
+                // バッファフル制御（ノンブロッキング + 10msタイムアウトレースで100%フリーズ回避）
+                if (this.dataChannel.bufferedAmount > MAX_BUFFER) {
                     await new Promise(resolve => {
-                        this.dataChannel.onbufferedamountlow = () => {
-                            this.dataChannel.onbufferedamountlow = null;
+                        let timer = null;
+                        const onLow = () => {
+                            if (timer) clearTimeout(timer);
+                            if (this.dataChannel) this.dataChannel.onbufferedamountlow = null;
                             resolve();
                         };
+                        this.dataChannel.onbufferedamountlow = onLow;
+                        // イベントを取りこぼした場合でも 10ms で復帰してループ継続
+                        timer = setTimeout(onLow, 10);
                     });
                 }
 
-                const slice = file.slice(offset, offset + CHUNK_SIZE);
+                // 適応型チャンクサイズ動的調整 (速度とバッファドレインをリアルタイム解析)
+                const now = Date.now();
+                const timeDiff = (now - lastTime) / 1000;
+                if (timeDiff >= 0.5) {
+                    const bytesSent = offset - lastOffset;
+                    const speedMBs = (bytesSent / (1024 * 1024)) / timeDiff;
+
+                    // ドレインが爆速(20MB/s超)ならチャンクを1MBまで拡大して高速化
+                    if (speedMBs > 20 && chunkSize < 1024 * 1024) {
+                        chunkSize = Math.min(1024 * 1024, chunkSize * 2);
+                    } else if (speedMBs < 2 && chunkSize > 64 * 1024) {
+                        // 回線が遅い / 低スぺ端末の場合は 64KB まで縮小して詰まり防止
+                        chunkSize = Math.max(64 * 1024, Math.floor(chunkSize / 2));
+                    }
+                    lastTime = now;
+                    lastOffset = offset;
+                }
+
+                const slice = file.slice(offset, offset + chunkSize);
                 const rawBuffer = await slice.arrayBuffer();
-                const encryptedBuffer = await this.encryptChunk(rawBuffer);
-                this.dataChannel.send(encryptedBuffer);
+
+                let chunkToSend = rawBuffer;
+                if (isEncrypted) {
+                    chunkToSend = await this.encryptChunk(rawBuffer);
+                }
+
+                try {
+                    this.dataChannel.send(chunkToSend);
+                } catch (sendErr) {
+                    // バッファ一時オーバーフロー時は短時間待機して再試行
+                    await new Promise(r => setTimeout(r, 15));
+                    this.dataChannel.send(chunkToSend);
+                }
 
                 offset += rawBuffer.byteLength;
                 this.onProgress(offset, total, file.name, 'send');
             }
 
+            // 終了通知
             this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
         } finally {
             this.sendControlMessage({ type: 'TRANSFER_UNLOCK' });

@@ -434,6 +434,9 @@
                     <button class="settings-tab-btn" data-tab="system">
                         <span class="material-symbols-outlined">tune</span> 一般・同期
                     </button>
+                    <button class="settings-tab-btn" data-tab="developer">
+                        <span class="material-symbols-outlined">terminal</span> 開発者
+                    </button>
                     <button class="settings-tab-btn" data-tab="about">
                         <span class="material-symbols-outlined">info</span> アプリ情報
                     </button>
@@ -487,6 +490,34 @@
                                 <div class="setting-desc">ネット未接続時もローカルに自動保持</div>
                             </div>
                             <span class="badge-active">有効</span>
+                        </div>
+                    </div>
+
+                    <div id="tab-content-developer" class="tab-content hidden">
+                        <div class="developer-tab-container">
+                            <div class="developer-toolbar">
+                                <div class="dev-info">
+                                    <span class="material-symbols-outlined" style="color:var(--m3-primary);">bug_report</span>
+                                    <span>コンソールログ (<span id="dev-log-count">0</span>件)</span>
+                                </div>
+                                <div class="dev-actions">
+                                    <button id="btn-dev-copy-all" class="m3-button btn-primary-sm" type="button">
+                                        <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span> 全体をコピー
+                                    </button>
+                                    <button id="btn-dev-clear-logs" class="m3-button btn-secondary-sm" type="button">
+                                        <span class="material-symbols-outlined" style="font-size:16px;">delete_sweep</span> クリア
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="dev-filter-bar">
+                                <button class="dev-filter-btn active" data-filter="all" type="button">すべて</button>
+                                <button class="dev-filter-btn" data-filter="error" type="button">Error</button>
+                                <button class="dev-filter-btn" data-filter="warn" type="button">Warn</button>
+                                <button class="dev-filter-btn" data-filter="info" type="button">Info/Log</button>
+                            </div>
+                            <div id="dev-console-viewer" class="dev-console-viewer">
+                                <div class="dev-log-empty">コンソールログはありません</div>
+                            </div>
                         </div>
                     </div>
 
