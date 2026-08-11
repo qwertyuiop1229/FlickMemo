@@ -2271,3 +2271,122 @@ body.is-extension-popup {
 .dev-log-entry.warn .dev-log-body {
     color: #ffe088;
 }
+
+/* ==========================================================================
+   Material 3 Dynamic Stacking Toast Notifications
+   ========================================================================== */
+.m3-toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: flex-end;
+    gap: 10px;
+    max-height: 420px;
+    padding: 6px;
+    overflow-y: auto;
+    pointer-events: none;
+    -webkit-overflow-scrolling: touch;
+}
+
+.m3-toast-container::-webkit-scrollbar {
+    width: 4px;
+}
+.m3-toast-container::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
+
+.m3-toast-item {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 280px;
+    max-width: 420px;
+    background: rgba(22, 25, 35, 0.92);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    border-radius: 14px;
+    padding: 10px 14px;
+    color: #ffffff;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    transform: translateY(24px) scale(0.92);
+    opacity: 0;
+    animation: toastSlideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.m3-toast-item.stacked-faded {
+    opacity: 0.45;
+    transform: scale(0.96);
+}
+
+.m3-toast-item.dismissing {
+    animation: toastSlideOut 0.25s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.m3-toast-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+}
+
+.m3-toast-icon {
+    font-size: 20px;
+    color: #8b5cf6;
+    flex-shrink: 0;
+}
+
+.m3-toast-text {
+    word-break: break-word;
+    font-weight: 500;
+}
+
+.m3-toast-close {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+
+.m3-toast-close:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+@keyframes toastSlideIn {
+    0% {
+        opacity: 0;
+        transform: translateY(24px) scale(0.92);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes toastSlideOut {
+    0% {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+    100% {
+        opacity: 0;
+        transform: translateX(40px) scale(0.9);
+    }
+}

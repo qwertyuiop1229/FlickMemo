@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.50";
+const APP_VERSION = "1.3.51";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -321,22 +321,49 @@ function setStatus(type, text) {
     statusText.textContent = text;
 }
 
-function showToast(msg, actionCallback = null) {
-    toastText.textContent = msg;
-    toastMsg.classList.remove('hidden');
-
-    if (actionCallback) {
-        btnToastAction.classList.remove('hidden');
-        btnToastAction.onclick = () => {
-            actionCallback();
-            toastMsg.classList.add('hidden');
-        };
-    } else {
-        btnToastAction.classList.add('hidden');
+function showToast(msg, duration = 4000) {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.className = 'm3-toast-container';
+        document.body.appendChild(container);
     }
 
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastMsg.classList.add('hidden'), 4000);
+    const toastEl = document.createElement('div');
+    toastEl.className = 'm3-toast-item';
+    toastEl.innerHTML = `
+        <div class="m3-toast-content">
+            <span class="material-symbols-outlined m3-toast-icon">info</span>
+            <span class="m3-toast-text">${escapeHTML(msg)}</span>
+        </div>
+        <button type="button" class="m3-toast-close" title="閉じる">
+            <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+        </button>
+    `;
+
+    const btnClose = toastEl.querySelector('.m3-toast-close');
+    const dismiss = () => {
+        if (toastEl.classList.contains('dismissing')) return;
+        toastEl.classList.add('dismissing');
+        setTimeout(() => {
+            if (toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
+        }, 260);
+    };
+
+    btnClose.onclick = dismiss;
+    container.appendChild(toastEl);
+
+    // スタック数が3を超えた古い通知はフェードアウト
+    const toasts = container.querySelectorAll('.m3-toast-item:not(.dismissing)');
+    if (toasts.length > 3) {
+        for (let i = 0; i < toasts.length - 3; i++) {
+            toasts[i].classList.add('stacked-faded');
+        }
+    }
+
+    const autoDuration = typeof duration === 'number' ? duration : 4000;
+    setTimeout(dismiss, autoDuration);
 }
 
 window.addEventListener('online', () => setStatus('saving', 'オンライン復帰・同期中...'));
@@ -1839,7 +1866,7 @@ function ensureTransferManager() {
             auth,
             db,
             (event, data) => handleTransferStatus(event, data),
-            (blob, filename) => handleFileReceived(blob, filename),
+            (blob, filename, mode) => handleFileReceived(blob, filename, mode),
             (bytes, total, name, direction) => handleTransferProgress(bytes, total, name, direction)
         );
     }
