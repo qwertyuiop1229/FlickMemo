@@ -243,14 +243,16 @@ export class FileTransferManager {
         this.cleanupPeerConnection();
     }
 
-    resetReceiveBuffer() {
+    resetReceiveBuffer(keepFileInfo = false) {
         if (this.receiveBuffer) {
             this.receiveBuffer.length = 0; // メモリを明示的に即時解放 (iOS Safari/PWA 対策)
         }
         this.receiveBuffer = [];
         this.receivedSize = 0;
-        this.incomingFileInfo = null;
         this._pendingChunkPromises = [];
+        if (!keepFileInfo) {
+            this.incomingFileInfo = null;
+        }
     }
 
     cleanupPeerConnection() {
@@ -463,21 +465,24 @@ export class FileTransferManager {
                 try {
                     const meta = JSON.parse(event.data);
                     if (meta.type === 'file_header') {
-                        this.incomingFileInfo = meta;
-                        this.resetReceiveBuffer();
+                        this.resetReceiveBuffer(false); // 古いバッファとメタデータを初期化
+                        this.incomingFileInfo = meta;   // メタデータを確実にセット・維持
                         this.onProgress(0, meta.size, meta.name, 'rec');
                     } else if (meta.type === 'file_end') {
-                        // ★ 必勝解決: 非同期で処理中の全バイナリチャンクの復号・追加が完了するのを確実に待つ！
+                        // 全チャンクの復号・追加が完了するのを確実に待つ
                         if (this._pendingChunkPromises && this._pendingChunkPromises.length > 0) {
                             await Promise.all(this._pendingChunkPromises);
                         }
                         this._pendingChunkPromises = [];
 
-                        const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo?.mime || 'application/octet-stream' });
-                        const safeName = this.sanitizeFilename(this.incomingFileInfo?.name);
-                        const actualMode = this.incomingFileInfo?.mode || 'LAN_P2P';
+                        const currentInfo = this.incomingFileInfo;
+                        const mimeType = currentInfo?.mime || 'application/octet-stream';
+                        const blob = new Blob(this.receiveBuffer, { type: mimeType });
+                        const safeName = this.sanitizeFilename(currentInfo?.name);
+                        const actualMode = currentInfo?.mode || 'LAN_P2P';
+
                         this.onFileReceived(blob, safeName, actualMode);
-                        this.resetReceiveBuffer();
+                        this.resetReceiveBuffer(false); // 送信完了後にメタデータ含めて初期化
                         this.onStatusUpdate('remote_transfer_lock', false);
                     } else if (meta.type === 'TRANSFER_LOCK') {
                         this.onStatusUpdate('remote_transfer_lock', true);
