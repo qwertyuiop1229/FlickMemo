@@ -21,6 +21,7 @@ export class FileTransferManager {
         this.incomingFileInfo = null;
         this.heartbeatTimer = null;
         this.currentRoomId = null;
+        this._pendingChunkPromises = [];
 
         this.isE2EEEnabled = true;
         this.isGuestMode = false;
@@ -80,13 +81,14 @@ export class FileTransferManager {
     }
 
     async decryptChunk(buffer) {
-        if (!this.isE2EEEnabled) return buffer;
         try {
+            if (buffer.byteLength < 12) return buffer;
             const key = await this.generateEncryptionKey();
             const iv = buffer.slice(0, 12);
             const data = buffer.slice(12);
             return await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(iv) }, key, data);
         } catch (e) {
+            console.warn("Decryption fallback (raw chunk used):", e.message);
             return buffer;
         }
     }
@@ -248,6 +250,7 @@ export class FileTransferManager {
         this.receiveBuffer = [];
         this.receivedSize = 0;
         this.incomingFileInfo = null;
+        this._pendingChunkPromises = [];
     }
 
     cleanupPeerConnection() {
@@ -450,9 +453,15 @@ export class FileTransferManager {
                         this.resetReceiveBuffer();
                         this.onProgress(0, meta.size, meta.name, 'rec');
                     } else if (meta.type === 'file_end') {
-                        const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
-                        const safeName = this.sanitizeFilename(this.incomingFileInfo.name);
-                        const actualMode = this.incomingFileInfo.mode || 'LAN_P2P';
+                        // ★ 必勝解決: 非同期で処理中の全バイナリチャンクの復号・追加が完了するのを確実に待つ！
+                        if (this._pendingChunkPromises && this._pendingChunkPromises.length > 0) {
+                            await Promise.all(this._pendingChunkPromises);
+                        }
+                        this._pendingChunkPromises = [];
+
+                        const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo?.mime || 'application/octet-stream' });
+                        const safeName = this.sanitizeFilename(this.incomingFileInfo?.name);
+                        const actualMode = this.incomingFileInfo?.mode || 'LAN_P2P';
                         this.onFileReceived(blob, safeName, actualMode);
                         this.resetReceiveBuffer();
                         this.onStatusUpdate('remote_transfer_lock', false);
@@ -464,17 +473,38 @@ export class FileTransferManager {
                         this.cleanupPeerConnection();
                         this.onStatusUpdate('p2p_disconnected');
                     }
-                } catch (e) {}
-            } else if (event.data instanceof ArrayBuffer) {
-                let payload = event.data;
-                if (this.incomingFileInfo && this.incomingFileInfo.encrypted) {
-                    payload = await this.decryptChunk(event.data);
+                } catch (e) {
+                    console.warn("Control message error:", e);
                 }
-                this.receiveBuffer.push(payload);
-                this.receivedSize += payload.byteLength;
-                if (this.incomingFileInfo) {
-                    this.onProgress(this.receivedSize, this.incomingFileInfo.size, this.incomingFileInfo.name, 'rec');
-                }
+            } else {
+                // バイナリチャンク処理 (ArrayBuffer / Blob / TypedArray 全対応)
+                const chunkPromise = (async () => {
+                    try {
+                        let rawBuffer;
+                        if (event.data instanceof ArrayBuffer) {
+                            rawBuffer = event.data;
+                        } else if (event.data instanceof Blob) {
+                            rawBuffer = await event.data.arrayBuffer();
+                        } else if (ArrayBuffer.isView(event.data)) {
+                            rawBuffer = event.data.buffer;
+                        } else {
+                            return;
+                        }
+
+                        let payload = rawBuffer;
+                        if (this.incomingFileInfo && this.incomingFileInfo.encrypted) {
+                            payload = await this.decryptChunk(rawBuffer);
+                        }
+                        this.receiveBuffer.push(payload);
+                        this.receivedSize += payload.byteLength;
+                        if (this.incomingFileInfo) {
+                            this.onProgress(this.receivedSize, this.incomingFileInfo.size, this.incomingFileInfo.name, 'rec');
+                        }
+                    } catch (chunkErr) {
+                        console.error("Chunk processing error:", chunkErr);
+                    }
+                })();
+                this._pendingChunkPromises.push(chunkPromise);
             }
         };
 

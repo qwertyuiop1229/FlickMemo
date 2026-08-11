@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.45";
+const APP_VERSION = "1.3.46";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -2118,36 +2118,68 @@ if (btnSettingsSwitchAction) {
     };
 }
 
+// 自動更新検出機能 (起動時にバックグラウンドで version.json を無キャッシュチェック)
+async function checkForNewVersionAuto() {
+    try {
+        const vRes = await fetch(`./version.json?nocache=${Date.now()}`, {
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
+        });
+        if (vRes.ok) {
+            const vData = await vRes.json();
+            if (vData.version && vData.version !== APP_VERSION) {
+                console.log(`[Version Check] New version detected: v${vData.version} (current: v${APP_VERSION})`);
+                showToast(`新しいバージョン (v${vData.version}) が利用可能です！【設定】から【更新を確認】を押してください`);
+            }
+        }
+    } catch (e) {}
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(checkForNewVersionAuto, 2500);
+});
+
 btnUpdateCheck.onclick = async () => {
     setStatus('saving', '最新コード取得＆キャッシュ完全消去中...');
+    showToast("最新コードを取得するため全キャッシュを完全破棄中...");
+    
     let latestVersionText = "最新";
     try {
-        const vRes = await fetch(`./version.json?nocache=${Date.now()}`, { cache: 'no-store' });
+        const vRes = await fetch(`./version.json?force_reload=${Date.now()}`, {
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
+        });
         if (vRes.ok) {
             const vData = await vRes.json();
             if (vData.version) latestVersionText = `v${vData.version}`;
         }
     } catch (e) {}
 
+    // ServiceWorker & CacheStorage & Storage 完全解除
     try {
+        if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            for (let r of regs) {
+                await r.unregister();
+            }
+        }
         if ('caches' in window) {
             const keys = await caches.keys();
             await Promise.all(keys.map(k => caches.delete(k)));
         }
-        if ('serviceWorker' in navigator) {
-            const regs = await navigator.serviceWorker.getRegistrations();
-            for (let r of regs) await r.unregister();
-        }
         localStorage.removeItem('flickmemo_version_cache');
+        sessionStorage.clear();
     } catch (err) {
-        console.error("Cache clear error:", err);
+        console.error("Cache purge error:", err);
     }
-    showToast(`最新コード (${latestVersionText}) を取得して再読み込み中...`);
+
+    showToast(`最新コード (${latestVersionText}) を適用して再読み込み中...`);
+
     setTimeout(() => {
-        const url = new URL(window.location.href);
-        url.searchParams.set('v', Date.now());
-        url.searchParams.set('reload', 'hard');
-        window.location.replace(url.toString());
+        const targetUrl = new URL(window.location.origin + window.location.pathname);
+        targetUrl.searchParams.set('v', Date.now());
+        targetUrl.searchParams.set('hard_reload', 'true');
+        window.location.href = targetUrl.toString();
     }, 400);
 };
 

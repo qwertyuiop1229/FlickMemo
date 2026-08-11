@@ -26,9 +26,9 @@ export default defineConfig({
                 auth: resolve(__dirname, 'auth.html')
             },
             output: {
-                entryFileNames: 'assets/[name].js',
-                chunkFileNames: 'assets/[name].js',
-                assetFileNames: 'assets/[name].[ext]'
+                entryFileNames: 'assets/[name]-[hash].js',
+                chunkFileNames: 'assets/[name]-[hash].js',
+                assetFileNames: 'assets/[name]-[hash].[ext]'
             }
         }
     },
