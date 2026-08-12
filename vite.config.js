@@ -7,6 +7,7 @@ const copyExtensionFiles = () => ({
     closeBundle() {
         if (!fs.existsSync('dist/icons')) fs.mkdirSync('dist/icons', { recursive: true });
         if (fs.existsSync('manifest.json')) fs.copyFileSync('manifest.json', 'dist/manifest.json');
+        if (fs.existsSync('manifest.webmanifest')) fs.copyFileSync('manifest.webmanifest', 'dist/manifest.webmanifest');
         if (fs.existsSync('background.js')) fs.copyFileSync('background.js', 'dist/background.js');
         if (fs.existsSync('version.json')) fs.copyFileSync('version.json', 'dist/version.json');
         if (fs.existsSync('icon.png')) fs.copyFileSync('icon.png', 'dist/icon.png');
