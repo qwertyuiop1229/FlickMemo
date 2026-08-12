@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "FlickMemo - 超軽量リアルタイムメモ帳",
-    "version": "1.3.62",
+    "version": "1.3.63",
     "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
     "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnZtcft/HI0gK+ZL3h8hCeiVEXsRDwORbrpMDFOlk+AbfB2I7qX8BGU4HBXkh+BmJnRYeRyNG6LZN7TqQN52Pa4jmqeLDB+BUBTlalQUH7KbPxHRGXLiY+1Vf7+utGESY5XsEgGxu/xbs/RVnBirJEuOeo4Llz8Y2D/NbndjkLF9nnUU3lpchzVb6aoa8BbkmlBSN8hG07l7ojR4xajsLUmDlQl2EkimVHFiOIIlQZ5wRYcTjI6T+Ex2rupB0ZU0raCoy3aNloLlxLBjEg/11sNBSstxshd5p6hdb65StYTNgfJmbg6lCte7EYSs3cRSaglQrudtRQtSgK8pk0NqNDwIDAQAB",
     "action": {

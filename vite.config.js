@@ -20,6 +20,13 @@ const copyExtensionFiles = () => ({
     }
 });
 
+const removeCssCrossorigin = () => ({
+    name: 'remove-css-crossorigin',
+    transformIndexHtml(html) {
+        return html.replace(/(<link[^>]*rel="stylesheet"[^>]*)crossorigin(=("[^"]*"|'[^']*'|[^\s>]+))?\s*/gi, '$1 ');
+    }
+});
+
 export default defineConfig({
     base: './',
     build: {
@@ -36,5 +43,5 @@ export default defineConfig({
             }
         }
     },
-    plugins: [copyExtensionFiles()]
+    plugins: [copyExtensionFiles(), removeCssCrossorigin()]
 });
