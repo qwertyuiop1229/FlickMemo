@@ -208,7 +208,30 @@ select {
     align-items: center;
     justify-content: space-between;
     box-sizing: border-box;
+    position: relative;
+    isolation: isolate;
+    /* iOS 27 Liquid Glass: z-index を明示して重ね順を確定 */
+    z-index: 10;
 }
+
+/* iOS 27 Liquid Glass 対策:
+   ステータスバー領域（safe-area-inset-top の高さ）を完全不透明な背景で覆う。
+   これにより OS のブラーサンプリングが "不透明なサーフェス" を検出し、
+   テキスト要素にブラーがかからなくなる。 */
+.m3-top-app-bar::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: env(safe-area-inset-top, 0px);
+    background: var(--m3-surface);
+    z-index: -1;
+    /* 絶対に透過させない */
+    opacity: 1;
+    pointer-events: none;
+}
+
 
 .header-left,
 .header-right {
