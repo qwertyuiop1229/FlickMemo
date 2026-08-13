@@ -1,11 +1,12 @@
 {
-    "id": "./",
+    "id": "/",
     "name": "FlickMemo - 超軽量リアルタイムメモ帳",
     "short_name": "FlickMemo",
     "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
-    "start_url": "./",
-    "scope": "./",
+    "start_url": "/",
+    "scope": "/",
     "display": "standalone",
+    "display_override": ["standalone", "minimal-ui"],
     "orientation": "portrait-primary",
     "background_color": "#131314",
     "theme_color": "#131314",
@@ -13,12 +14,14 @@
         {
             "src": "icon.png",
             "sizes": "192x192",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any maskable"
         },
         {
             "src": "icon.png",
             "sizes": "512x512",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any maskable"
         }
     ]
 }
