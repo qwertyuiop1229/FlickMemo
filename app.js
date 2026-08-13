@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.64";
+const APP_VERSION = "1.3.65";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -2418,7 +2418,7 @@ if (btnGuestLogin) {
         if (userProviderTag) userProviderTag.textContent = "ゲスト";
 
         showToast("ゲストモード (ローカルメモ / 合言葉受送信対応)");
-        loadLocalNotesOnly();
+        loadLocalNotes();
 
         const urlParams = new URLSearchParams(window.location.search);
         const urlRoom = urlParams.get('room');
