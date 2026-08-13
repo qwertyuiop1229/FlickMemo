@@ -20,24 +20,39 @@ const copyExtensionFiles = () => ({
     }
 });
 
-// iOS Safari が crossorigin 属性付きの CSS を拒否する問題を防ぐ
-// manifest の href をハッシュなしパスに書き換える
+// ビルド後に dist/index.html を後処理して iOS PWA 互換性を確保する
 const fixiOSCompatibility = () => ({
     name: 'fix-ios-compatibility',
-    transformIndexHtml(html) {
-        // CSS の link タグから crossorigin 属性を除去
-        html = html.replace(/<link([^>]*rel=["']stylesheet["'][^>]*)crossorigin(?:=["'][^"']*["'])?\s*/gi, '<link$1');
-        // Vite がハッシュ付きで書き換えたマニフェストのパスを元に戻す
+    // writeBundle は全ファイルが書き出された後に実行される（transformIndexHtml より確実）
+    writeBundle() {
+        const htmlPath = resolve(__dirname, 'dist/index.html');
+        if (!fs.existsSync(htmlPath)) return;
+
+        let html = fs.readFileSync(htmlPath, 'utf-8');
+
+        // 1) <script> タグの crossorigin 属性を除去（iOS PWA での CORS エラー対策）
+        html = html.replace(/<script([^>]*)\scrossorigin(?:="[^"]*")?\s*/gi, '<script$1 ');
+
+        // 2) <link> タグ全般の crossorigin 属性を除去（modulepreload, stylesheet 共通）
+        html = html.replace(/<link([^>]*)\scrossorigin(?:="[^"]*")?\s*/gi, '<link$1 ');
+
+        // 3) Vite がハッシュ付きで書き換えたマニフェストのパスを元に戻す
         html = html.replace(
-            /<link rel="manifest" href="\.\/assets\/manifest-[^"]+\.webmanifest">/,
-            '<link rel="manifest" href="./manifest.webmanifest">'
+            /<link rel="manifest" href="[^"]*manifest-[^"]+\.webmanifest">/,
+            '<link rel="manifest" href="/manifest.webmanifest">'
         );
-        return html;
+
+        // 4) ./ で始まる assets パスを / 始まりの絶対パスに統一（iOS PWA の相対パス問題対策）
+        html = html.replace(/href="\.\//g, 'href="/');
+        html = html.replace(/src="\.\//g, 'src="/');
+
+        fs.writeFileSync(htmlPath, html, 'utf-8');
+        console.log('[fix-ios-compatibility] dist/index.html patched for iOS PWA.');
     }
 });
 
 export default defineConfig({
-    base: './',
+    base: '/',
     build: {
         outDir: 'dist',
         rollupOptions: {
