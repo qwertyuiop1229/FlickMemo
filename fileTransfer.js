@@ -26,6 +26,13 @@ export class FileTransferManager {
         this.isE2EEEnabled = true;
         this.isGuestMode = false;
         this.cryptoKey = null;
+        this.customKeyString = null;
+        this._candidateUnsubscribers = [];
+    }
+
+    setCustomEncryptionKey(keyString) {
+        this.customKeyString = keyString || null;
+        this.cryptoKey = null;
     }
 
     getOrCreateDeviceId() {
@@ -56,7 +63,8 @@ export class FileTransferManager {
 
     async generateEncryptionKey() {
         if (!this.cryptoKey) {
-            const keyMaterial = new TextEncoder().encode("FlickMemo_AES256_GCM_SecretKey_2026");
+            const rawKey = this.customKeyString || "FlickMemo_AES256_GCM_SecretKey_2026";
+            const keyMaterial = new TextEncoder().encode(rawKey);
             const hash = await window.crypto.subtle.digest("SHA-256", keyMaterial);
             this.cryptoKey = await window.crypto.subtle.importKey(
                 "raw",
@@ -123,7 +131,7 @@ export class FileTransferManager {
         onValue(signalingRef, (snapshot) => {
             const data = snapshot.val();
             if (data && data.offer) {
-                this.handleIncomingOffer(data.fromDeviceId, data.offer, `users/${user.uid}`);
+                this.handleIncomingOffer(data.fromDeviceId, data.offer, `users/${user.uid}`, data.mode);
                 remove(signalingRef);
             }
         });
@@ -172,7 +180,7 @@ export class FileTransferManager {
         const unsubSignaling = onValue(roomSignalingRef, (snapshot) => {
             const data = snapshot.val();
             if (data && data.offer) {
-                this.handleIncomingOffer(data.fromDeviceId, data.offer, `public_rooms/${roomId}`);
+                this.handleIncomingOffer(data.fromDeviceId, data.offer, `public_rooms/${roomId}`, data.mode);
                 remove(roomSignalingRef).catch(() => {});
             }
         }, (err) => console.warn("Room signaling error:", err.message));
@@ -194,6 +202,9 @@ export class FileTransferManager {
                         this.onStatusUpdate('room_member_joined', { roomId, otherDeviceId: otherId });
                     }
                 }
+            } else {
+                // 相手が退出した場合は接続待機状態に戻す
+                this._connectingTo = null;
             }
         }, (err) => console.warn("Room members error:", err.message));
         this._roomUnsubscribers.push(unsubMembers);
@@ -258,6 +269,10 @@ export class FileTransferManager {
     cleanupPeerConnection() {
         this._connectingTo = null;
         this.resetReceiveBuffer();
+        if (this._candidateUnsubscribers) {
+            this._candidateUnsubscribers.forEach(unsub => { try { unsub(); } catch (e) {} });
+            this._candidateUnsubscribers = [];
+        }
         if (this.dataChannel) {
             this.dataChannel.onclose = null;
             this.dataChannel.onmessage = null;
@@ -384,6 +399,7 @@ export class FileTransferManager {
         await set(sigRef, {
             fromDeviceId: this.deviceId,
             offer: JSON.stringify(offer),
+            mode: this.currentMode,
             timestamp: Date.now()
         });
 
@@ -406,7 +422,7 @@ export class FileTransferManager {
         onValue(ansRef, handleAnswerSnapshot);
 
         const candRef = ref(this.db, `${basePath}/candidates/${this.deviceId}`);
-        onValue(candRef, (snapshot) => {
+        const candUnsub = onValue(candRef, (snapshot) => {
             const data = snapshot.val() || {};
             Object.values(data).forEach(async (candStr) => {
                 try {
@@ -417,11 +433,13 @@ export class FileTransferManager {
                 } catch (e) {}
             });
         });
+        this._candidateUnsubscribers.push(candUnsub);
     }
 
-    async handleIncomingOffer(fromDeviceId, offerStr, basePath) {
+    async handleIncomingOffer(fromDeviceId, offerStr, basePath, offerMode = null) {
         const offer = JSON.parse(offerStr);
-        this.peerConnection = this.createPeerConnection(fromDeviceId, basePath, this.currentMode);
+        const targetMode = offerMode || this.currentMode;
+        this.peerConnection = this.createPeerConnection(fromDeviceId, basePath, targetMode);
 
         this.peerConnection.ondatachannel = (event) => {
             this.dataChannel = event.channel;
@@ -440,7 +458,7 @@ export class FileTransferManager {
         });
 
         const candRef = ref(this.db, `${basePath}/candidates/${this.deviceId}`);
-        onValue(candRef, (snapshot) => {
+        const candUnsub = onValue(candRef, (snapshot) => {
             const data = snapshot.val() || {};
             Object.values(data).forEach(async (candStr) => {
                 try {
@@ -451,6 +469,7 @@ export class FileTransferManager {
                 } catch (e) {}
             });
         });
+        this._candidateUnsubscribers.push(candUnsub);
     }
 
     setupDataChannelHandlers(dc) {
@@ -593,12 +612,8 @@ export class FileTransferManager {
     }
 
     async sendFileP2P(file, transferMode) {
-        if (this.isGuestMode || !this.auth?.currentUser) {
-            throw new Error("ファイルを送信するにはGoogleアカウントでのログインが必要です（ゲストは受信のみ利用可能）。");
-        }
-
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-            throw new Error("接続が確立されていません。送信先デバイスを選択してください。");
+            throw new Error("接続が確立されていません。送信先デバイスを選択または共有リンクで接続してください。");
         }
 
         this.sendControlMessage({ type: 'TRANSFER_LOCK' });
@@ -713,6 +728,7 @@ export class FileTransferManager {
             if (this.dataChannel && this.dataChannel.readyState === 'open') {
                 this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
             }
+            return actualMode;
         } finally {
             this.sendControlMessage({ type: 'TRANSFER_UNLOCK' });
         }

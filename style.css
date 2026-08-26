@@ -209,27 +209,7 @@ select {
     justify-content: space-between;
     box-sizing: border-box;
     position: relative;
-    isolation: isolate;
-    /* iOS 27 Liquid Glass: z-index を明示して重ね順を確定 */
     z-index: 10;
-}
-
-/* iOS 27 Liquid Glass 対策:
-   ステータスバー領域（safe-area-inset-top の高さ）を完全不透明な背景で覆う。
-   これにより OS のブラーサンプリングが "不透明なサーフェス" を検出し、
-   テキスト要素にブラーがかからなくなる。 */
-.m3-top-app-bar::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: env(safe-area-inset-top, 0px);
-    background: var(--m3-surface);
-    z-index: -1;
-    /* 絶対に透過させない */
-    opacity: 1;
-    pointer-events: none;
 }
 
 
@@ -1716,19 +1696,54 @@ body.is-extension-popup {
     background: rgba(43, 114, 219, 0.15);
     border: 1px solid var(--m3-primary);
     border-radius: var(--m3-radius-md);
-    padding: 0.7rem 1rem;
+    padding: 0.8rem 1rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 0.6rem;
 }
 
 .room-status-info {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.6rem;
     font-size: 0.82rem;
     color: var(--m3-primary);
     font-weight: 500;
+    flex: 1;
+    min-width: 0;
+}
+
+.room-status-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.room-status-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--m3-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.room-status-url {
+    font-size: 0.72rem;
+    color: var(--m3-text-muted);
+    font-family: 'Roboto Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.room-status-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-shrink: 0;
 }
 
 /* STEP 2: 接続中セッションヘッダー */
@@ -2269,10 +2284,60 @@ body.is-extension-popup {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0.8rem;
+    padding: 0.55rem 0.8rem;
     background: var(--m3-surface-container);
     border-radius: var(--m3-radius-sm);
     font-size: 0.82rem;
+    gap: 0.6rem;
+}
+
+.transfer-history-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.transfer-history-name-row {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.transfer-history-name-row strong {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.transfer-history-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-shrink: 0;
+}
+
+.m3-icon-button-sm {
+    background: transparent;
+    border: none;
+    color: var(--m3-text-variant);
+    cursor: pointer;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.m3-icon-button-sm:hover {
+    color: var(--m3-primary);
+    background: var(--m3-surface-hover);
 }
 
 .m3-mode-badge {
@@ -2531,6 +2596,35 @@ body.is-extension-popup {
 .m3-toast-text {
     word-break: break-word;
     font-weight: 500;
+}
+
+.m3-toast-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 6px;
+    flex-shrink: 0;
+}
+
+.m3-toast-action-btn {
+    background: rgba(168, 199, 250, 0.15);
+    color: var(--m3-primary);
+    border: 1px solid rgba(168, 199, 250, 0.35);
+    border-radius: var(--m3-radius-full);
+    padding: 3px 9px;
+    font-size: 0.74rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+}
+
+.m3-toast-action-btn:hover {
+    background: var(--m3-primary);
+    color: var(--m3-on-primary);
 }
 
 .m3-toast-close {

@@ -8,7 +8,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="FlickMemo">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="theme-color" content="#131314">
     <title>FlickMemo</title>
     <link rel="icon" type="image/png" href="icon.png">
@@ -49,7 +49,7 @@
                     <span class="material-symbols-outlined">login</span> Google でログイン
                 </button>
                 <button id="btn-guest-login" class="btn-text-subtle" type="button">
-                    ログインせずに使う (オフラインメモ / 受信のみ)
+                    ログインせずに使う (オフラインメモ / 共有リンク送受信)
                 </button>
             </div>
         </div>
@@ -223,7 +223,7 @@
                                 <span class="material-symbols-outlined">devices</span> マイデバイス
                             </button>
                             <button id="btn-target-tab-room" class="target-tab-btn" type="button">
-                                <span class="material-symbols-outlined">link</span> 合言葉・共有リンク
+                                <span class="material-symbols-outlined">link</span> 共有リンクで接続
                             </button>
                         </div>
 
@@ -234,47 +234,38 @@
                             </div>
                         </div>
 
-                        <!-- 2. 合言葉・共有リンクパネル -->
+                        <!-- 2. 共有リンクパネル -->
                         <div id="target-panel-room" class="target-panel-content hidden">
                             <div class="room-action-container">
                                 <!-- 共有リンク発行セクション -->
-                                <div class="room-section-box">
+                                <div id="room-create-section" class="room-section-box">
                                     <div class="room-section-header">
-                                        <span class="material-symbols-outlined">share</span>
-                                        <span>方法1: ワンタップ共有リンクを発行</span>
+                                        <span class="material-symbols-outlined">link</span>
+                                        <span>ワンタップ共有リンクを発行</span>
                                     </div>
-                                    <p class="room-section-desc">発行されたリンクを開くだけで、相手と即座にP2P接続できます</p>
+                                    <p class="room-section-desc">発行されたリンクを相手に送るだけで、ログイン不要＆暗号化ダイレクトP2P接続で双方向ファイル送受信を開始できます。</p>
                                     <button id="btn-create-room" class="m3-button btn-primary-sm full-width" type="button">
-                                        <span class="material-symbols-outlined">add_link</span> 共有URLを発行してコピー
+                                        <span class="material-symbols-outlined">add_link</span> 共有リンクを発行してコピー
                                     </button>
                                 </div>
 
-                                <div class="room-divider-badge"><span>または (OR)</span></div>
-
-                                <!-- 合言葉接続セクション -->
-                                <div class="room-section-box">
-                                    <div class="room-section-header">
-                                        <span class="material-symbols-outlined">key</span>
-                                        <span>方法2: 合言葉を入力して接続</span>
-                                    </div>
-                                    <p class="room-section-desc">同じ合言葉 (例: 123456 / room_a) を入力した端末同士で接続します</p>
-                                    <div class="room-input-group">
-                                        <input type="text" id="room-code-input" class="m3-text-input" placeholder="合言葉 (例: 123456) を入力...">
-                                        <button id="btn-join-room" class="m3-button btn-secondary-sm" type="button">
-                                            <span class="material-symbols-outlined">meeting_room</span> 接続
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <!-- アクティブ接続待機ステータスカード -->
+                                <!-- 共有リンク待機ステータスカード -->
                                 <div id="room-active-status" class="room-active-status hidden">
                                     <div class="room-status-info">
                                         <span class="material-symbols-outlined status-pulse">sensors</span>
-                                        <span id="room-status-text">現在の合言葉: 123456 (相手の接続を待機中...)</span>
+                                        <div class="room-status-details">
+                                            <span class="room-status-title">共有リンク待機中 (相手の参加を待っています)</span>
+                                            <span id="room-status-url" class="room-status-url">https://...</span>
+                                        </div>
                                     </div>
-                                    <button id="btn-leave-room" class="m3-icon-button-danger" title="切断" type="button">
-                                        <span class="material-symbols-outlined">close</span>
-                                    </button>
+                                    <div class="room-status-actions">
+                                        <button id="btn-recopy-room" class="m3-icon-button" title="URLを再コピー" type="button">
+                                            <span class="material-symbols-outlined">content_copy</span>
+                                        </button>
+                                        <button id="btn-leave-room" class="m3-icon-button-danger" title="共有を停止" type="button">
+                                            <span class="material-symbols-outlined">close</span>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>

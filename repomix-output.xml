@@ -40,6 +40,8 @@ The content is organized as follows:
 </file_summary>
 
 <directory_structure>
+public/
+  manifest.webmanifest
 .gitignore
 .repomixignore
 404.html
@@ -50,8 +52,10 @@ background.js
 database.rules.json
 fileTransfer.js
 firebase.json
+icon.png
 index.html
 manifest.json
+manifest.webmanifest
 package.json
 style.css
 vite.config.js
@@ -193,6 +197,33 @@ node_modules/
 }
 </file>
 
+<file path="public/manifest.webmanifest">
+{
+    "id": "./",
+    "name": "FlickMemo - 超軽量リアルタイムメモ帳",
+    "short_name": "FlickMemo",
+    "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
+    "start_url": "./",
+    "scope": "./",
+    "display": "standalone",
+    "orientation": "portrait-primary",
+    "background_color": "#131314",
+    "theme_color": "#131314",
+    "icons": [
+        {
+            "src": "icon.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icon.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ]
+}
+</file>
+
 <file path=".repomixignore">
 # AI Agent スキルドキュメント（ファイル数が膨大なため一括除外）
 .agents/
@@ -275,43 +306,34 @@ bump.js
 </html>
 </file>
 
-<file path="vite.config.js">
-import { defineConfig } from 'vite';
-import { resolve } from 'path';
-import fs from 'fs';
-
-const copyExtensionFiles = () => ({
-    name: 'copy-extension-files',
-    closeBundle() {
-        if (!fs.existsSync('dist/icons')) fs.mkdirSync('dist/icons', { recursive: true });
-        if (fs.existsSync('manifest.json')) fs.copyFileSync('manifest.json', 'dist/manifest.json');
-        if (fs.existsSync('background.js')) fs.copyFileSync('background.js', 'dist/background.js');
-        if (fs.existsSync('icons')) {
-            fs.readdirSync('icons').forEach(file => {
-                fs.copyFileSync(`icons/${file}`, `dist/icons/${file}`);
-            });
+<file path="manifest.webmanifest">
+{
+    "id": "/",
+    "name": "FlickMemo - 超軽量リアルタイムメモ帳",
+    "short_name": "FlickMemo",
+    "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "display_override": ["standalone", "minimal-ui"],
+    "orientation": "portrait-primary",
+    "background_color": "#131314",
+    "theme_color": "#131314",
+    "icons": [
+        {
+            "src": "icon.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "icon.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
         }
-    }
-});
-
-export default defineConfig({
-    base: './',
-    build: {
-        outDir: 'dist',
-        rollupOptions: {
-            input: {
-                popup: resolve(__dirname, 'index.html'),
-                auth: resolve(__dirname, 'auth.html')
-            },
-            output: {
-                entryFileNames: 'assets/[name].js',
-                chunkFileNames: 'assets/[name].js',
-                assetFileNames: 'assets/[name].[ext]'
-            }
-        }
-    },
-    plugins: [copyExtensionFiles()]
-});
+    ]
+}
 </file>
 
 <file path="worker.js">
@@ -557,9 +579,113 @@ performAuth();
       "firebase.json",
       "**/.*",
       "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "/**/index.html",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate, max-age=0" },
+          { "key": "Pragma", "value": "no-cache" },
+          { "key": "Expires", "value": "0" }
+        ]
+      },
+      {
+        "source": "/version.json",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate, max-age=0" },
+          { "key": "Pragma", "value": "no-cache" },
+          { "key": "Expires", "value": "0" }
+        ]
+      },
+      {
+        "source": "/assets/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        ]
+      }
     ]
   }
 }
+</file>
+
+<file path="vite.config.js">
+import { defineConfig } from 'vite';
+import { resolve } from 'path';
+import fs from 'fs';
+
+const copyExtensionFiles = () => ({
+    name: 'copy-extension-files',
+    closeBundle() {
+        if (!fs.existsSync('dist/icons')) fs.mkdirSync('dist/icons', { recursive: true });
+        if (fs.existsSync('manifest.json')) fs.copyFileSync('manifest.json', 'dist/manifest.json');
+        if (fs.existsSync('manifest.webmanifest')) fs.copyFileSync('manifest.webmanifest', 'dist/manifest.webmanifest');
+        if (fs.existsSync('background.js')) fs.copyFileSync('background.js', 'dist/background.js');
+        if (fs.existsSync('version.json')) fs.copyFileSync('version.json', 'dist/version.json');
+        if (fs.existsSync('icon.png')) fs.copyFileSync('icon.png', 'dist/icon.png');
+        if (fs.existsSync('404.html')) fs.copyFileSync('404.html', 'dist/404.html');
+        if (fs.existsSync('icons')) {
+            fs.readdirSync('icons').forEach(file => {
+                fs.copyFileSync(`icons/${file}`, `dist/icons/${file}`);
+            });
+        }
+    }
+});
+
+// ビルド後に dist/index.html を後処理して iOS PWA 互換性を確保する
+const fixiOSCompatibility = () => ({
+    name: 'fix-ios-compatibility',
+    // writeBundle は全ファイルが書き出された後に実行される（transformIndexHtml より確実）
+    writeBundle() {
+        const htmlPath = resolve(__dirname, 'dist/index.html');
+        if (!fs.existsSync(htmlPath)) return;
+
+        let html = fs.readFileSync(htmlPath, 'utf-8');
+
+        // 1) <script> タグの crossorigin 属性を除去（iOS PWA での CORS エラー対策）
+        html = html.replace(/<script([^>]*)\scrossorigin(?:="[^"]*")?\s*/gi, '<script$1 ');
+
+        // 2) <link> タグ全般の crossorigin 属性を除去（modulepreload, stylesheet 共通）
+        html = html.replace(/<link([^>]*)\scrossorigin(?:="[^"]*")?\s*/gi, '<link$1 ');
+
+        // 3) Vite がハッシュ付きで書き換えたマニフェストのパスを元に戻す
+        html = html.replace(
+            /<link rel="manifest" href="[^"]*manifest-[^"]+\.webmanifest">/,
+            '<link rel="manifest" href="/manifest.webmanifest">'
+        );
+
+        // 4) ./ で始まる assets パスを / 始まりの絶対パスに統一（iOS PWA の相対パス問題対策）
+        html = html.replace(/href="\.\//g, 'href="/');
+        html = html.replace(/src="\.\//g, 'src="/');
+
+        fs.writeFileSync(htmlPath, html, 'utf-8');
+        console.log('[fix-ios-compatibility] dist/index.html patched for iOS PWA.');
+    }
+});
+
+export default defineConfig({
+    base: '/',
+    build: {
+        outDir: 'dist',
+        rollupOptions: {
+            input: {
+                popup: resolve(__dirname, 'index.html'),
+                auth: resolve(__dirname, 'auth.html')
+            },
+            output: {
+                entryFileNames: 'assets/[name]-[hash].js',
+                chunkFileNames: 'assets/[name]-[hash].js',
+                assetFileNames: 'assets/[name]-[hash].[ext]'
+            }
+        }
+    },
+    plugins: [copyExtensionFiles(), fixiOSCompatibility()]
+});
 </file>
 
 <file path="fileTransfer.js">
@@ -586,6 +712,7 @@ export class FileTransferManager {
         this.incomingFileInfo = null;
         this.heartbeatTimer = null;
         this.currentRoomId = null;
+        this._pendingChunkPromises = [];
 
         this.isE2EEEnabled = true;
         this.isGuestMode = false;
@@ -645,13 +772,14 @@ export class FileTransferManager {
     }
 
     async decryptChunk(buffer) {
-        if (!this.isE2EEEnabled) return buffer;
         try {
+            if (buffer.byteLength < 12) return buffer;
             const key = await this.generateEncryptionKey();
             const iv = buffer.slice(0, 12);
             const data = buffer.slice(12);
             return await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(iv) }, key, data);
         } catch (e) {
+            console.warn("Decryption fallback (raw chunk used):", e.message);
             return buffer;
         }
     }
@@ -741,19 +869,17 @@ export class FileTransferManager {
         }, (err) => console.warn("Room signaling error:", err.message));
         this._roomUnsubscribers.push(unsubSignaling);
 
-        // メンバー監視リスナー — 後から入った方がcaller
+        // メンバー監視リスナー — 決定論的役割分担 (deviceId辞書順でcallerを唯一決定しグレア回避)
         const membersRef = ref(this.db, `public_rooms/${roomId}/members`);
         const unsubMembers = onValue(membersRef, (snapshot) => {
-            // このルームIDが既に無効なら無視（leaveRoom後に遅れて発火する場合の防御）
             if (this.currentRoomId !== roomId) return;
 
             const members = snapshot.val() || {};
             const otherIds = Object.keys(members).filter(id => id !== this.deviceId);
             if (otherIds.length > 0) {
                 const otherId = otherIds[0];
-                const otherJoinedAt = members[otherId]?.joinedAt || 0;
-                if (this._myJoinedAt > otherJoinedAt) {
-                    // 既に接続試行中なら重複発火させない
+                const isCaller = this.deviceId.localeCompare(otherId) > 0;
+                if (isCaller) {
                     if (!this._connectingTo) {
                         this._connectingTo = otherId;
                         this.onStatusUpdate('room_member_joined', { roomId, otherDeviceId: otherId });
@@ -808,13 +934,16 @@ export class FileTransferManager {
         this.cleanupPeerConnection();
     }
 
-    resetReceiveBuffer() {
+    resetReceiveBuffer(keepFileInfo = false) {
         if (this.receiveBuffer) {
             this.receiveBuffer.length = 0; // メモリを明示的に即時解放 (iOS Safari/PWA 対策)
         }
         this.receiveBuffer = [];
         this.receivedSize = 0;
-        this.incomingFileInfo = null;
+        this._pendingChunkPromises = [];
+        if (!keepFileInfo) {
+            this.incomingFileInfo = null;
+        }
     }
 
     cleanupPeerConnection() {
@@ -839,7 +968,9 @@ export class FileTransferManager {
         if (this.currentMode !== 'AUTO') {
             return this.currentMode;
         }
-        if (targetDevice && targetDevice.online) {
+        // AUTO (推奨モード): ネットワーク状態を自動解析し、最適な回線通信を選択
+        const isOnline = targetDevice ? targetDevice.online : true;
+        if (isOnline) {
             return 'LAN_P2P';
         }
         return 'WAN_P2P';
@@ -848,20 +979,42 @@ export class FileTransferManager {
     createPeerConnection(targetDeviceId, basePath, mode = 'AUTO') {
         this.cleanupPeerConnection();
 
-        // モード別ネットワーク制御アルゴリズム
         let iceServers = [];
+        let iceTransportPolicy = "all";
+
         if (mode === 'LAN_P2P') {
-            // LAN限定モード: STUNを使わず完全ローカル(mDNS/プライベートIP)のみで接続
+            // モード1: LAN高速直連 — 外部STUN/TURNを経由せずローカルIP/mDNSのみで最高速転送
             iceServers = [];
-        } else {
-            // WAN / AUTO モード: Google STUNで別ネットワーク間のP2P接続を確立
+            iceTransportPolicy = "all";
+        } else if (mode === 'WEB_RELAY') {
+            // モード2: Webリレイ専用 — ポート443/80 TURN Relayを100%強制し、プロキシ/ファイアウォールを突破
+            iceServers = [
+                { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+                { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+                { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" }
+            ];
+            iceTransportPolicy = "relay"; // ★ TURN Relay を 100% 強制
+        } else if (mode === 'WAN_P2P') {
+            // モード3: 広域インターネットP2P — Google STUN 経由で異なるネットワーク間をP2P直連
             iceServers = [
                 { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: "stun:openrelay.metered.ca:80" }
             ];
+            iceTransportPolicy = "all";
+        } else {
+            // AUTO (推奨モード): ローカルP2P -> STUN P2P -> TURN Relay に自動フォールバック
+            iceServers = [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: "stun:openrelay.metered.ca:80" },
+                { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+                { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+            ];
+            iceTransportPolicy = "all";
         }
 
-        const config = { iceServers };
+        const config = { iceServers, iceTransportPolicy };
         const pc = new RTCPeerConnection(config);
 
         pc.onicecandidate = (event) => {
@@ -871,11 +1024,31 @@ export class FileTransferManager {
             }
         };
 
+        let disconnectGraceTimer = null;
         pc.oniceconnectionstatechange = () => {
-            if (pc.iceConnectionState === 'connected') {
+            if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                if (disconnectGraceTimer) {
+                    clearTimeout(disconnectGraceTimer);
+                    disconnectGraceTimer = null;
+                }
                 this.cleanupSignalingData(basePath, targetDeviceId);
                 this.onStatusUpdate('p2p_connected', { targetDeviceId });
-            } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+            } else if (pc.iceConnectionState === 'disconnected') {
+                // 一時的な回線揺らぎ・バックグラウンド移行対策: 即座に切断せず7秒間の復旧猶予を設ける
+                if (!disconnectGraceTimer) {
+                    disconnectGraceTimer = setTimeout(() => {
+                        disconnectGraceTimer = null;
+                        if (this.peerConnection && (this.peerConnection.iceConnectionState === 'disconnected' || this.peerConnection.iceConnectionState === 'failed')) {
+                            this.cleanupSignalingData(basePath, targetDeviceId);
+                            this.onStatusUpdate('p2p_disconnected', { targetDeviceId });
+                        }
+                    }, 7000);
+                }
+            } else if (pc.iceConnectionState === 'failed') {
+                if (disconnectGraceTimer) {
+                    clearTimeout(disconnectGraceTimer);
+                    disconnectGraceTimer = null;
+                }
                 this.cleanupSignalingData(basePath, targetDeviceId);
                 this.onStatusUpdate('p2p_disconnected', { targetDeviceId });
             }
@@ -983,16 +1156,24 @@ export class FileTransferManager {
                 try {
                     const meta = JSON.parse(event.data);
                     if (meta.type === 'file_header') {
-                        this.incomingFileInfo = meta;
-                        this.receiveBuffer = [];
-                        this.receivedSize = 0;
+                        this.resetReceiveBuffer(false); // 古いバッファとメタデータを初期化
+                        this.incomingFileInfo = meta;   // メタデータを確実にセット・維持
                         this.onProgress(0, meta.size, meta.name, 'rec');
                     } else if (meta.type === 'file_end') {
-                        const blob = new Blob(this.receiveBuffer, { type: this.incomingFileInfo.mime || 'application/octet-stream' });
-                        const safeName = this.sanitizeFilename(this.incomingFileInfo.name);
-                        const actualMode = this.incomingFileInfo.mode || 'LAN_P2P';
+                        // 全チャンクの復号・追加が完了するのを確実に待つ
+                        if (this._pendingChunkPromises && this._pendingChunkPromises.length > 0) {
+                            await Promise.all(this._pendingChunkPromises);
+                        }
+                        this._pendingChunkPromises = [];
+
+                        const currentInfo = this.incomingFileInfo;
+                        const mimeType = currentInfo?.mime || 'application/octet-stream';
+                        const blob = new Blob(this.receiveBuffer, { type: mimeType });
+                        const safeName = this.sanitizeFilename(currentInfo?.name);
+                        const actualMode = currentInfo?.mode || 'LAN_P2P';
+
                         this.onFileReceived(blob, safeName, actualMode);
-                        this.resetReceiveBuffer();
+                        this.resetReceiveBuffer(false); // 送信完了後にメタデータ含めて初期化
                         this.onStatusUpdate('remote_transfer_lock', false);
                     } else if (meta.type === 'TRANSFER_LOCK') {
                         this.onStatusUpdate('remote_transfer_lock', true);
@@ -1002,14 +1183,38 @@ export class FileTransferManager {
                         this.cleanupPeerConnection();
                         this.onStatusUpdate('p2p_disconnected');
                     }
-                } catch (e) {}
-            } else if (event.data instanceof ArrayBuffer) {
-                const decrypted = await this.decryptChunk(event.data);
-                this.receiveBuffer.push(decrypted);
-                this.receivedSize += decrypted.byteLength;
-                if (this.incomingFileInfo) {
-                    this.onProgress(this.receivedSize, this.incomingFileInfo.size, this.incomingFileInfo.name, 'rec');
+                } catch (e) {
+                    console.warn("Control message error:", e);
                 }
+            } else {
+                // バイナリチャンク処理 (ArrayBuffer / Blob / TypedArray 全対応)
+                const chunkPromise = (async () => {
+                    try {
+                        let rawBuffer;
+                        if (event.data instanceof ArrayBuffer) {
+                            rawBuffer = event.data;
+                        } else if (event.data instanceof Blob) {
+                            rawBuffer = await event.data.arrayBuffer();
+                        } else if (ArrayBuffer.isView(event.data)) {
+                            rawBuffer = event.data.buffer;
+                        } else {
+                            return;
+                        }
+
+                        let payload = rawBuffer;
+                        if (this.incomingFileInfo && this.incomingFileInfo.encrypted) {
+                            payload = await this.decryptChunk(rawBuffer);
+                        }
+                        this.receiveBuffer.push(payload);
+                        this.receivedSize += payload.byteLength;
+                        if (this.incomingFileInfo) {
+                            this.onProgress(this.receivedSize, this.incomingFileInfo.size, this.incomingFileInfo.name, 'rec');
+                        }
+                    } catch (chunkErr) {
+                        console.error("Chunk processing error:", chunkErr);
+                    }
+                })();
+                this._pendingChunkPromises.push(chunkPromise);
             }
         };
 
@@ -1034,57 +1239,171 @@ export class FileTransferManager {
         this.onStatusUpdate('p2p_disconnected');
     }
 
+    async getConnectedTransportMode() {
+        if (this.currentMode && this.currentMode !== 'AUTO') {
+            return this.currentMode;
+        }
+        if (!this.peerConnection) return 'WAN_P2P';
+        try {
+            const stats = await this.peerConnection.getStats();
+            let selectedPairId = null;
+            let localCandMap = new Map();
+
+            stats.forEach(report => {
+                if (report.type === 'transport') {
+                    selectedPairId = report.selectedCandidatePairId;
+                } else if (report.type === 'local-candidate') {
+                    localCandMap.set(report.id, report);
+                }
+            });
+
+            if (!selectedPairId) {
+                stats.forEach(report => {
+                    if (report.type === 'candidate-pair' && (report.selected || report.state === 'succeeded')) {
+                        selectedPairId = report.id;
+                    }
+                });
+            }
+
+            if (selectedPairId) {
+                const pairReport = stats.get(selectedPairId);
+                if (pairReport) {
+                    const localCand = localCandMap.get(pairReport.localCandidateId);
+                    if (localCand) {
+                        const candType = localCand.candidateType; // 'host', 'srflx', 'prflx', 'relay'
+                        if (candType === 'relay') return 'WEB_RELAY';
+                        if (candType === 'srflx' || candType === 'prflx') return 'WAN_P2P';
+                        if (candType === 'host') return 'LAN_P2P';
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn("Stats candidate detection fallback:", e);
+        }
+        return 'WAN_P2P';
+    }
+
     async sendFileP2P(file, transferMode) {
         if (this.isGuestMode || !this.auth?.currentUser) {
             throw new Error("ファイルを送信するにはGoogleアカウントでのログインが必要です（ゲストは受信のみ利用可能）。");
         }
 
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-            throw new Error("P2P接続が確立されていません。送信先デバイスを選択してください。");
+            throw new Error("接続が確立されていません。送信先デバイスを選択してください。");
         }
 
         this.sendControlMessage({ type: 'TRANSFER_LOCK' });
 
         try {
-            const CHUNK_SIZE = 64 * 1024;
+            const actualMode = await this.getConnectedTransportMode();
+            const isEncrypted = !!this.isE2EEEnabled;
+            const isMobile = /iphone|ipad|ipod|android/i.test(navigator.userAgent);
+
+            // スマホ (iOS Safari PWA等) と PC でバッファ閾値とチャンクサイズを最適化
+            const MAX_BUFFER = isMobile ? 384 * 1024 : 2 * 1024 * 1024;
+            const LOW_WATERMARK = isMobile ? 128 * 1024 : 512 * 1024;
+            const maxChunkSize = isMobile ? 256 * 1024 : 1024 * 1024;
+
+            let chunkSize = isMobile ? 64 * 1024 : (file.size > 20 * 1024 * 1024 ? 512 * 1024 : 256 * 1024);
+
             const header = {
                 type: 'file_header',
                 name: file.name,
                 size: file.size,
                 mime: file.type || 'application/octet-stream',
-                mode: transferMode || this.currentMode || 'LAN_P2P'
+                mode: actualMode,
+                encrypted: isEncrypted
             };
 
-            this.dataChannel.send(JSON.stringify(header));
+            if (this.dataChannel && this.dataChannel.readyState === 'open') {
+                this.dataChannel.send(JSON.stringify(header));
+            } else {
+                throw new Error("転送開始前に接続が切断されました。");
+            }
 
             let offset = 0;
             const total = file.size;
-            this.dataChannel.bufferedAmountLowThreshold = 256 * 1024;
 
-            const readAndSendChunk = async () => {
-                while (offset < total) {
-                    if (this.dataChannel.bufferedAmount > 1024 * 1024) {
-                        await new Promise(resolve => {
-                            this.dataChannel.onbufferedamountlow = () => {
-                                this.dataChannel.onbufferedamountlow = null;
-                                resolve();
-                            };
-                        });
-                    }
+            if (this.dataChannel) {
+                this.dataChannel.bufferedAmountLowThreshold = LOW_WATERMARK;
+            }
 
-                    const slice = file.slice(offset, offset + CHUNK_SIZE);
-                    const rawBuffer = await slice.arrayBuffer();
-                    const encryptedBuffer = await this.encryptChunk(rawBuffer);
-                    this.dataChannel.send(encryptedBuffer);
+            let lastTime = Date.now();
+            let lastOffset = 0;
 
-                    offset += rawBuffer.byteLength;
-                    this.onProgress(offset, total, file.name, 'send');
+            while (offset < total) {
+                // 安全なヌルチェック & 接続オープンチェック
+                if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+                    throw new Error("転送中にP2P接続が切断されました。");
                 }
 
-                this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
-            };
+                // バッファフル制御（ノンブロッキング + 15msタイムアウトレースで絶対フリーズ回避）
+                if (this.dataChannel.bufferedAmount > MAX_BUFFER) {
+                    await new Promise(resolve => {
+                        let timer = null;
+                        const onLow = () => {
+                            if (timer) clearTimeout(timer);
+                            if (this.dataChannel) this.dataChannel.onbufferedamountlow = null;
+                            resolve();
+                        };
+                        if (this.dataChannel) this.dataChannel.onbufferedamountlow = onLow;
+                        timer = setTimeout(onLow, 15);
+                    });
+                }
 
-            await readAndSendChunk();
+                // 切断の二重チェック
+                if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+                    throw new Error("転送中にP2P接続が切断されました。");
+                }
+
+                // 適応型チャンクサイズ動的調整
+                const now = Date.now();
+                const timeDiff = (now - lastTime) / 1000;
+                if (timeDiff >= 0.5) {
+                    const bytesSent = offset - lastOffset;
+                    const speedMBs = (bytesSent / (1024 * 1024)) / timeDiff;
+
+                    if (speedMBs > 15 && chunkSize < maxChunkSize) {
+                        chunkSize = Math.min(maxChunkSize, chunkSize * 2);
+                    } else if (speedMBs < 1.5 && chunkSize > 32 * 1024) {
+                        chunkSize = Math.max(32 * 1024, Math.floor(chunkSize / 2));
+                    }
+                    lastTime = now;
+                    lastOffset = offset;
+                }
+
+                const slice = file.slice(offset, offset + chunkSize);
+                const rawBuffer = await slice.arrayBuffer();
+
+                let chunkToSend = rawBuffer;
+                if (isEncrypted) {
+                    chunkToSend = await this.encryptChunk(rawBuffer);
+                }
+
+                // ヌルチェック付き安全送信
+                if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+                    throw new Error("転送中にP2P接続が切断されました。");
+                }
+
+                try {
+                    this.dataChannel.send(chunkToSend);
+                } catch (sendErr) {
+                    // バッファ一時過負荷時は短時間待機して再送信
+                    await new Promise(r => setTimeout(r, 20));
+                    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+                        throw new Error("転送中にP2P接続が切断されました。");
+                    }
+                    this.dataChannel.send(chunkToSend);
+                }
+
+                offset += rawBuffer.byteLength;
+                this.onProgress(offset, total, file.name, 'send');
+            }
+
+            // 終了通知 (安全送信)
+            if (this.dataChannel && this.dataChannel.readyState === 'open') {
+                this.dataChannel.send(JSON.stringify({ type: 'file_end' }));
+            }
         } finally {
             this.sendControlMessage({ type: 'TRANSFER_UNLOCK' });
         }
@@ -1099,86 +1418,23 @@ export class FileTransferManager {
 }
 </file>
 
-<file path="package.json">
-{
-    "name": "flickmemo",
-    "version": "1.3.40",
-    "type": "module",
-    "scripts": {
-        "dev": "vite",
-        "build": "vite build",
-        "deploy": "node bump.js && npm run build && git add . && git commit -m \"auto deploy: update code and version\" && git push && firebase deploy"
-    },
-    "dependencies": {
-        "firebase": "^10.12.0",
-        "jszip": "^3.10.1",
-        "prismjs": "^1.29.0"
-    },
-    "devDependencies": {
-        "vite": "^5.0.0"
-    }
-}
-</file>
-
-<file path="manifest.json">
-{
-    "manifest_version": 3,
-    "name": "FlickMemo - 超軽量リアルタイムメモ帳",
-    "version": "1.3.40",
-    "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
-    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnZtcft/HI0gK+ZL3h8hCeiVEXsRDwORbrpMDFOlk+AbfB2I7qX8BGU4HBXkh+BmJnRYeRyNG6LZN7TqQN52Pa4jmqeLDB+BUBTlalQUH7KbPxHRGXLiY+1Vf7+utGESY5XsEgGxu/xbs/RVnBirJEuOeo4Llz8Y2D/NbndjkLF9nnUU3lpchzVb6aoa8BbkmlBSN8hG07l7ojR4xajsLUmDlQl2EkimVHFiOIIlQZ5wRYcTjI6T+Ex2rupB0ZU0raCoy3aNloLlxLBjEg/11sNBSstxshd5p6hdb65StYTNgfJmbg6lCte7EYSs3cRSaglQrudtRQtSgK8pk0NqNDwIDAQAB",
-    "action": {
-        "default_title": "FlickMemoをサイドパネルで開く"
-    },
-    "side_panel": {
-        "default_path": "index.html"
-    },
-    "background": {
-        "service_worker": "background.js"
-    },
-    "oauth2": {
-        "client_id": "998795111125-0or2js8p7848ht26va94deqhphtrv2o1.apps.googleusercontent.com",
-        "scopes": [
-            "email",
-            "profile",
-            "openid"
-        ]
-    },
-    "permissions": [
-        "sidePanel",
-        "identity",
-        "storage",
-        "contextMenus",
-        "tabs",
-        "windows"
-    ],
-    "omnibox": {
-        "keyword": "fm"
-    },
-    "commands": {
-        "_execute_action": {
-            "suggested_key": {
-                "default": "Ctrl+Shift+M",
-                "mac": "Command+Shift+M"
-            },
-            "description": "FlickMemoを開く"
-        }
-    },
-    "content_security_policy": {
-        "extension_pages": "script-src 'self'; object-src 'self';"
-    }
-}
-</file>
-
 <file path="index.html">
 <!DOCTYPE html>
 <html lang="ja">
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="FlickMemo">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="theme-color" content="#131314">
     <title>FlickMemo</title>
-    <link rel="icon" href="data:,">
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="icon.png">
+    <link rel="apple-touch-icon" href="icon.png">
     <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto+Mono&display=swap">
     <link rel="stylesheet"
@@ -1367,6 +1623,14 @@ export class FileTransferManager {
                                         </div>
                                         <span class="material-symbols-outlined check-icon hidden">check</span>
                                     </li>
+                                    <li class="dropdown-menu-item" data-value="WEB_RELAY">
+                                        <span class="material-symbols-outlined">hub</span>
+                                        <div class="item-text-group">
+                                            <span class="item-title">Webリレイパイプ (E2EE/通信量0)</span>
+                                            <span class="item-desc">P2P遮断環境・厳重プロキシ対応・暗号化リアルタイム中継</span>
+                                        </div>
+                                        <span class="material-symbols-outlined check-icon hidden">check</span>
+                                    </li>
                                     
                                 </ul>
                             </div>
@@ -1374,18 +1638,6 @@ export class FileTransferManager {
 
                     <!-- STEP 1: 接続先選択・接続画面 -->
                     <div id="transfer-step-connect" class="transfer-step-connect">
-                        <!-- ★ 暗号化設定トグル -->
-                        <div class="e2ee-toggle-card">
-                            <div class="e2ee-label-group">
-                                <span class="material-symbols-outlined">lock</span>
-                                <span>暗号化</span>
-                            </div>
-                            <label class="m3-switch">
-                                <input type="checkbox" id="toggle-e2ee" checked>
-                                <span class="m3-switch-slider"></span>
-                            </label>
-                        </div>
-
                         <!-- ★ 送信先選択 セグメントタブ -->
                         <div class="target-segmented-tabs">
                             <button id="btn-target-tab-devices" class="target-tab-btn active" type="button">
@@ -1463,6 +1715,18 @@ export class FileTransferManager {
                             <button id="btn-disconnect-session" class="m3-icon-button-danger" title="切断" type="button">
                                 <span class="material-symbols-outlined">link_off</span>
                             </button>
+                        </div>
+
+                        <!-- ★ 接続セッション内 E2EE 暗号化トグル -->
+                        <div class="e2ee-toggle-card" style="margin-top: 0.75rem; margin-bottom: 0.75rem;">
+                            <div class="e2ee-label-group">
+                                <span class="material-symbols-outlined">lock</span>
+                                <span>AES-256 E2EE暗号化</span>
+                            </div>
+                            <label class="m3-switch">
+                                <input type="checkbox" id="toggle-session-e2ee" checked>
+                                <span class="m3-switch-slider"></span>
+                            </label>
                         </div>
 
                         <!-- 相手の送信中ロック警告バナー -->
@@ -1597,6 +1861,9 @@ export class FileTransferManager {
                     <button class="settings-tab-btn" data-tab="system">
                         <span class="material-symbols-outlined">tune</span> 一般・同期
                     </button>
+                    <button class="settings-tab-btn" data-tab="developer">
+                        <span class="material-symbols-outlined">terminal</span> 開発者
+                    </button>
                     <button class="settings-tab-btn" data-tab="about">
                         <span class="material-symbols-outlined">info</span> アプリ情報
                     </button>
@@ -1621,17 +1888,14 @@ export class FileTransferManager {
                                 <div id="settings-account-label" class="setting-label">アカウント管理</div>
                                 <div id="settings-account-desc" class="setting-desc">別のアカウントへの切り替えまたはサインアウト</div>
                             </div>
-                            <div style="display:flex; gap:0.5rem; align-items:center;">
-                                <button id="btn-settings-switch-action" class="m3-button btn-secondary-sm" type="button">
+                            <div class="setting-actions">
+                                <button id="btn-settings-switch-action" class="btn-secondary-sm" type="button">
                                     <span class="material-symbols-outlined" style="font-size:16px;">sync_alt</span> 切り替え
                                 </button>
-                                <button id="btn-settings-logout-action" class="m3-button btn-danger-sm" type="button">
+                                <button id="btn-settings-logout-action" class="btn-danger-sm" type="button">
                                     <span class="material-symbols-outlined" style="font-size:16px;">logout</span> ログアウト
                                 </button>
                             </div>
-                            <button id="btn-settings-login-action" class="m3-button btn-primary-sm hidden" type="button">
-                                <span class="material-symbols-outlined" style="font-size:16px;">login</span> Googleでログイン
-                            </button>
                         </div>
                     </div>
 
@@ -1650,6 +1914,34 @@ export class FileTransferManager {
                                 <div class="setting-desc">ネット未接続時もローカルに自動保持</div>
                             </div>
                             <span class="badge-active">有効</span>
+                        </div>
+                    </div>
+
+                    <div id="tab-content-developer" class="tab-content hidden">
+                        <div class="developer-tab-container">
+                            <div class="developer-toolbar">
+                                <div class="dev-info">
+                                    <span class="material-symbols-outlined" style="color:var(--m3-primary);">bug_report</span>
+                                    <span>コンソールログ (<span id="dev-log-count">0</span>件)</span>
+                                </div>
+                                <div class="dev-actions">
+                                    <button id="btn-dev-copy-all" class="m3-button btn-primary-sm" type="button">
+                                        <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span> 全体をコピー
+                                    </button>
+                                    <button id="btn-dev-clear-logs" class="m3-button btn-secondary-sm" type="button">
+                                        <span class="material-symbols-outlined" style="font-size:16px;">delete_sweep</span> クリア
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="dev-filter-bar">
+                                <button class="dev-filter-btn active" data-filter="all" type="button">すべて</button>
+                                <button class="dev-filter-btn" data-filter="error" type="button">Error</button>
+                                <button class="dev-filter-btn" data-filter="warn" type="button">Warn</button>
+                                <button class="dev-filter-btn" data-filter="info" type="button">Info/Log</button>
+                            </div>
+                            <div id="dev-console-viewer" class="dev-console-viewer">
+                                <div class="dev-log-empty">コンソールログはありません</div>
+                            </div>
                         </div>
                     </div>
 
@@ -1886,14 +2178,20 @@ select {
 }
 
 .m3-top-app-bar {
-    height: 52px;
+    min-height: calc(52px + env(safe-area-inset-top, 0px));
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-left: max(1rem, env(safe-area-inset-left, 0px));
+    padding-right: max(1rem, env(safe-area-inset-right, 0px));
     background: var(--m3-surface);
     border-bottom: 1px solid var(--m3-border);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 1rem;
+    box-sizing: border-box;
+    position: relative;
+    z-index: 10;
 }
+
 
 .header-left,
 .header-right {
@@ -2498,23 +2796,27 @@ select {
     background: #4a2b2b;
 }
 
-/* Discordスタイル設定モーダル */
+/* Discordスタイル設定モーダル - フルフルード画面比率レスポンシブ */
 .settings-dialog-discord {
-    max-width: 620px !important;
-    width: 90vw;
-    height: 480px;
+    width: clamp(320px, 82vw, 1100px) !important;
+    max-width: 90vw !important;
+    height: clamp(420px, 72vh, 760px) !important;
+    max-height: 88vh !important;
     text-align: left;
     padding: 0 !important;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    border-radius: clamp(14px, 1.8vw, 24px);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    transition: width 0.2s ease, height 0.2s ease;
 }
 
 .dialog-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.8rem 1.2rem;
+    padding: 0.9rem 1.4rem;
     border-bottom: 1px solid var(--m3-border);
     background: var(--m3-surface-container);
 }
@@ -2526,8 +2828,8 @@ select {
 }
 
 .dialog-title-group h3 {
-    font-size: 1rem;
-    font-weight: 500;
+    font-size: 1.05rem;
+    font-weight: 600;
 }
 
 .discord-settings-layout {
@@ -2537,13 +2839,13 @@ select {
 }
 
 .settings-nav {
-    width: 160px;
+    width: clamp(160px, 20vw, 220px);
     background: var(--m3-surface-container);
     border-right: 1px solid var(--m3-border);
-    padding: 0.8rem 0.5rem;
+    padding: clamp(0.75rem, 1.5vh, 1.25rem) clamp(0.5rem, 1vw, 0.85rem);
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
+    gap: 0.35rem;
     flex-shrink: 0;
 }
 
@@ -2551,21 +2853,23 @@ select {
     background: transparent;
     border: none;
     color: var(--m3-text-muted);
-    padding: 0.65rem 0.8rem;
-    border-radius: var(--m3-radius-md);
-    font-size: 0.82rem;
+    padding: 0.7rem 0.9rem;
+    border-radius: 12px;
+    font-size: 0.85rem;
     font-weight: 500;
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    transition: all 0.15s;
+    gap: 0.65rem;
+    transition: all 0.15s ease;
     text-align: left;
     width: 100%;
+    white-space: nowrap !important;
+    word-break: keep-all !important;
 }
 
 .settings-tab-btn span {
-    font-size: 18px;
+    font-size: 19px;
 }
 
 .settings-tab-btn:hover {
@@ -2576,14 +2880,15 @@ select {
 .settings-tab-btn.active {
     background: var(--m3-surface-hover);
     color: var(--m3-primary);
-    font-weight: 500;
+    font-weight: 600;
 }
 
 .settings-content-area {
     flex: 1;
-    padding: 1.2rem 1.5rem;
+    padding: clamp(1rem, 2.5vh, 2rem) clamp(1.25rem, 2.5vw, 2.5rem);
     overflow-y: auto;
     background: var(--m3-bg);
+    min-width: 0;
 }
 
 .tab-content {
@@ -2674,13 +2979,21 @@ select {
     background: var(--m3-danger-bg);
     color: var(--m3-danger);
     border: 1px solid var(--m3-danger-border);
-    padding: 0.4rem 0.8rem;
+    padding: 0.5rem 0.9rem;
     border-radius: var(--m3-radius-full);
-    font-size: 0.8rem;
+    font-size: 0.82rem;
+    font-weight: 500;
     cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.35rem;
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    writing-mode: horizontal-tb !important;
+    width: auto !important;
+    flex-shrink: 0 !important;
+    transition: all 0.2s ease;
 }
 
 .badge-active {
@@ -2789,6 +3102,14 @@ select {
         max-height: 100dvh !important;
         border-radius: 0 !important;
         border: none !important;
+        background: #0d0f17;
+    }
+
+    .dialog-header {
+        padding: 0.9rem 1.2rem;
+        background: rgba(22, 25, 35, 0.95);
+        backdrop-filter: blur(16px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
 
     .discord-settings-layout {
@@ -2799,16 +3120,113 @@ select {
         width: 100%;
         flex-direction: row;
         border-right: none;
-        border-bottom: 1px solid var(--m3-border);
-        padding: 0.4rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 0.6rem 0.8rem;
         overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        gap: 0.45rem;
+        background: #131622;
+        flex-shrink: 0;
+    }
+
+    .settings-nav::-webkit-scrollbar {
+        display: none;
     }
 
     .settings-tab-btn {
         flex: 1;
+        min-width: fit-content;
         justify-content: center;
+        font-size: 0.82rem;
+        padding: 0.6rem 0.9rem;
+        border-radius: 12px;
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .settings-tab-btn.active {
+        background: var(--m3-primary);
+        color: #ffffff;
+        font-weight: 600;
+        border-color: transparent;
+    }
+
+    .settings-content-area {
+        padding: 1rem;
+    }
+
+    .setting-item-box {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.9rem;
+        padding: 1rem 1.1rem;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .setting-item-box > div:last-child {
+        width: 100%;
+        display: flex;
+        gap: 0.6rem;
+        justify-content: stretch;
+    }
+
+    #btn-settings-switch-action,
+    #btn-settings-logout-action,
+    #btn-settings-login-action {
+        flex: 1;
+        justify-content: center;
+        padding: 0.65rem 0.8rem;
+        font-size: 0.85rem;
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        border-radius: 12px;
+    }
+
+    .developer-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+    }
+
+    .dev-actions {
+        width: 100%;
+        display: flex;
+        gap: 0.6rem;
+    }
+
+    #btn-dev-copy-all,
+    #btn-dev-clear-logs {
+        flex: 1;
+        justify-content: center;
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        padding: 0.65rem;
+        font-size: 0.82rem;
+        border-radius: 12px;
+    }
+
+    .dev-filter-bar {
+        overflow-x: auto;
+        scrollbar-width: none;
+        padding-bottom: 0.2rem;
+    }
+
+    .dev-filter-bar::-webkit-scrollbar {
+        display: none;
+    }
+
+    .dev-filter-btn {
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        flex-shrink: 0;
+        padding: 0.45rem 0.8rem;
         font-size: 0.78rem;
-        padding: 0.5rem;
+        border-radius: 10px;
     }
 }
 
@@ -2956,15 +3374,52 @@ body.is-extension-popup {
     background: var(--m3-surface-container);
     color: var(--m3-text);
     border: 1px solid var(--m3-border);
-    padding: 0.4rem 0.9rem;
+    padding: 0.5rem 0.9rem;
     border-radius: var(--m3-radius-full);
-    font-size: 0.8rem;
+    font-size: 0.82rem;
+    font-weight: 500;
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.35rem;
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    writing-mode: horizontal-tb !important;
+    width: auto !important;
+    flex-shrink: 0 !important;
     transition: all 0.2s ease;
-}.transfer-mode-selector-group {
+}
+
+.btn-primary-sm {
+    background: var(--m3-primary);
+    color: var(--m3-on-primary);
+    border: none;
+    padding: 0.5rem 0.9rem;
+    border-radius: var(--m3-radius-full);
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.35rem;
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    writing-mode: horizontal-tb !important;
+    width: auto !important;
+    flex-shrink: 0 !important;
+    transition: all 0.2s ease;
+}
+
+.setting-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-shrink: 0;
+}
+
+.transfer-mode-selector-group {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
@@ -3804,6 +4259,359 @@ body.is-extension-popup {
     text-align: center;
     padding: 0.8rem 0;
 }
+
+/* スマホでのステータスバー点のみ表示調整 */
+#status-bar {
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+
+#status-bar:active {
+    opacity: 0.7;
+}
+
+@media (max-width: 768px) {
+    #status-bar {
+        padding: 6px;
+        min-width: unset;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+    #status-bar #status-text {
+        display: none !important;
+    }
+}
+
+/* 開発者タブ コンソールビューアー */
+.developer-tab-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    gap: 0.6rem;
+}
+
+.developer-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.dev-info {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.dev-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.dev-filter-bar {
+    display: flex;
+    gap: 0.3rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--m3-border);
+}
+
+.dev-filter-btn {
+    background: transparent;
+    border: 1px solid var(--m3-border);
+    color: var(--m3-text-muted);
+    font-size: 0.72rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: var(--m3-radius-full);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.dev-filter-btn.active {
+    background: var(--m3-primary);
+    color: #fff;
+    border-color: var(--m3-primary);
+}
+
+.dev-console-viewer {
+    flex: 1;
+    background: #0f1015;
+    border: 1px solid var(--m3-border);
+    border-radius: var(--m3-radius-md);
+    padding: 0.6rem;
+    overflow-y: auto;
+    font-family: 'Roboto Mono', Consolas, monospace;
+    font-size: 0.76rem;
+    line-height: 1.45;
+    color: #e2e2e9;
+    -webkit-overflow-scrolling: touch;
+    max-height: 320px;
+}
+
+.dev-log-empty {
+    color: #666;
+    text-align: center;
+    padding: 2rem 0;
+    font-style: italic;
+}
+
+.dev-log-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.35rem 0.4rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    word-break: break-all;
+    white-space: pre-wrap;
+}
+
+.dev-log-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.7rem;
+}
+
+.dev-log-time {
+    color: #777888;
+}
+
+.dev-log-badge {
+    padding: 0.05rem 0.35rem;
+    border-radius: 3px;
+    font-weight: bold;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+}
+
+.dev-log-badge.log, .dev-log-badge.info {
+    background: rgba(139, 233, 253, 0.15);
+    color: #8be9fd;
+}
+
+.dev-log-badge.warn {
+    background: rgba(255, 184, 108, 0.2);
+    color: #ffb86c;
+}
+
+.dev-log-badge.error, .dev-log-badge.uncaught {
+    background: rgba(255, 85, 85, 0.2);
+    color: #ff5555;
+}
+
+.dev-log-body {
+    color: #d1d5db;
+}
+
+.dev-log-entry.error .dev-log-body {
+    color: #ff8888;
+}
+
+.dev-log-entry.warn .dev-log-body {
+    color: #ffe088;
+}
+
+/* ==========================================================================
+   Material 3 Dynamic Stacking Toast Notifications
+   ========================================================================== */
+.m3-toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: flex-end;
+    gap: 10px;
+    max-height: 420px;
+    padding: 6px;
+    overflow-y: auto;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+    pointer-events: none;
+    -webkit-overflow-scrolling: touch;
+}
+
+.m3-toast-container::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+    width: 0;
+    height: 0;
+}
+
+.m3-toast-item {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 280px;
+    max-width: 420px;
+    background: rgba(22, 25, 35, 0.92);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    border-radius: 14px;
+    padding: 10px 14px;
+    color: #ffffff;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    transform: translateY(24px) scale(0.92);
+    opacity: 0;
+    animation: toastSlideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.m3-toast-item.stacked-faded {
+    opacity: 0.45;
+    transform: scale(0.96);
+}
+
+.m3-toast-item.dismissing {
+    animation: toastSlideOut 0.25s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.m3-toast-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+}
+
+.m3-toast-icon {
+    font-size: 20px;
+    color: #8b5cf6;
+    flex-shrink: 0;
+}
+
+.m3-toast-text {
+    word-break: break-word;
+    font-weight: 500;
+}
+
+.m3-toast-close {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+
+.m3-toast-close:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+@keyframes toastSlideIn {
+    0% {
+        opacity: 0;
+        transform: translateY(24px) scale(0.92);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes toastSlideOut {
+    0% {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+    100% {
+        opacity: 0;
+        transform: translateX(40px) scale(0.9);
+    }
+}
+</file>
+
+<file path="package.json">
+{
+    "name": "flickmemo",
+    "version": "1.3.68",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "deploy": "node bump.js && npm run build && git add . && git commit -m \"auto deploy: update code and version\" && git push && firebase deploy"
+    },
+    "dependencies": {
+        "firebase": "^10.12.0",
+        "jszip": "^3.10.1",
+        "prismjs": "^1.29.0"
+    },
+    "devDependencies": {
+        "vite": "^5.0.0"
+    }
+}
+</file>
+
+<file path="manifest.json">
+{
+    "manifest_version": 3,
+    "name": "FlickMemo - 超軽量リアルタイムメモ帳",
+    "version": "1.3.68",
+    "description": "即座に書ける、リアルタイム同期の超軽量メモ帳＆最速ファイル送信",
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnZtcft/HI0gK+ZL3h8hCeiVEXsRDwORbrpMDFOlk+AbfB2I7qX8BGU4HBXkh+BmJnRYeRyNG6LZN7TqQN52Pa4jmqeLDB+BUBTlalQUH7KbPxHRGXLiY+1Vf7+utGESY5XsEgGxu/xbs/RVnBirJEuOeo4Llz8Y2D/NbndjkLF9nnUU3lpchzVb6aoa8BbkmlBSN8hG07l7ojR4xajsLUmDlQl2EkimVHFiOIIlQZ5wRYcTjI6T+Ex2rupB0ZU0raCoy3aNloLlxLBjEg/11sNBSstxshd5p6hdb65StYTNgfJmbg6lCte7EYSs3cRSaglQrudtRQtSgK8pk0NqNDwIDAQAB",
+    "action": {
+        "default_title": "FlickMemoをサイドパネルで開く",
+        "default_icon": "icon.png"
+    },
+    "icons": {
+        "16": "icon.png",
+        "48": "icon.png",
+        "128": "icon.png",
+        "192": "icon.png",
+        "512": "icon.png"
+    },
+    "side_panel": {
+        "default_path": "index.html"
+    },
+    "background": {
+        "service_worker": "background.js"
+    },
+    "oauth2": {
+        "client_id": "998795111125-0or2js8p7848ht26va94deqhphtrv2o1.apps.googleusercontent.com",
+        "scopes": [
+            "email",
+            "profile",
+            "openid"
+        ]
+    },
+    "permissions": [
+        "sidePanel",
+        "identity",
+        "storage",
+        "contextMenus",
+        "tabs",
+        "windows"
+    ],
+    "omnibox": {
+        "keyword": "fm"
+    },
+    "commands": {
+        "_execute_action": {
+            "suggested_key": {
+                "default": "Ctrl+Shift+M",
+                "mac": "Command+Shift+M"
+            },
+            "description": "FlickMemoを開く"
+        }
+    },
+    "content_security_policy": {
+        "extension_pages": "script-src 'self'; object-src 'self';"
+    }
+}
 </file>
 
 <file path="app.js">
@@ -3843,7 +4651,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.40";
+const APP_VERSION = "1.3.68";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -3861,6 +4669,107 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 let currentDbRef = null;
+
+// ★ 全デバイス対応 コンソールログ収集・保持（開発者タブ用）
+const devLogs = [];
+const MAX_DEV_LOGS = 500;
+let currentDevFilter = 'all';
+
+function formatLogArg(arg) {
+    if (arg === null) return 'null';
+    if (arg === undefined) return 'undefined';
+    if (typeof arg === 'object') {
+        try {
+            if (arg instanceof Error) {
+                return `${arg.name}: ${arg.message}\n${arg.stack || ''}`;
+            }
+            return JSON.stringify(arg, null, 2);
+        } catch (e) {
+            return String(arg);
+        }
+    }
+    return String(arg);
+}
+
+function captureLog(level, args) {
+    const timeStr = new Date().toISOString().slice(11, 23);
+    const message = Array.from(args).map(formatLogArg).join(' ');
+    devLogs.push({ time: timeStr, level, message });
+    if (devLogs.length > MAX_DEV_LOGS) {
+        devLogs.shift();
+    }
+    updateDevConsoleUI();
+}
+
+const origLog = console.log;
+const origWarn = console.warn;
+const origError = console.error;
+const origInfo = console.info;
+
+console.log = function (...args) {
+    origLog.apply(console, args);
+    captureLog('log', args);
+};
+
+console.warn = function (...args) {
+    origWarn.apply(console, args);
+    captureLog('warn', args);
+};
+
+console.error = function (...args) {
+    origError.apply(console, args);
+    captureLog('error', args);
+};
+
+console.info = function (...args) {
+    origInfo.apply(console, args);
+    captureLog('info', args);
+};
+
+window.addEventListener('error', (event) => {
+    captureLog('uncaught', [event.error || event.message]);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+    captureLog('uncaught', ['Unhandled Rejection:', event.reason]);
+});
+
+function updateDevConsoleUI() {
+    const viewer = document.getElementById('dev-console-viewer');
+    const logCountElem = document.getElementById('dev-log-count');
+    if (!viewer) return;
+
+    const filtered = devLogs.filter(item => {
+        if (currentDevFilter === 'all') return true;
+        if (currentDevFilter === 'error') return item.level === 'error' || item.level === 'uncaught';
+        if (currentDevFilter === 'warn') return item.level === 'warn';
+        if (currentDevFilter === 'info') return item.level === 'info' || item.level === 'log';
+        return true;
+    });
+
+    if (logCountElem) logCountElem.textContent = devLogs.length;
+
+    if (filtered.length === 0) {
+        viewer.innerHTML = `<div class="dev-log-empty">該当するコンソールログはありません</div>`;
+        return;
+    }
+
+    const html = filtered.map(item => `
+        <div class="dev-log-entry ${item.level}">
+            <div class="dev-log-header">
+                <span class="dev-log-badge ${item.level}">${item.level.toUpperCase()}</span>
+                <span class="dev-log-time">[${item.time}]</span>
+            </div>
+            <div class="dev-log-body">${escapeHTML(item.message)}</div>
+        </div>
+    `).join('');
+
+    const isScrolledToBottom = viewer.scrollHeight - viewer.clientHeight <= viewer.scrollTop + 40;
+    viewer.innerHTML = html;
+    if (isScrolledToBottom) {
+        viewer.scrollTop = viewer.scrollHeight;
+    }
+}
 
 // 完全保存
 function syncSaveNote(note) {
@@ -4029,22 +4938,49 @@ function setStatus(type, text) {
     statusText.textContent = text;
 }
 
-function showToast(msg, actionCallback = null) {
-    toastText.textContent = msg;
-    toastMsg.classList.remove('hidden');
-
-    if (actionCallback) {
-        btnToastAction.classList.remove('hidden');
-        btnToastAction.onclick = () => {
-            actionCallback();
-            toastMsg.classList.add('hidden');
-        };
-    } else {
-        btnToastAction.classList.add('hidden');
+function showToast(msg, duration = 4000) {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.className = 'm3-toast-container';
+        document.body.appendChild(container);
     }
 
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastMsg.classList.add('hidden'), 4000);
+    const toastEl = document.createElement('div');
+    toastEl.className = 'm3-toast-item';
+    toastEl.innerHTML = `
+        <div class="m3-toast-content">
+            <span class="material-symbols-outlined m3-toast-icon">info</span>
+            <span class="m3-toast-text">${escapeHTML(msg)}</span>
+        </div>
+        <button type="button" class="m3-toast-close" title="閉じる">
+            <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+        </button>
+    `;
+
+    const btnClose = toastEl.querySelector('.m3-toast-close');
+    const dismiss = () => {
+        if (toastEl.classList.contains('dismissing')) return;
+        toastEl.classList.add('dismissing');
+        setTimeout(() => {
+            if (toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
+        }, 260);
+    };
+
+    btnClose.onclick = dismiss;
+    container.appendChild(toastEl);
+
+    // スタック数が3を超えた古い通知はフェードアウト
+    const toasts = container.querySelectorAll('.m3-toast-item:not(.dismissing)');
+    if (toasts.length > 3) {
+        for (let i = 0; i < toasts.length - 3; i++) {
+            toasts[i].classList.add('stacked-faded');
+        }
+    }
+
+    const autoDuration = typeof duration === 'number' ? duration : 4000;
+    setTimeout(dismiss, autoDuration);
 }
 
 window.addEventListener('online', () => setStatus('saving', 'オンライン復帰・同期中...'));
@@ -5095,15 +6031,21 @@ function handleTransferStatus(event, data) {
     }
 }
 
+const activeBlobUrls = new Set();
+
 function handleFileReceived(blob, filename, mode) {
     const url = URL.createObjectURL(blob);
+    activeBlobUrls.add(url);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setTimeout(() => {
+        URL.revokeObjectURL(url);
+        activeBlobUrls.delete(url);
+    }, 1500);
 
     showToast(`ファイル「${filename}」を受信・保存しました`);
     addTransferHistory(filename, blob.size, '受信', mode || 'LAN_P2P');
@@ -5141,13 +6083,16 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P') {
     const emptyLi = transferHistoryList.querySelector('.empty-history');
     if (emptyLi) emptyLi.remove();
 
-    let modeText = '同一Wi-Fi (P2P)';
+    let modeText = '同一Wi-Fi (LAN)';
     let modeIcon = 'bolt';
     if (mode === 'WAN_P2P') {
         modeText = 'ネット (P2P)';
         modeIcon = 'public';
+    } else if (mode === 'WEB_RELAY') {
+        modeText = 'Webリレイ (E2EE)';
+        modeIcon = 'hub';
     } else {
-        modeText = '同一Wi-Fi (P2P)';
+        modeText = '同一Wi-Fi (LAN)';
         modeIcon = 'bolt';
     }
 
@@ -5323,28 +6268,47 @@ if (btnStartSend) {
             } else {
                 showToast("複数ファイルを軽量ZIP圧縮中...");
                 const zip = new JSZip();
-                stagedFilesQueue.forEach(file => {
-                    zip.file(file.name, file);
-                });
+                const usedNames = new Map();
+
+                for (let i = 0; i < stagedFilesQueue.length; i++) {
+                    const file = stagedFilesQueue[i];
+                    let name = file.name || `file_${i + 1}`;
+                    
+                    if (usedNames.has(name)) {
+                        const count = usedNames.get(name) + 1;
+                        usedNames.set(name, count);
+                        const extIdx = name.lastIndexOf('.');
+                        if (extIdx > 0) {
+                            name = `${name.substring(0, extIdx)}_${count}${name.substring(extIdx)}`;
+                        } else {
+                            name = `${name}_${count}`;
+                        }
+                    } else {
+                        usedNames.set(name, 1);
+                    }
+
+                    // DOM File から生バイトデータ (ArrayBuffer) を読み出して ZIP に追加
+                    const arrayBuffer = await file.arrayBuffer();
+                    zip.file(name, arrayBuffer);
+                }
 
                 const zipBlob = await zip.generateAsync({
                     type: "blob",
+                    mimeType: "application/zip",
                     compression: "DEFLATE",
                     compressionOptions: { level: 5 }
                 });
 
                 const todayStr = new Date().toISOString().slice(0, 10);
-                fileToSend = new File([zipBlob], `FlickMemo_Files_${todayStr}.zip`, { type: "application/zip" });
+                const zipFileName = `FlickMemo_Files_${todayStr}.zip`;
+                fileToSend = new File([zipBlob], zipFileName, { type: "application/zip" });
             }
 
-            const targetDev = selectedTargetDeviceId ? transferManager.activeDevices[selectedTargetDeviceId] : null;
-            const mode = transferManager.determineOptimalMode(targetDev, fileToSend);
+            showToast(`「${fileToSend.name}」の送信を開始します...`);
 
-            showToast(`モード [${mode}] で「${fileToSend.name}」の送信を開始します...`);
+            const actualMode = await transferManager.sendFileP2P(fileToSend);
 
-            await transferManager.sendFileP2P(fileToSend, mode);
-
-            addTransferHistory(fileToSend.name, fileToSend.size, '送信', mode);
+            addTransferHistory(fileToSend.name, fileToSend.size, '送信', actualMode);
             showToast(`✅ 「${fileToSend.name}」の送信が完了しました！`);
 
             stagedFilesQueue = [];
@@ -5519,7 +6483,7 @@ function ensureTransferManager() {
             auth,
             db,
             (event, data) => handleTransferStatus(event, data),
-            (blob, filename) => handleFileReceived(blob, filename),
+            (blob, filename, mode) => handleFileReceived(blob, filename, mode),
             (bytes, total, name, direction) => handleTransferProgress(bytes, total, name, direction)
         );
     }
@@ -5737,26 +6701,33 @@ btnSettingsTrigger.onclick = () => {
     const accountLabel = document.getElementById('settings-account-label');
     const accountDesc = document.getElementById('settings-account-desc');
     const btnLogout = document.getElementById('btn-settings-logout-action');
-    const btnLogin = document.getElementById('btn-settings-login-action');
     const btnSwitch = document.getElementById('btn-settings-switch-action');
 
     if (isGuestMode) {
-        // ゲスト: アカウントタブのラベルをログインに変更、ログアウト・切り替えボタン非表示
-        if (accountLabel) accountLabel.textContent = 'Googleアカウントでログイン';
-        if (accountDesc) accountDesc.textContent = 'ログインするとメモの同期やデバイス間転送が利用できます';
+        if (accountLabel) accountLabel.textContent = 'Googleアカウントログイン';
+        if (accountDesc) accountDesc.textContent = 'ログインするとメモの同期やファイル送信機能が有効になります';
         if (btnLogout) btnLogout.classList.add('hidden');
-        if (btnSwitch) btnSwitch.classList.add('hidden');
-        if (btnLogin) btnLogin.classList.remove('hidden');
-        // ゲストは「一般・同期」タブも非表示
+        if (btnSwitch) {
+            btnSwitch.classList.remove('hidden');
+            btnSwitch.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">login</span> ログイン`;
+            btnSwitch.onclick = () => loginWithProvider(new GoogleAuthProvider());
+        }
         if (settingsNavSystem) settingsNavSystem.classList.add('hidden');
-        // アカウントタブをアクティブにリセット
         if (settingsNavAccount) settingsNavAccount.click();
     } else {
         if (accountLabel) accountLabel.textContent = 'アカウント管理';
         if (accountDesc) accountDesc.textContent = '別のアカウントへの切り替えまたはサインアウト';
-        if (btnLogout) btnLogout.classList.remove('hidden');
-        if (btnSwitch) btnSwitch.classList.remove('hidden');
-        if (btnLogin) btnLogin.classList.add('hidden');
+        if (btnLogout) {
+            btnLogout.classList.remove('hidden');
+            btnLogout.onclick = () => {
+                logoutModal.classList.remove('hidden');
+            };
+        }
+        if (btnSwitch) {
+            btnSwitch.classList.remove('hidden');
+            btnSwitch.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">sync_alt</span> 切り替え`;
+            btnSwitch.onclick = () => loginWithProvider(new GoogleAuthProvider());
+        }
         if (settingsNavSystem) settingsNavSystem.classList.remove('hidden');
     }
 
@@ -5817,38 +6788,134 @@ if (btnSettingsSwitchAction) {
     };
 }
 
+// 自動更新検出機能 (起動時にバックグラウンドで version.json を無キャッシュチェック)
+async function checkForNewVersionAuto() {
+    try {
+        const vRes = await fetch(`./version.json?nocache=${Date.now()}`, {
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
+        });
+        if (vRes.ok) {
+            const vData = await vRes.json();
+            if (vData.version && vData.version !== APP_VERSION) {
+                console.log(`[Version Check] New version detected: v${vData.version} (current: v${APP_VERSION})`);
+                showToast(`新しいバージョン (v${vData.version}) が利用可能です！【設定】から【更新を確認】を押してください`);
+            }
+        }
+    } catch (e) {}
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(checkForNewVersionAuto, 2500);
+});
+
 btnUpdateCheck.onclick = async () => {
     setStatus('saving', '最新コード取得＆キャッシュ完全消去中...');
+    showToast("最新コードを取得するため全キャッシュを完全破棄中...");
+    
     let latestVersionText = "最新";
     try {
-        const vRes = await fetch(`./version.json?nocache=${Date.now()}`, { cache: 'no-store' });
+        const vRes = await fetch(`./version.json?force_reload=${Date.now()}`, {
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
+        });
         if (vRes.ok) {
             const vData = await vRes.json();
             if (vData.version) latestVersionText = `v${vData.version}`;
         }
     } catch (e) {}
 
+    // ServiceWorker & CacheStorage & Storage 完全解除
     try {
+        if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            for (let r of regs) {
+                await r.unregister();
+            }
+        }
         if ('caches' in window) {
             const keys = await caches.keys();
             await Promise.all(keys.map(k => caches.delete(k)));
         }
-        if ('serviceWorker' in navigator) {
-            const regs = await navigator.serviceWorker.getRegistrations();
-            for (let r of regs) await r.unregister();
-        }
         localStorage.removeItem('flickmemo_version_cache');
+        sessionStorage.clear();
     } catch (err) {
-        console.error("Cache clear error:", err);
+        console.error("Cache purge error:", err);
     }
-    showToast(`最新コード (${latestVersionText}) を取得して再読み込み中...`);
+
+    showToast(`最新コード (${latestVersionText}) を適用して再読み込み中...`);
+
     setTimeout(() => {
-        const url = new URL(window.location.href);
-        url.searchParams.set('v', Date.now());
-        url.searchParams.set('reload', 'hard');
-        window.location.replace(url.toString());
+        const targetUrl = new URL(window.location.origin + window.location.pathname);
+        targetUrl.searchParams.set('v', Date.now());
+        targetUrl.searchParams.set('hard_reload', 'true');
+        window.location.href = targetUrl.toString();
     }, 400);
 };
+
+// ★ 開発者タブ コンソールログ コピー・クリア・フィルターイベント
+const btnDevCopyAll = document.getElementById('btn-dev-copy-all');
+const btnDevClearLogs = document.getElementById('btn-dev-clear-logs');
+
+if (btnDevCopyAll) {
+    btnDevCopyAll.onclick = () => {
+        if (devLogs.length === 0) {
+            showToast("コピーするコンソールログがありません");
+            return;
+        }
+        const textToCopy = devLogs.map(item => `[${item.time}] [${item.level.toUpperCase()}] ${item.message}`).join('\n\n');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                showToast(`コンソール全体をコピーしました (${devLogs.length}件)`);
+            }).catch(() => {
+                fallbackCopyText(textToCopy);
+            });
+        } else {
+            fallbackCopyText(textToCopy);
+        }
+    };
+}
+
+function fallbackCopyText(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        showToast(`コンソール全体をコピーしました (${devLogs.length}件)`);
+    } catch (e) {
+        showToast("コピーに失敗しました");
+    }
+    document.body.removeChild(ta);
+}
+
+if (btnDevClearLogs) {
+    btnDevClearLogs.onclick = () => {
+        devLogs.length = 0;
+        updateDevConsoleUI();
+        showToast("コンソールログをクリアしました");
+    };
+}
+
+document.querySelectorAll('.dev-filter-btn').forEach(btn => {
+    btn.onclick = () => {
+        document.querySelectorAll('.dev-filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentDevFilter = btn.getAttribute('data-filter') || 'all';
+        updateDevConsoleUI();
+    };
+});
+
+// ★ スマホ等でのステータスドットタップイベント（状況テキストをトースト表示）
+if (statusBar) {
+    statusBar.onclick = () => {
+        const text = statusText?.textContent || '同期完了';
+        showToast(`ステータス: ${text}`);
+    };
+}
 
 // リダイレクト認証結果のチェック（iOS PWA / Safari リダイレクト対応）
 getRedirectResult(auth).then(result => {
@@ -5968,7 +7035,7 @@ if (btnGuestLogin) {
         if (userProviderTag) userProviderTag.textContent = "ゲスト";
 
         showToast("ゲストモード (ローカルメモ / 合言葉受送信対応)");
-        loadLocalNotesOnly();
+        loadLocalNotes();
 
         const urlParams = new URLSearchParams(window.location.search);
         const urlRoom = urlParams.get('room');
@@ -5983,13 +7050,26 @@ if (btnGuestLogin) {
 }
 
 const toggleE2ee = document.getElementById('toggle-e2ee');
+const toggleSessionE2ee = document.getElementById('toggle-session-e2ee');
+
+function syncE2EEState(enabled, sourceToggle) {
+    if (transferManager) {
+        transferManager.isE2EEEnabled = enabled;
+    }
+    if (toggleE2ee && sourceToggle !== toggleE2ee) {
+        toggleE2ee.checked = enabled;
+    }
+    if (toggleSessionE2ee && sourceToggle !== toggleSessionE2ee) {
+        toggleSessionE2ee.checked = enabled;
+    }
+    showToast(enabled ? "AES-256 E2EE暗号化を有効にしました" : "E2EE暗号化をオフにしました");
+}
+
 if (toggleE2ee) {
-    toggleE2ee.onchange = () => {
-        if (transferManager) {
-            transferManager.isE2EEEnabled = toggleE2ee.checked;
-            showToast(toggleE2ee.checked ? "AES-256 E2EE暗号化を有効にしました" : "E2EE暗号化をオフにしました");
-        }
-    };
+    toggleE2ee.onchange = () => syncE2EEState(toggleE2ee.checked, toggleE2ee);
+}
+if (toggleSessionE2ee) {
+    toggleSessionE2ee.onchange = () => syncE2EEState(toggleSessionE2ee.checked, toggleSessionE2ee);
 }
 
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
@@ -6135,11 +7215,19 @@ function handleNoteSave() {
     }
 }
 
-// ★ アプリ完全終了時のみ P2P を切断（タスクキル・タブ閉じ・スマホスワイプ終了）
+// ★ アプリ完全終了時のみ P2P を切断（タスクキル・タブ閉じ・スマホスワイプ終了・メモリ完全解放）
 function handleAppExitCleanup() {
+    // アクティブな全 Blob URL を一括破棄（iOS Safari メモリリーク防止）
+    activeBlobUrls.forEach(url => {
+        try { URL.revokeObjectURL(url); } catch (e) {}
+    });
+    activeBlobUrls.clear();
+
     if (transferManager) {
         transferManager.stopDevicePresence();
+        transferManager.resetReceiveBuffer();
     }
+    stagedFilesQueue = [];
     handleNoteSave();
 }
 

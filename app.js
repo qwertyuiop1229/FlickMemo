@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.68";
+const APP_VERSION = "1.3.69";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -321,7 +321,7 @@ function setStatus(type, text) {
     statusText.textContent = text;
 }
 
-function showToast(msg, duration = 4000) {
+function showToast(msg, duration = 4000, actions = null) {
     let container = document.getElementById('toast-container');
     if (!container) {
         container = document.createElement('div');
@@ -332,15 +332,39 @@ function showToast(msg, duration = 4000) {
 
     const toastEl = document.createElement('div');
     toastEl.className = 'm3-toast-item';
+
+    let actionsHtml = '';
+    if (actions && Array.isArray(actions) && actions.length > 0) {
+        actionsHtml = `<div class="m3-toast-actions">` + actions.map((act, idx) => `
+            <button type="button" class="m3-toast-action-btn" data-action-idx="${idx}">
+                ${act.icon ? `<span class="material-symbols-outlined" style="font-size:14px;">${act.icon}</span>` : ''}
+                ${escapeHTML(act.label || '')}
+            </button>
+        `).join('') + `</div>`;
+    }
+
     toastEl.innerHTML = `
         <div class="m3-toast-content">
             <span class="material-symbols-outlined m3-toast-icon">info</span>
             <span class="m3-toast-text">${escapeHTML(msg)}</span>
         </div>
+        ${actionsHtml}
         <button type="button" class="m3-toast-close" title="閉じる">
             <span class="material-symbols-outlined" style="font-size:16px;">close</span>
         </button>
     `;
+
+    if (actions && Array.isArray(actions)) {
+        toastEl.querySelectorAll('.m3-toast-action-btn').forEach(btn => {
+            const idx = parseInt(btn.getAttribute('data-action-idx'), 10);
+            if (actions[idx] && typeof actions[idx].onClick === 'function') {
+                btn.onclick = (e) => {
+                    e.stopPropagation();
+                    actions[idx].onClick();
+                };
+            }
+        });
+    }
 
     const btnClose = toastEl.querySelector('.m3-toast-close');
     const dismiss = () => {
@@ -1330,26 +1354,13 @@ const modeDropdownWrap = document.getElementById('custom-mode-dropdown');
 
 function applyGuestUIRestrictions() {
     if (isGuestMode) {
-        // 送信関連UI 完全非表示
+        // ゲスト時はマイデバイスタブを非表示、共有リンクタブを常時表示
         if (targetSegmentedTabs) targetSegmentedTabs.classList.add('hidden');
         if (targetPanelDevices) targetPanelDevices.classList.add('hidden');
         if (targetPanelRoom) targetPanelRoom.classList.remove('hidden');
-        if (roomSectionBoxFirst) roomSectionBoxFirst.classList.add('hidden');
-        if (roomDividerBadge) roomDividerBadge.classList.add('hidden');
-        if (e2eeToggleCard) e2eeToggleCard.classList.add('hidden');
-        if (modeDropdownWrap) modeDropdownWrap.classList.add('hidden');
-
-        if (dropzoneArea) dropzoneArea.classList.add('hidden');
-        if (stagedFilesCard) stagedFilesCard.classList.add('hidden');
-        if (guestReceiverBanner) guestReceiverBanner.classList.remove('hidden');
+        if (guestReceiverBanner) guestReceiverBanner.classList.add('hidden');
     } else {
         if (targetSegmentedTabs) targetSegmentedTabs.classList.remove('hidden');
-        if (roomSectionBoxFirst) roomSectionBoxFirst.classList.remove('hidden');
-        if (roomDividerBadge) roomDividerBadge.classList.remove('hidden');
-        if (e2eeToggleCard) e2eeToggleCard.classList.remove('hidden');
-        if (modeDropdownWrap) modeDropdownWrap.classList.remove('hidden');
-
-        if (dropzoneArea) dropzoneArea.classList.remove('hidden');
         if (guestReceiverBanner) guestReceiverBanner.classList.add('hidden');
     }
 }
@@ -1416,24 +1427,161 @@ function handleTransferStatus(event, data) {
 
 const activeBlobUrls = new Set();
 
-function handleFileReceived(blob, filename, mode) {
+// ファイル形式に応じたアイコン絵文字を取得
+function getFileIconEmoji(filename, type) {
+    if (type?.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(filename)) return '🖼️';
+    if (/\.(zip|tar|gz|rar|7z|bz2)$/i.test(filename) || type?.includes('zip')) return '📦';
+    if (/\.(pdf)$/i.test(filename) || type?.includes('pdf')) return '📕';
+    if (/\.(mp4|mov|avi|mkv|webm)$/i.test(filename) || type?.startsWith('video/')) return '🎬';
+    if (/\.(mp3|wav|ogg|m4a|flac)$/i.test(filename) || type?.startsWith('audio/')) return '🎵';
+    if (/\.(txt|md|json|js|ts|py|html|css|csv|xml|yaml|yml|log|sh)$/i.test(filename) || type?.startsWith('text/')) return '📄';
+    return '📎';
+}
+
+// クリップボードへ全形式（ZIP/PDF/画像/テキスト/バイナリ等）のファイルをコピーする共通関数
+async function copyFileToClipboard(fileOrBlob, filename = '') {
+    if (!fileOrBlob) return;
+    const name = filename || fileOrBlob.name || 'file';
+    const type = fileOrBlob.type || '';
+    const emoji = getFileIconEmoji(name, type);
+
+    // 1. 画像形式 (image/*) → ClipboardItem で PNG 形式としてコピー
+    if (type.startsWith('image/')) {
+        try {
+            let pngBlob = fileOrBlob;
+            if (type !== 'image/png') {
+                pngBlob = await new Promise((resolve) => {
+                    const img = new Image();
+                    const url = URL.createObjectURL(fileOrBlob);
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.naturalWidth || img.width;
+                        canvas.height = img.naturalHeight || img.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        canvas.toBlob((b) => {
+                            URL.revokeObjectURL(url);
+                            resolve(b || fileOrBlob);
+                        }, 'image/png');
+                    };
+                    img.onerror = () => {
+                        URL.revokeObjectURL(url);
+                        resolve(fileOrBlob);
+                    };
+                    img.src = url;
+                });
+            }
+            if (navigator.clipboard && navigator.clipboard.write) {
+                await navigator.clipboard.write([
+                    new ClipboardItem({ 'image/png': pngBlob })
+                ]);
+                showToast(`${emoji} 画像「${name}」をクリップボードにコピーしました`);
+                return true;
+            }
+        } catch (imgErr) {
+            console.warn("Direct image write failed, trying binary write:", imgErr);
+        }
+    }
+
+    // 2. ZIP, PDF, 動画, 音声, バイナリファイル等を含む全ファイル直接コピー (ClipboardItem)
+    if (navigator.clipboard && navigator.clipboard.write) {
+        try {
+            const mime = type || 'application/octet-stream';
+            const clipboardData = {};
+            clipboardData[mime] = fileOrBlob;
+            await navigator.clipboard.write([
+                new ClipboardItem(clipboardData)
+            ]);
+            showToast(`${emoji} ファイル「${name}」をクリップボードにコピーしました`);
+            return true;
+        } catch (itemErr) {
+            console.warn("ClipboardItem write failed, trying text/data fallback:", itemErr);
+        }
+    }
+
+    // 3. テキスト・コード・Markdown・JSON等 → text/plain としてテキスト内容をコピー
+    const isTextLike = type.startsWith('text/') ||
+        /\.(txt|md|json|js|ts|py|html|css|csv|xml|yaml|yml|log|sh|bat|c|cpp|h|java|kt|go|rs|sql)$/i.test(name);
+
+    if (isTextLike) {
+        try {
+            const text = await fileOrBlob.text();
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+                showToast(`📄 テキスト「${name}」をクリップボードにコピーしました`);
+                return true;
+            }
+        } catch (tErr) {}
+    }
+
+    // 4. 一般バイナリ・フォールバック (Data URL Base64 またはファイル名)
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            if (fileOrBlob.size <= 3 * 1024 * 1024) {
+                const reader = new FileReader();
+                reader.onload = async () => {
+                    try {
+                        await navigator.clipboard.writeText(reader.result);
+                        showToast(`${emoji} 「${name}」のデータ(Base64)をクリップボードにコピーしました`);
+                    } catch (e) {
+                        await navigator.clipboard.writeText(name);
+                        showToast(`ファイル名「${name}」をコピーしました`);
+                    }
+                };
+                reader.readAsDataURL(fileOrBlob);
+                return true;
+            } else {
+                await navigator.clipboard.writeText(name);
+                showToast(`ファイル名「${name}」をコピーしました`);
+                return true;
+            }
+        }
+    } catch (fbErr) {
+        console.warn("Clipboard fallback error:", fbErr);
+    }
+}
+
+// 手動ダウンロード実行関数
+function downloadBlob(blob, filename) {
+    if (!blob) return;
     const url = URL.createObjectURL(blob);
     activeBlobUrls.add(url);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename;
+    a.download = filename || 'download_file';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(() => {
         URL.revokeObjectURL(url);
         activeBlobUrls.delete(url);
-    }, 1500);
+    }, 5000);
+}
 
-    showToast(`ファイル「${filename}」を受信・保存しました`);
-    addTransferHistory(filename, blob.size, '受信', mode || 'LAN_P2P');
+function handleFileReceived(blob, filename, mode) {
+    const emoji = getFileIconEmoji(filename, blob.type);
+
+    // 履歴に追加（手動ダウンロード・コピーボタン付き）
+    addTransferHistory(filename, blob.size, '受信', mode || 'LAN_P2P', blob);
     setTransferUILock(false);
     scheduleProgressAutoDismiss();
+
+    // 勝手に自動ダウンロードせず、通知トーストから「コピー」または「保存」を選択可能に
+    showToast(`${emoji} 「${filename}」を受信しました`, 6000, [
+        {
+            label: 'コピー',
+            icon: 'content_copy',
+            onClick: () => copyFileToClipboard(blob, filename)
+        },
+        {
+            label: '保存',
+            icon: 'download',
+            onClick: () => {
+                downloadBlob(blob, filename);
+                showToast(`💾 「${filename}」をダウンロードしました`);
+            }
+        }
+    ]);
 }
 
 function handleTransferProgress(bytes, total, name, direction) {
@@ -1461,7 +1609,7 @@ function handleTransferProgress(bytes, total, name, direction) {
     }
 }
 
-function addTransferHistory(name, size, type, mode = 'LAN_P2P') {
+function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = null) {
     if (!transferHistoryList) return;
     const emptyLi = transferHistoryList.querySelector('.empty-history');
     if (emptyLi) emptyLi.remove();
@@ -1484,17 +1632,52 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P') {
     const sizeStr = (size / (1024 * 1024)).toFixed(2) + ' MB';
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     li.innerHTML = `
-        <div style="display:flex; flex-direction:column; gap:0.25rem;">
-            <div>
+        <div class="transfer-history-info">
+            <div class="transfer-history-name-row">
                 <strong>${type === '送信' ? '[送信]' : '[受信]'} ${escapeHTML(name)}</strong>
-                <span style="color:var(--m3-text-muted); font-size:0.75rem; margin-left:0.4rem;">(${sizeStr})</span>
+                <span style="color:var(--m3-text-muted); font-size:0.75rem;">(${sizeStr})</span>
             </div>
             <span class="m3-mode-badge">
                 <span class="material-symbols-outlined">${modeIcon}</span> ${modeText}
             </span>
         </div>
-        <span style="color:var(--m3-text-muted); font-size:0.75rem;">${timeStr}</span>
+        <div class="transfer-history-actions">
+            <button class="m3-icon-button-sm btn-hist-copy" title="クリップボードにコピー" type="button">
+                <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span>
+            </button>
+            <button class="m3-icon-button-sm btn-hist-dl" title="ダウンロード" type="button">
+                <span class="material-symbols-outlined" style="font-size:16px;">download</span>
+            </button>
+            <span style="color:var(--m3-text-muted); font-size:0.72rem; margin-left:0.2rem;">${timeStr}</span>
+        </div>
     `;
+
+    const btnCopy = li.querySelector('.btn-hist-copy');
+    if (btnCopy) {
+        btnCopy.onclick = (e) => {
+            e.stopPropagation();
+            if (fileOrBlob) {
+                copyFileToClipboard(fileOrBlob, name);
+            } else {
+                navigator.clipboard.writeText(name);
+                showToast(`ファイル名「${name}」をコピーしました`);
+            }
+        };
+    }
+
+    const btnDl = li.querySelector('.btn-hist-dl');
+    if (btnDl) {
+        btnDl.onclick = (e) => {
+            e.stopPropagation();
+            if (fileOrBlob) {
+                downloadBlob(fileOrBlob, name);
+                showToast(`💾 「${name}」をダウンロードしました`);
+            } else {
+                showToast("ダウンロード可能なデータがありません");
+            }
+        };
+    }
+
     transferHistoryList.prepend(li);
 }
 
@@ -1544,10 +1727,6 @@ function renderStagedFilesUI() {
 
 function stageFiles(files) {
     if (!files || files.length === 0) return;
-    if (isGuestMode) {
-        showToast("ゲストモードではファイル送信はできません（受信専用）");
-        return;
-    }
     Array.from(files).forEach(f => stagedFilesQueue.push(f));
     renderStagedFilesUI();
     showToast(`${files.length} 件のファイルを送信リストに追加しました`);
@@ -1628,10 +1807,6 @@ function setTransferUILock(isLocked) {
 
 if (btnStartSend) {
     btnStartSend.onclick = async () => {
-        if (isGuestMode) {
-            showToast("ゲストモードではファイル送信はできません（受信専用）");
-            return;
-        }
         if (stagedFilesQueue.length === 0) {
             showToast("送信するファイルを選択してください");
             return;
@@ -1841,22 +2016,42 @@ if (btnTargetTabDevices && btnTargetTabRoom) {
     };
 }
 
-// ★ ワンタイム共有ルーム Event Handlers
+// ★ 安全なワンタイム共有ルーム Event Handlers & トークン生成
 const btnCreateRoom = document.getElementById('btn-create-room');
-const btnJoinRoom = document.getElementById('btn-join-room');
+const btnRecopyRoom = document.getElementById('btn-recopy-room');
 const btnLeaveRoom = document.getElementById('btn-leave-room');
-const roomCodeInput = document.getElementById('room-code-input');
 const roomActiveStatus = document.getElementById('room-active-status');
-const roomStatusText = document.getElementById('room-status-text');
+const roomStatusUrl = document.getElementById('room-status-url');
+const roomCreateSection = document.getElementById('room-create-section');
 
-function updateRoomUI(roomId) {
+let currentActiveShareUrl = null;
+
+// 暗号学的に安全な 192bit (24バイト) Base64URL ルームID生成 (被る確率ゼロ)
+function generateSecureRoomId() {
+    const bytes = new Uint8Array(24);
+    window.crypto.getRandomValues(bytes);
+    const binStr = Array.from(bytes, b => String.fromCharCode(b)).join('');
+    const base64 = btoa(binStr).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return 'rm_' + base64;
+}
+
+// 暗号学的に安全な 256bit (32バイト HEX) E2EE鍵生成
+function generateSecureEncryptionKey() {
+    const bytes = new Uint8Array(32);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function updateRoomUI(roomId, fullShareUrl = null) {
     if (roomId) {
         roomActiveStatus?.classList.remove('hidden');
-        if (roomStatusText) roomStatusText.textContent = `現在の合言葉: ${roomId} (接続待機中...)`;
-        if (roomCodeInput) roomCodeInput.value = roomId;
+        roomCreateSection?.classList.add('hidden');
+        currentActiveShareUrl = fullShareUrl || `${window.location.origin}${window.location.pathname}?room=${roomId}`;
+        if (roomStatusUrl) roomStatusUrl.textContent = currentActiveShareUrl;
     } else {
         roomActiveStatus?.classList.add('hidden');
-        if (roomCodeInput) roomCodeInput.value = '';
+        roomCreateSection?.classList.remove('hidden');
+        currentActiveShareUrl = null;
     }
 }
 
@@ -1880,39 +2075,31 @@ if (btnCreateRoom) {
     btnCreateRoom.onclick = () => {
         const tm = ensureTransferManager();
         if (!tm) return;
-        const newRoomId = 'rm_' + Math.random().toString(36).substring(2, 8);
-        const randomKey = Array.from(window.crypto.getRandomValues(new Uint8Array(16)))
-            .map(b => b.toString(16).padStart(2, '0')).join('');
 
+        const newRoomId = generateSecureRoomId();
+        const randomKey = generateSecureEncryptionKey();
+
+        tm.setCustomEncryptionKey(randomKey);
         tm.joinRoom(newRoomId);
-        updateRoomUI(newRoomId);
 
         // クライアントローカルで処理される #key (ハッシュ) で E2EE 暗号化鍵を共有
         const shareUrl = `${window.location.origin}${window.location.pathname}?room=${newRoomId}#key=${randomKey}`;
+        updateRoomUI(newRoomId, shareUrl);
+
         navigator.clipboard.writeText(shareUrl).then(() => {
-            showToast(`【E2EE暗号化】共有URL（鍵付き）をコピーしました！`);
+            showToast(`🔒【E2EE暗号化】共有リンクをコピーしました！相手に送信してください`);
         }).catch(() => {
-            showToast(`共有URLを作成しました`);
+            showToast(`共有リンクを作成しました`);
         });
     };
 }
 
-if (btnJoinRoom) {
-    btnJoinRoom.onclick = () => {
-        const val = roomCodeInput?.value.trim();
-        if (!val) {
-            showToast("合言葉を入力してください");
-            return;
-        }
-        const tm = ensureTransferManager();
-        if (!tm) return;
-        tm.joinRoom(val);
-        if (isGuestMode) {
-            // ゲストは「接続待機中」ステータスカードを表示しない (受信専用なので待つだけ)
-            showToast(`合言葉「${val}」で受信待機中...`);
-        } else {
-            updateRoomUI(val);
-            showToast(`合言葉「${val}」で接続待機中...`);
+if (btnRecopyRoom) {
+    btnRecopyRoom.onclick = () => {
+        if (currentActiveShareUrl) {
+            navigator.clipboard.writeText(currentActiveShareUrl).then(() => {
+                showToast("共有リンクを再コピーしました！");
+            });
         }
     };
 }
@@ -1922,25 +2109,45 @@ if (btnLeaveRoom) {
         if (transferManager) transferManager.disconnect();
         updateRoomUI(null);
         updateTransferSteps(false);
-        showToast("切断しました");
+        showToast("共有リンクを停止しました");
     };
 }
 
-// URL パラメータ `?room=...` の自動接続チェック
-window.addEventListener('DOMContentLoaded', () => {
+// 共有URL経由アクセスの即時自動バイパス判定
+function checkAndHandleAutoJoinRoom() {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
-    if (roomParam) {
-        setTimeout(() => {
-            openTransferView();
-            if (transferManager) {
-                transferManager.joinRoom(roomParam);
-                updateRoomUI(roomParam);
-                showToast(`共有URL経由でルーム ${roomParam} に自動接続しました！`);
-            }
-        }, 800);
+    if (!roomParam) return false;
+
+    // ハッシュから暗号化キーを復元
+    let keyParam = null;
+    if (window.location.hash) {
+        const hashStr = window.location.hash.substring(1);
+        const hashParams = new URLSearchParams(hashStr);
+        keyParam = hashParams.get('key') || hashStr.replace(/^key=/, '');
     }
-});
+
+    const tm = ensureTransferManager();
+    if (keyParam) {
+        tm.setCustomEncryptionKey(keyParam);
+    }
+
+    // ログイン画面を強制スキップしてファイル転送画面へ直接遷移
+    splashScreen?.classList.add('hidden');
+    authContainer?.classList.add('hidden');
+    appContainer?.classList.remove('hidden');
+
+    openTransferView();
+    if (btnTargetTabRoom) btnTargetTabRoom.click();
+
+    tm.joinRoom(roomParam);
+    updateRoomUI(roomParam, window.location.href);
+    showToast(`共有リンクに自動接続しました！相手の接続を待機中...`);
+    return true;
+}
+
+// スクリプト読み込み直後に判定
+checkAndHandleAutoJoinRoom();
 
 tabNotes.onclick = openNotesView;
 
@@ -2417,18 +2624,8 @@ if (btnGuestLogin) {
         userAvatar.src = getInitialsAvatar("Guest");
         if (userProviderTag) userProviderTag.textContent = "ゲスト";
 
-        showToast("ゲストモード (ローカルメモ / 合言葉受送信対応)");
+        showToast("ゲストモード (ローカルメモ / 共有リンク送受信)");
         loadLocalNotes();
-
-        const urlParams = new URLSearchParams(window.location.search);
-        const urlRoom = urlParams.get('room');
-        if (urlRoom && tm) {
-            openTransferView();
-            if (btnTargetTabRoom) btnTargetTabRoom.click();
-            tm.joinRoom(urlRoom);
-            updateRoomUI(urlRoom);
-            showToast(`共有URL「${urlRoom}」に自動接続しました`);
-        }
     };
 }
 
@@ -2459,6 +2656,8 @@ document.getElementById('btn-google').onclick = () => loginWithProvider(new Goog
 
 onAuthStateChanged(auth, async user => {
     splashScreen.classList.add('hidden');
+    const hasRoomParam = new URLSearchParams(window.location.search).has('room');
+
     if (user) {
         isGuestMode = false;
         if (transferManager) transferManager.isGuestMode = false;
@@ -2562,16 +2761,6 @@ onAuthStateChanged(auth, async user => {
         });
         const tm = ensureTransferManager();
         tm.startDevicePresence();
-
-        const urlParams = new URLSearchParams(window.location.search);
-        const urlRoom = urlParams.get('room');
-        if (urlRoom && tm) {
-            openTransferView();
-            if (btnTargetTabRoom) btnTargetTabRoom.click();
-            tm.joinRoom(urlRoom);
-            updateRoomUI(urlRoom);
-            showToast(`共有URL「${urlRoom}」に自動接続しました`);
-        }
     } else {
         if (transferManager) {
             transferManager.stopDevicePresence();
@@ -2583,10 +2772,22 @@ onAuthStateChanged(auth, async user => {
         }
         currentUserId = null;
 
-        authContainer.classList.remove('hidden');
-        appContainer.classList.add('hidden');
-        authLoading.classList.add('hidden');
-        authButtons.classList.remove('hidden');
+        // 共有リンクアクセス時は未ログインでもログイン画面を表示せずゲストとして接続維持
+        if (hasRoomParam) {
+            isGuestMode = true;
+            if (transferManager) transferManager.isGuestMode = true;
+            authContainer.classList.add('hidden');
+            appContainer.classList.remove('hidden');
+            userName.textContent = "ゲストユーザー";
+            userEmail.textContent = "ログインしていません (共有リンク送受信)";
+            userAvatar.src = getInitialsAvatar("Guest");
+            if (userProviderTag) userProviderTag.textContent = "ゲスト";
+        } else {
+            authContainer.classList.remove('hidden');
+            appContainer.classList.add('hidden');
+            authLoading.classList.add('hidden');
+            authButtons.classList.remove('hidden');
+        }
     }
 });
 
