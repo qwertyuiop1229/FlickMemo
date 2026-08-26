@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite';
-import { resolve } from 'path';
+import { resolve, relative } from 'path';
 import fs from 'fs';
+import JSZip from 'jszip';
 
 const copyExtensionFiles = () => ({
     name: 'copy-extension-files',
-    closeBundle() {
+    async closeBundle() {
         if (!fs.existsSync('dist/icons')) fs.mkdirSync('dist/icons', { recursive: true });
         if (fs.existsSync('manifest.json')) fs.copyFileSync('manifest.json', 'dist/manifest.json');
         if (fs.existsSync('manifest.webmanifest')) fs.copyFileSync('manifest.webmanifest', 'dist/manifest.webmanifest');
@@ -16,6 +17,34 @@ const copyExtensionFiles = () => ({
             fs.readdirSync('icons').forEach(file => {
                 fs.copyFileSync(`icons/${file}`, `dist/icons/${file}`);
             });
+        }
+
+        // 自動で最新版の配布用 ZIP (dist/flickmemo-extension.zip) を生成
+        try {
+            const zip = new JSZip();
+            const addFolderToZip = (dirPath) => {
+                const items = fs.readdirSync(dirPath);
+                for (const item of items) {
+                    if (item.endsWith('.zip')) continue; // 自身は除外
+                    const fullPath = resolve(dirPath, item);
+                    const relPath = relative('dist', fullPath).replace(/\\/g, '/');
+                    if (fs.statSync(fullPath).isDirectory()) {
+                        addFolderToZip(fullPath);
+                    } else {
+                        zip.file(relPath, fs.readFileSync(fullPath));
+                    }
+                }
+            };
+            addFolderToZip('dist');
+            const zipBuffer = await zip.generateAsync({
+                type: 'nodebuffer',
+                compression: 'DEFLATE',
+                compressionOptions: { level: 9 }
+            });
+            fs.writeFileSync('dist/flickmemo-extension.zip', zipBuffer);
+            console.log('[copy-extension-files] dist/flickmemo-extension.zip created automatically.');
+        } catch (err) {
+            console.warn('[copy-extension-files] Failed to create extension zip:', err);
         }
     }
 });
@@ -58,7 +87,8 @@ export default defineConfig({
         rollupOptions: {
             input: {
                 popup: resolve(__dirname, 'index.html'),
-                auth: resolve(__dirname, 'auth.html')
+                auth: resolve(__dirname, 'auth.html'),
+                download: resolve(__dirname, 'download.html')
             },
             output: {
                 entryFileNames: 'assets/[name]-[hash].js',
