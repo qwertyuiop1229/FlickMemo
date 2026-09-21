@@ -4,8 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FlickMemo - Chrome / Edge 拡張機能のインストール</title>
-    <link rel="icon" type="image/png" href="/assets/icon-D2AWmIYd.png">
+    <title>FlickMemo - Chrome拡張機能のインストール</title>
+    <link rel="icon" type="image/png" href="icon.png">
     <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto+Mono&display=swap">
     <link rel="stylesheet"
@@ -372,10 +372,10 @@
     <div class="container">
         <div class="header-card">
             <div class="brand-icon-wrap">
-                <img src="/assets/icon-D2AWmIYd.png" alt="FlickMemo Icon">
+                <img src="icon.png" alt="FlickMemo Icon">
             </div>
-            <h1 id="header-title">FlickMemo for Chrome / Edge</h1>
-            <p id="header-desc">ブラウザ（Chrome / Edge）のサイドパネルでどこからでも開ける超軽量メモ帳＆最速ファイル転送</p>
+            <h1>FlickMemo for Chrome</h1>
+            <p>ブラウザのサイドパネルでどこからでも開ける超軽量メモ帳＆最速ファイル転送</p>
 
             <div class="download-action-box">
                 <a href="/flickmemo-extension.zip" download="flickmemo-extension.zip" class="btn-download-hero" id="btn-download-main">
@@ -398,23 +398,13 @@
                 </div>
             </div>
 
-            <!-- ブラウザ選択タブ（Chrome / Edge） -->
-            <div style="display:flex; justify-content:center; gap:0.5rem; margin-bottom:0.4rem;">
-                <button type="button" id="tab-browser-edge" class="btn-action-sm" style="flex:1; justify-content:center; padding:0.6rem;">
-                    <span class="material-symbols-outlined" style="font-size:18px;">language</span> Microsoft Edge
-                </button>
-                <button type="button" id="tab-browser-chrome" class="btn-action-sm" style="flex:1; justify-content:center; padding:0.6rem;">
-                    <span class="material-symbols-outlined" style="font-size:18px;">web</span> Google Chrome
-                </button>
-            </div>
-
             <div class="step-card">
                 <div class="step-number">2</div>
                 <div class="step-content">
-                    <div class="step-title" id="step2-title">拡張機能の管理ページを開く</div>
-                    <div class="step-desc" id="step2-desc">ブラウザの新しいタブを開き、アドレスバーに以下のURLを入力して開きます。</div>
+                    <div class="step-title">Chromeの拡張機能管理ページを開く</div>
+                    <div class="step-desc">Chromeの新しいタブを開き、アドレスバーに以下のURLを入力して開きます。</div>
                     <div class="step-action-row">
-                        <span class="code-snippet" id="snippet-ext-url">edge://extensions</span>
+                        <span class="code-snippet">chrome://extensions</span>
                         <button class="btn-primary-action-sm" id="btn-copy-ext-url" type="button">
                             <span class="material-symbols-outlined">content_copy</span> URLをコピー
                         </button>
@@ -428,16 +418,16 @@
             <div class="step-card">
                 <div class="step-number">3</div>
                 <div class="step-content">
-                    <div class="step-title" id="step3-title">「開発者モード」をONにする</div>
-                    <div class="step-desc" id="step3-desc">Edgeでは左下の「開発者モード」、Chromeでは右上の「デベロッパーモード」のトグルスイッチをクリックしてONにします。</div>
+                    <div class="step-title">「デベロッパーモード」をONにする</div>
+                    <div class="step-desc">拡張機能ページの右上にある「デベロッパーモード」のトグルスイッチをクリックしてON（青色）にします。</div>
                 </div>
             </div>
 
             <div class="step-card">
                 <div class="step-number">4</div>
                 <div class="step-content">
-                    <div class="step-title" id="step4-title">解凍したフォルダを読み込む</div>
-                    <div class="step-desc" id="step4-desc">上部に表示される「<strong>展開して読み込む</strong>」（Chromeは「<strong>パッケージ化されていない拡張機能を読み込む</strong>」）を押し、Step 1で解凍したフォルダを選択します。</div>
+                    <div class="step-title">解凍したフォルダを読み込む</div>
+                    <div class="step-desc">左上に表示される「<strong>パッケージ化されていない拡張機能を読み込む</strong>」ボタンを押し、Step 1で解凍したフォルダを選択します。</div>
                 </div>
             </div>
 
@@ -481,67 +471,18 @@
             })
             .catch(() => {});
 
-        // ブラウザ判別 (Edge or Chrome)
-        const isEdgeBrowser = /edg/i.test(navigator.userAgent);
-        let currentExtProtocol = isEdgeBrowser ? 'edge://extensions' : 'chrome://extensions';
-
-        const tabEdge = document.getElementById('tab-browser-edge');
-        const tabChrome = document.getElementById('tab-browser-chrome');
-        const snippetExtUrl = document.getElementById('snippet-ext-url');
-        const step2Title = document.getElementById('step2-title');
-        const step2Desc = document.getElementById('step2-desc');
-        const step3Title = document.getElementById('step3-title');
-        const step3Desc = document.getElementById('step3-desc');
-        const step4Desc = document.getElementById('step4-desc');
-
-        function setBrowserUI(browserType) {
-            if (browserType === 'edge') {
-                currentExtProtocol = 'edge://extensions';
-                if (tabEdge) tabEdge.classList.add('btn-primary-action-sm');
-                if (tabEdge) tabEdge.classList.remove('btn-action-sm');
-                if (tabChrome) tabChrome.classList.remove('btn-primary-action-sm');
-                if (tabChrome) tabChrome.classList.add('btn-action-sm');
-
-                if (snippetExtUrl) snippetExtUrl.textContent = 'edge://extensions';
-                if (step2Title) step2Title.textContent = 'Edgeの拡張機能管理ページを開く';
-                if (step2Desc) step2Desc.textContent = 'Edgeの新しいタブを開き、アドレスバーに以下のURLを入力して開きます。';
-                if (step3Title) step3Title.textContent = '「開発者モード」をONにする';
-                if (step3Desc) step3Desc.textContent = '拡張機能ページの左下にある「開発者モード」のトグルスイッチをクリックしてON（青色）にします。';
-                if (step4Desc) step4Desc.innerHTML = '上部に表示される「<strong>展開して読み込む</strong>」ボタンを押し、Step 1で解凍したフォルダを選択します。';
-            } else {
-                currentExtProtocol = 'chrome://extensions';
-                if (tabChrome) tabChrome.classList.add('btn-primary-action-sm');
-                if (tabChrome) tabChrome.classList.remove('btn-action-sm');
-                if (tabEdge) tabEdge.classList.remove('btn-primary-action-sm');
-                if (tabEdge) tabEdge.classList.add('btn-action-sm');
-
-                if (snippetExtUrl) snippetExtUrl.textContent = 'chrome://extensions';
-                if (step2Title) step2Title.textContent = 'Chromeの拡張機能管理ページを開く';
-                if (step2Desc) step2Desc.textContent = 'Chromeの新しいタブを開き、アドレスバーに以下のURLを入力して開きます。';
-                if (step3Title) step3Title.textContent = '「デベロッパーモード」をONにする';
-                if (step3Desc) step3Desc.textContent = '拡張機能ページの右上にある「デベロッパーモード」のトグルスイッチをクリックしてON（青色）にします。';
-                if (step4Desc) step4Desc.innerHTML = '左上に表示される「<strong>パッケージ化されていない拡張機能を読み込む</strong>」ボタンを押し、Step 1で解凍したフォルダを選択します。';
-            }
-        }
-
-        if (tabEdge) tabEdge.onclick = () => setBrowserUI('edge');
-        if (tabChrome) tabChrome.onclick = () => setBrowserUI('chrome');
-
-        // 初回ロード時のブラウザ自動設定
-        setBrowserUI(isEdgeBrowser ? 'edge' : 'chrome');
-
-        // URLコピー
+        // chrome://extensions コピー
         document.getElementById('btn-copy-ext-url').onclick = () => {
-            navigator.clipboard.writeText(currentExtProtocol).then(() => {
-                showToast(`「${currentExtProtocol}」をコピーしました！新しいタブのアドレスバーに貼り付けてください`);
+            navigator.clipboard.writeText('chrome://extensions').then(() => {
+                showToast('「chrome://extensions」をコピーしました！新しいタブに貼り付けてください');
             });
         };
 
         // 新しいタブで開く試行
         document.getElementById('btn-open-ext-tab').onclick = () => {
-            navigator.clipboard.writeText(currentExtProtocol);
+            navigator.clipboard.writeText('chrome://extensions');
             try {
-                const w = window.open(currentExtProtocol, '_blank');
+                const w = window.open('chrome://extensions', '_blank');
                 if (!w || w.closed || typeof w.closed === 'undefined') {
                     showToast('URLをコピーしました！新しいタブのアドレスバーに貼り付けてください');
                 } else {

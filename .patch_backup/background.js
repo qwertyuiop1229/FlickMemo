@@ -1,12 +1,6 @@
-// 拡張機能アイコンの左クリックで直接サイドパネルを開く設定 (Edge & Chrome 両対応)
+// 拡張機能アイコンの左クリックで直接サイドパネルを開く設定
 if (typeof chrome !== 'undefined' && chrome?.sidePanel?.setPanelBehavior) {
     chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error(error));
-} else if (typeof chrome !== 'undefined' && chrome?.sidePanel?.open && chrome?.action?.onClicked) {
-    chrome.action.onClicked.addListener((tab) => {
-        if (tab?.windowId) {
-            chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
-        }
-    });
 }
 
 chrome.runtime.onInstalled.addListener(() => {
