@@ -59,6 +59,17 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     });
 });
 
+// 外部Webページ (auth.html) からの認証メッセージ受信・サイドパネルへの安全な中継
+if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessageExternal) {
+    chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+        if (message && message.type === 'FLICKMEMO_AUTH_SUCCESS') {
+            // サイドパネルやポップアップ側へメッセージをブロードキャスト
+            chrome.runtime.sendMessage(message).catch(() => {});
+            sendResponse({ received: true });
+        }
+    });
+}
+
 // アドレスバー（オムニボックス）検索機能: "fm <キーワード>"
 if (chrome.omnibox) {
     chrome.omnibox.setDefaultSuggestion({

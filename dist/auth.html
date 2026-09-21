@@ -41,13 +41,16 @@
             color: #c4c6d0;
         }
     </style>
-  <script type="module" crossorigin src="/assets/auth-D3gj7DfI.js"></script>
+  <script type="module" crossorigin src="/assets/auth-BOXrEh_o.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/modulepreload-polyfill-B5Qt9EMX.js">
 </head>
 
 <body>
-    <div class="spinner"></div>
-    <p id="msg">Google 認証を実行しています...</p>
+    <div id="spinner" class="spinner"></div>
+    <p id="msg">Google 認証を実行しています...</p>
+    <button id="btn-login-manual" style="display:none; background:#1a73e8; color:#fff; border:none; padding:0.75rem 1.6rem; border-radius:9999px; font-size:0.95rem; font-weight:500; cursor:pointer; align-items:center; gap:0.5rem; transition:background 0.2s;">
+        Google でログインを続行
+    </button>
 </body>
 
 </html>

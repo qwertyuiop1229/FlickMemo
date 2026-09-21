@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.70";
+const APP_VERSION = "1.3.71";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1789,8 +1789,7 @@ function setTransferUILock(isLocked) {
         btnStartSend,
         btnDisconnectSession,
         btnLeaveRoom,
-        btnCreateRoom,
-        btnJoinRoom
+        btnCreateRoom
     ];
 
     elementsToLock.forEach(el => {
@@ -2364,19 +2363,21 @@ if (btnSettingsSwitchAction) {
     btnSettingsSwitchAction.onclick = async () => {
         settingsModal.classList.add('hidden');
         try {
-            if (typeof chrome !== 'undefined' && chrome?.identity?.removeCachedAuthToken) {
-                // キャッシュされているトークンを取得して破棄
-                await new Promise((resolve) => {
-                    chrome.identity.getAuthToken({ interactive: false }, (token) => {
-                        if (token) {
+            if (typeof chrome !== 'undefined' && chrome?.identity?.removeCachedAuthToken && chrome?.identity?.getAuthToken && !/edg/i.test(navigator.userAgent)) {
+                // キャッシュされているトークンを取得して安全に破棄（Edge環境ではスキップ）
+                try {
+                    await new Promise((resolve) => {
+                        chrome.identity.getAuthToken({ interactive: false }, (token) => {
+                            if (chrome.runtime.lastError || !token) {
+                                resolve();
+                                return;
+                            }
                             chrome.identity.removeCachedAuthToken({ token }, () => {
                                 resolve();
                             });
-                        } else {
-                            resolve();
-                        }
+                        });
                     });
-                });
+                } catch (e) {}
             }
             await signOut(auth);
             showToast("アカウントを切替中... Googleログイン画面を開きます");
@@ -2532,7 +2533,27 @@ getRedirectResult(auth).then(result => {
     console.error("Redirect Result Error:", err);
 });
 
-// 認証処理（Webアプリ / iOS PWA / Chrome拡張機能 自動対応）
+// Web認証ポップアップ（auth.html）からのメッセージ受信リスナー（Edge/Chrome拡張機能連携）
+window.addEventListener('message', async (event) => {
+    if (event.data && event.data.type === 'FLICKMEMO_AUTH_SUCCESS') {
+        try {
+            const { googleIdToken, googleAccessToken } = event.data;
+            if (googleIdToken || googleAccessToken) {
+                const credential = GoogleAuthProvider.credential(googleIdToken, googleAccessToken);
+                await setPersistence(auth, browserLocalPersistence);
+                await signInWithCredential(auth, credential);
+                showToast("Googleアカウントでログインしました");
+            }
+        } catch (err) {
+            console.error("signInWithCredential from postMessage error:", err);
+            showToast("ログイン処理に失敗しました: " + (err.message || ""));
+            authLoading.classList.add('hidden');
+            authButtons.classList.remove('hidden');
+        }
+    }
+});
+
+// 認証処理（Webアプリ / iOS PWA / Chrome・Edge拡張機能 自動対応）
 async function loginWithProvider(provider) {
     try {
         authLoading.classList.remove('hidden');
@@ -2546,44 +2567,72 @@ async function loginWithProvider(provider) {
         const ua = navigator.userAgent;
         const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+        const isEdge = /edg/i.test(ua);
+        const isExtension = typeof chrome !== 'undefined' && !!chrome?.runtime?.id && !window.location.protocol.startsWith('http');
 
-        // ── Chrome 拡張機能（サイドパネル）環境 ──────────────────────────────
-        if (typeof chrome !== 'undefined' && chrome?.runtime?.id && chrome?.identity?.getAuthToken) {
-            await new Promise((resolve, reject) => {
-                // キャッシュトークンがあれば事前にクリアしてアカウント選択画面を確実に発火
-                chrome.identity.getAuthToken({ interactive: false }, (existingToken) => {
-                    const proceedGetToken = () => {
-                        chrome.identity.getAuthToken({ interactive: true }, async (token) => {
-                            if (chrome.runtime.lastError || !token) {
-                                const errMsg = chrome.runtime.lastError?.message || 'Googleトークンの取得に失敗しました';
-                                console.error('chrome.identity.getAuthToken error:', errMsg);
-                                reject(new Error(errMsg));
-                                return;
-                            }
+        // ── 拡張機能（サイドパネル）環境: Chrome & Microsoft Edge 対応 ────────
+        if (isExtension) {
+            // Chrome かつ chrome.identity.getAuthToken が利用可能な場合はまず試行
+            if (!isEdge && chrome?.identity?.getAuthToken) {
+                try {
+                    await new Promise((resolve, reject) => {
+                        chrome.identity.getAuthToken({ interactive: false }, (existingToken) => {
+                            const proceedGetToken = () => {
+                                chrome.identity.getAuthToken({ interactive: true }, async (token) => {
+                                    if (chrome.runtime.lastError || !token) {
+                                        const errMsg = chrome.runtime.lastError?.message || 'Googleトークンの取得に失敗しました';
+                                        reject(new Error(errMsg));
+                                        return;
+                                    }
 
-                            try {
-                                const credential = GoogleAuthProvider.credential(null, token);
-                                await setPersistence(auth, browserLocalPersistence);
-                                await signInWithCredential(auth, credential);
-                                resolve();
-                            } catch (err) {
-                                console.error('signInWithCredential error:', err);
-                                if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-token-expired') {
-                                    chrome.identity.removeCachedAuthToken({ token }, () => {});
-                                }
-                                reject(err);
+                                    try {
+                                        const credential = GoogleAuthProvider.credential(null, token);
+                                        await setPersistence(auth, browserLocalPersistence);
+                                        await signInWithCredential(auth, credential);
+                                        resolve();
+                                    } catch (err) {
+                                        if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-token-expired') {
+                                            chrome.identity.removeCachedAuthToken({ token }, () => {});
+                                        }
+                                        reject(err);
+                                    }
+                                });
+                            };
+
+                            if (existingToken) {
+                                chrome.identity.removeCachedAuthToken({ token: existingToken }, proceedGetToken);
+                            } else {
+                                proceedGetToken();
                             }
                         });
-                    };
+                    });
+                    return;
+                } catch (chromeAuthErr) {
+                    console.warn("chrome.identity.getAuthToken fallback to web popup:", chromeAuthErr);
+                }
+            }
 
-                    if (existingToken) {
-                        chrome.identity.removeCachedAuthToken({ token: existingToken }, proceedGetToken);
-                    } else {
-                        proceedGetToken();
-                    }
-                });
-            });
+            // Microsoft Edge 拡張機能 または Chrome フォールバック: Web認証ポップアップ (auth.html) を開く
+            const webAuthUrl = 'https://flickmemo-qwe.web.app/auth.html';
+            const popupWidth = 500;
+            const popupHeight = 620;
+            const left = Math.max(0, Math.round((window.screen.width - popupWidth) / 2));
+            const top = Math.max(0, Math.round((window.screen.height - popupHeight) / 2));
+            const authWin = window.open(
+                webAuthUrl,
+                'flickmemo_auth',
+                `width=${popupWidth},height=${popupHeight},top=${top},left=${left},menubar=no,toolbar=no,location=yes,status=no`
+            );
 
+            if (!authWin) {
+                if (chrome?.tabs?.create) {
+                    chrome.tabs.create({ url: webAuthUrl });
+                    showToast("認証タブを開きました。ログインを完了してください");
+                } else {
+                    throw new Error("認証ウィンドウがブロックされました。ポップアップを許可してください。");
+                }
+            }
+            return;
         } else if (isIOS || isStandalone) {
             // iOS Safari / iOS PWA: リダイレクト方式
             await setPersistence(auth, browserLocalPersistence);

@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.71";
+const APP_VERSION = "1.3.72";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -285,6 +285,7 @@ let currentTab = 'notes';
 let toastTimer = null;
 let currentUserId = null;
 let forceAccountSelect = false;
+let isGuestMode = false;
 
 // 省メモリ・通信節約用の最適化タイマー＆差分キャッシュ
 let syncDebounceTimer = null;
@@ -2118,6 +2119,9 @@ function checkAndHandleAutoJoinRoom() {
     const roomParam = params.get('room');
     if (!roomParam) return false;
 
+    // 共有リンクアクセス時はゲストモードを即時設定
+    isGuestMode = true;
+
     // ハッシュから暗号化キーを復元
     let keyParam = null;
     if (window.location.hash) {
@@ -2130,6 +2134,7 @@ function checkAndHandleAutoJoinRoom() {
     if (keyParam) {
         tm.setCustomEncryptionKey(keyParam);
     }
+    tm.isGuestMode = true;
 
     // ログイン画面を強制スキップしてファイル転送画面へ直接遷移
     splashScreen?.classList.add('hidden');
@@ -2534,24 +2539,38 @@ getRedirectResult(auth).then(result => {
 });
 
 // Web認証ポップアップ（auth.html）からのメッセージ受信リスナー（Edge/Chrome拡張機能連携）
-window.addEventListener('message', async (event) => {
-    if (event.data && event.data.type === 'FLICKMEMO_AUTH_SUCCESS') {
-        try {
-            const { googleIdToken, googleAccessToken } = event.data;
-            if (googleIdToken || googleAccessToken) {
-                const credential = GoogleAuthProvider.credential(googleIdToken, googleAccessToken);
-                await setPersistence(auth, browserLocalPersistence);
-                await signInWithCredential(auth, credential);
-                showToast("Googleアカウントでログインしました");
-            }
-        } catch (err) {
-            console.error("signInWithCredential from postMessage error:", err);
-            showToast("ログイン処理に失敗しました: " + (err.message || ""));
-            authLoading.classList.add('hidden');
-            authButtons.classList.remove('hidden');
+async function handleExternalAuthSuccess(authData) {
+    if (!authData || authData.type !== 'FLICKMEMO_AUTH_SUCCESS') return;
+    try {
+        const { googleIdToken, googleAccessToken } = authData;
+        if (googleIdToken || googleAccessToken) {
+            const credential = GoogleAuthProvider.credential(googleIdToken, googleAccessToken);
+            await setPersistence(auth, browserLocalPersistence);
+            await signInWithCredential(auth, credential);
+            showToast("Googleアカウントでログインしました");
         }
+    } catch (err) {
+        console.error("signInWithCredential from auth error:", err);
+        showToast("ログイン処理に失敗しました: " + (err.message || ""));
+        authLoading?.classList.add('hidden');
+        authButtons?.classList.remove('hidden');
+    }
+}
+
+window.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'FLICKMEMO_AUTH_SUCCESS') {
+        handleExternalAuthSuccess(event.data);
     }
 });
+
+// 拡張機能内部メッセージ（chrome.runtime.onMessage / onMessageExternal）対応
+if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
+    chrome.runtime.onMessage.addListener((message) => {
+        if (message && message.type === 'FLICKMEMO_AUTH_SUCCESS') {
+            handleExternalAuthSuccess(message);
+        }
+    });
+}
 
 // 認証処理（Webアプリ / iOS PWA / Chrome・Edge拡張機能 自動対応）
 async function loginWithProvider(provider) {
@@ -2672,8 +2691,6 @@ async function loginWithProvider(provider) {
         authButtons.classList.remove('hidden');
     }
 }
-
-let isGuestMode = false;
 
 const btnGuestLogin = document.getElementById('btn-guest-login');
 if (btnGuestLogin) {

@@ -1,11 +1,6 @@
 {
-  "date": "2026-09-21T11:18:17.675Z",
+  "date": "2026-09-21T11:41:34.817Z",
   "files": [
-    "app.js",
-    "fileTransfer.js",
-    "download.html",
-    "index.html",
-    "background.js",
-    "firebase.json"
+    "background.js"
   ]
 }
