@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.72";
+const APP_VERSION = "1.3.74";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1272,6 +1272,11 @@ window.addEventListener('keydown', e => {
             e.preventDefault();
             executeEmptyTrash();
         }
+    } else if (e.key === 'Escape') {
+        if (imagePreviewModal && !imagePreviewModal.classList.contains('hidden')) {
+            e.preventDefault();
+            closeImagePreviewModal();
+        }
     }
 });
 
@@ -1412,7 +1417,8 @@ function handleTransferStatus(event, data) {
         updateRoomUI(null); // 接続待機中カードも消す
         if (autoDismissProgressTimer) clearTimeout(autoDismissProgressTimer);
         if (transferProgressCard) transferProgressCard.classList.add('hidden');
-        clearTransferHistoryUI();
+        setTransferUILock(false); // ★ 送信中UIロックを強制解除して操作不能を防止
+        // 履歴は消さずに保持し、直前に受信した画像のプレビューや再ダウンロードを可能にする
     } else if (event === 'p2p_connected') {
         showToast("デバイス間P2P接続が確立しました");
         updateTransferSteps(true);
@@ -1559,30 +1565,122 @@ function downloadBlob(blob, filename) {
     }, 5000);
 }
 
+// 画像プレビューモーダル制御要素
+const imagePreviewModal = document.getElementById('image-preview-modal');
+const previewImageEl = document.getElementById('preview-image-el');
+const previewImageTitle = document.getElementById('preview-image-title');
+const previewImageInfo = document.getElementById('preview-image-info');
+const btnPreviewClose = document.getElementById('btn-preview-close');
+const btnPreviewCopy = document.getElementById('btn-preview-copy');
+const btnPreviewDownload = document.getElementById('btn-preview-download');
+
+let currentPreviewBlob = null;
+let currentPreviewFilename = '';
+let currentPreviewObjectUrl = null;
+
+function isImageFile(filename, mimeType) {
+    if (mimeType && mimeType.startsWith('image/')) return true;
+    return /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(filename || '');
+}
+
+function openImagePreviewModal(blob, filename) {
+    if (!blob || !imagePreviewModal) return;
+
+    if (currentPreviewObjectUrl) {
+        URL.revokeObjectURL(currentPreviewObjectUrl);
+        activeBlobUrls.delete(currentPreviewObjectUrl);
+        currentPreviewObjectUrl = null;
+    }
+
+    currentPreviewBlob = blob;
+    currentPreviewFilename = filename || 'image.png';
+    currentPreviewObjectUrl = URL.createObjectURL(blob);
+    activeBlobUrls.add(currentPreviewObjectUrl);
+
+    if (previewImageTitle) previewImageTitle.textContent = currentPreviewFilename;
+    if (previewImageEl) {
+        previewImageEl.src = currentPreviewObjectUrl;
+        previewImageEl.onload = () => {
+            const w = previewImageEl.naturalWidth || 0;
+            const h = previewImageEl.naturalHeight || 0;
+            const sizeMB = (blob.size / (1024 * 1024)).toFixed(2);
+            if (previewImageInfo) {
+                previewImageInfo.textContent = `${w} × ${h} px • ${sizeMB} MB`;
+            }
+        };
+    }
+
+    imagePreviewModal.classList.remove('hidden');
+}
+
+function closeImagePreviewModal() {
+    if (imagePreviewModal) {
+        imagePreviewModal.classList.add('hidden');
+    }
+    if (previewImageEl) previewImageEl.src = '';
+    if (currentPreviewObjectUrl) {
+        URL.revokeObjectURL(currentPreviewObjectUrl);
+        activeBlobUrls.delete(currentPreviewObjectUrl);
+        currentPreviewObjectUrl = null;
+    }
+    currentPreviewBlob = null;
+    currentPreviewFilename = '';
+}
+
+if (btnPreviewClose) btnPreviewClose.onclick = closeImagePreviewModal;
+if (imagePreviewModal) {
+    imagePreviewModal.onclick = (e) => {
+        if (e.target === imagePreviewModal) closeImagePreviewModal();
+    };
+}
+if (btnPreviewCopy) {
+    btnPreviewCopy.onclick = () => {
+        if (currentPreviewBlob) {
+            copyFileToClipboard(currentPreviewBlob, currentPreviewFilename);
+        }
+    };
+}
+if (btnPreviewDownload) {
+    btnPreviewDownload.onclick = () => {
+        if (currentPreviewBlob) {
+            downloadBlob(currentPreviewBlob, currentPreviewFilename);
+            showToast(`💾 「${currentPreviewFilename}」をダウンロードしました`);
+        }
+    };
+}
+
 function handleFileReceived(blob, filename, mode) {
     const emoji = getFileIconEmoji(filename, blob.type);
+    const isImage = isImageFile(filename, blob.type);
 
     // 履歴に追加（手動ダウンロード・コピーボタン付き）
     addTransferHistory(filename, blob.size, '受信', mode || 'LAN_P2P', blob);
     setTransferUILock(false);
     scheduleProgressAutoDismiss();
 
-    // 勝手に自動ダウンロードせず、通知トーストから「コピー」または「保存」を選択可能に
-    showToast(`${emoji} 「${filename}」を受信しました`, 6000, [
-        {
-            label: 'コピー',
-            icon: 'content_copy',
-            onClick: () => copyFileToClipboard(blob, filename)
-        },
-        {
-            label: '保存',
-            icon: 'download',
-            onClick: () => {
-                downloadBlob(blob, filename);
-                showToast(`💾 「${filename}」をダウンロードしました`);
-            }
+    const actions = [];
+    if (isImage) {
+        actions.push({
+            label: 'プレビュー',
+            icon: 'visibility',
+            onClick: () => openImagePreviewModal(blob, filename)
+        });
+    }
+    actions.push({
+        label: 'コピー',
+        icon: 'content_copy',
+        onClick: () => copyFileToClipboard(blob, filename)
+    });
+    actions.push({
+        label: '保存',
+        icon: 'download',
+        onClick: () => {
+            downloadBlob(blob, filename);
+            showToast(`💾 「${filename}」をダウンロードしました`);
         }
-    ]);
+    });
+
+    showToast(`${emoji} 「${filename}」を受信しました`, 7000, actions);
 }
 
 function handleTransferProgress(bytes, total, name, direction) {
@@ -1615,6 +1713,8 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = nul
     const emptyLi = transferHistoryList.querySelector('.empty-history');
     if (emptyLi) emptyLi.remove();
 
+    const isImage = fileOrBlob && isImageFile(name, fileOrBlob.type);
+
     let modeText = '同一Wi-Fi (LAN)';
     let modeIcon = 'bolt';
     if (mode === 'WAN_P2P') {
@@ -1629,13 +1729,17 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = nul
     }
 
     const li = document.createElement('li');
-    li.className = 'transfer-history-item';
+    li.className = `transfer-history-item ${isImage ? 'is-image-file' : ''}`;
+    if (isImage) {
+        li.title = 'クリックして画像をプレビュー表示';
+    }
     const sizeStr = (size / (1024 * 1024)).toFixed(2) + ' MB';
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     li.innerHTML = `
         <div class="transfer-history-info">
             <div class="transfer-history-name-row">
                 <strong>${type === '送信' ? '[送信]' : '[受信]'} ${escapeHTML(name)}</strong>
+                ${isImage ? '<span class="img-preview-badge"><span class="material-symbols-outlined" style="font-size:12px;">visibility</span> プレビュー</span>' : ''}
                 <span style="color:var(--m3-text-muted); font-size:0.75rem;">(${sizeStr})</span>
             </div>
             <span class="m3-mode-badge">
@@ -1643,6 +1747,10 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = nul
             </span>
         </div>
         <div class="transfer-history-actions">
+            ${isImage ? `
+            <button class="m3-icon-button-sm btn-hist-preview" title="プレビューを表示" type="button">
+                <span class="material-symbols-outlined" style="font-size:16px;">visibility</span>
+            </button>` : ''}
             <button class="m3-icon-button-sm btn-hist-copy" title="クリップボードにコピー" type="button">
                 <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span>
             </button>
@@ -1652,6 +1760,23 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = nul
             <span style="color:var(--m3-text-muted); font-size:0.72rem; margin-left:0.2rem;">${timeStr}</span>
         </div>
     `;
+
+    // 画像の場合、ファイル名情報のクリックでプレビューを表示
+    const infoDiv = li.querySelector('.transfer-history-info');
+    if (infoDiv && isImage) {
+        infoDiv.onclick = (e) => {
+            e.stopPropagation();
+            openImagePreviewModal(fileOrBlob, name);
+        };
+    }
+
+    const btnPrev = li.querySelector('.btn-hist-preview');
+    if (btnPrev && isImage) {
+        btnPrev.onclick = (e) => {
+            e.stopPropagation();
+            openImagePreviewModal(fileOrBlob, name);
+        };
+    }
 
     const btnCopy = li.querySelector('.btn-hist-copy');
     if (btnCopy) {

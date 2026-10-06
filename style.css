@@ -2657,6 +2657,10 @@ body.is-extension-popup {
     }
 }
 
+.image-preview-dialog {
+    width: clamp(320px, 90vw, 760px) !important;
+
+
 @keyframes toastSlideOut {
     0% {
         opacity: 1;
@@ -2666,4 +2670,105 @@ body.is-extension-popup {
         opacity: 0;
         transform: translateX(40px) scale(0.9);
     }
+}
+
+.image-preview-dialog {
+    width: clamp(320px, 90vw, 760px) !important;
+.image-preview-dialog {
+    width: clamp(320px, 90vw, 760px) !important;
+    max-width: 92vw !important;
+    max-height: 90vh !important;
+    display: flex;
+    flex-direction: column;
+    padding: 0 !important;
+    overflow: hidden;
+    background: #18191c;
+    border-radius: var(--m3-radius-lg);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+    text-align: left;
+}
+
+.image-preview-header {
+    padding: 0.8rem 1.2rem;
+    background: var(--m3-surface-container);
+    border-bottom: 1px solid var(--m3-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.image-preview-header h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 70vw;
+    margin: 0;
+}
+
+.image-preview-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.2rem;
+    background: #0d0e10;
+    overflow: auto;
+    min-height: 200px;
+    max-height: 62vh;
+}
+
+.image-preview-body img {
+    max-width: 100%;
+    max-height: 58vh;
+    object-fit: contain;
+    border-radius: var(--m3-radius-sm);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+    user-select: none;
+}
+
+.image-preview-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1.2rem;
+    background: var(--m3-surface-container);
+    border-top: 1px solid var(--m3-border);
+    gap: 0.8rem;
+    flex-wrap: wrap;
+}
+
+.preview-image-info {
+    font-size: 0.78rem;
+    color: var(--m3-text-muted);
+    font-family: 'Roboto Mono', monospace;
+}
+
+.preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.transfer-history-item.is-image-file .transfer-history-info {
+    cursor: pointer;
+}
+
+.transfer-history-item.is-image-file .transfer-history-info:hover strong {
+    color: var(--m3-primary);
+}
+
+.img-preview-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.68rem;
+    color: var(--m3-primary);
+    background: rgba(168, 199, 250, 0.12);
+    border: 1px solid rgba(168, 199, 250, 0.3);
+    border-radius: var(--m3-radius-full);
+    padding: 0.1rem 0.45rem;
+    margin-left: 0.35rem;
+    vertical-align: middle;
 }

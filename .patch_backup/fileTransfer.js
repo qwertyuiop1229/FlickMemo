@@ -419,7 +419,8 @@ export class FileTransferManager {
                 }
             }
         };
-        onValue(ansRef, handleAnswerSnapshot);
+        const ansUnsub = onValue(ansRef, handleAnswerSnapshot);
+        this._candidateUnsubscribers.push(ansUnsub);
 
         const candRef = ref(this.db, `${basePath}/candidates/${this.deviceId}`);
         const candUnsub = onValue(candRef, (snapshot) => {

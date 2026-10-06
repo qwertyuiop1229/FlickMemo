@@ -410,6 +410,35 @@
         </div>
     </div>
 
+    <!-- 画像プレビューモーダル -->
+    <div id="image-preview-modal" class="modal-overlay hidden">
+        <div class="m3-dialog image-preview-dialog">
+            <div class="dialog-header image-preview-header">
+                <div class="dialog-title-group">
+                    <span class="material-symbols-outlined" style="color:var(--m3-primary);">image</span>
+                    <h3 id="preview-image-title">画像プレビュー</h3>
+                </div>
+                <button id="btn-preview-close" class="m3-icon-button" title="閉じる" type="button">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            <div class="image-preview-body">
+                <img id="preview-image-el" src="" alt="プレビュー">
+            </div>
+            <div class="image-preview-footer">
+                <span id="preview-image-info" class="preview-image-info">--×-- px</span>
+                <div class="preview-actions">
+                    <button id="btn-preview-copy" class="btn-secondary-sm" type="button">
+                        <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span> コピー
+                    </button>
+                    <button id="btn-preview-download" class="btn-primary-sm" type="button">
+                        <span class="material-symbols-outlined" style="font-size:16px;">download</span> 保存
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 設定モーダル -->
     <div id="settings-modal" class="modal-overlay hidden">
         <div class="m3-dialog settings-dialog-discord">
