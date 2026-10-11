@@ -34,7 +34,7 @@ import 'prismjs/components/prism-json';
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.74";
+const APP_VERSION = "1.3.75";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -201,6 +201,7 @@ const mainLayout = document.getElementById('main-layout');
 const listContainer = document.getElementById('list-container');
 const noteList = document.getElementById('note-list');
 const emptyState = document.getElementById('empty-state');
+const editorArea = document.getElementById('editor-area');
 const noteTitleInput = document.getElementById('note-title-input');
 const noteBody = document.getElementById('note-body');
 const noteCodeView = document.getElementById('note-code-view');
@@ -314,8 +315,25 @@ function setupScrollFade(element) {
 }
 
 setupScrollFade(listContainer);
+setupScrollFade(editorArea);
 setupScrollFade(noteBody);
 setupScrollFade(noteCodeView);
+
+// エディタ領域・テキストエリア双方のスクロール位置を完全に維持・復元するヘルパー
+function getEditorScrollState() {
+    return {
+        bodyTop: noteBody ? noteBody.scrollTop : 0,
+        areaTop: editorArea ? editorArea.scrollTop : 0,
+        codeTop: noteCodeView ? noteCodeView.scrollTop : 0
+    };
+}
+
+function restoreEditorScrollState(state) {
+    if (!state) return;
+    if (noteBody && typeof state.bodyTop === 'number') noteBody.scrollTop = state.bodyTop;
+    if (editorArea && typeof state.areaTop === 'number') editorArea.scrollTop = state.areaTop;
+    if (noteCodeView && typeof state.codeTop === 'number') noteCodeView.scrollTop = state.codeTop;
+}
 
 function setStatus(type, text) {
     statusBar.className = `m3-badge status-${type}`;
@@ -441,20 +459,20 @@ function isPureTextLine(line) {
 
 function isCodeLine(line) {
     const l = line.trim();
-    if (!l) return true;
+    if (!l) return false;
     if (isPureTextLine(l)) return false;
 
-    if (l.startsWith('//') || l.startsWith('/*') || l.startsWith('*') || l.startsWith('#')) {
+    if (l.startsWith('//') || l.startsWith('/*') || l.startsWith('*')) {
         return true;
     }
 
     let cleanLine = l.replace(/\/\/.*$/, '').replace(/#.*$/, '');
     cleanLine = cleanLine.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
 
-    const hasKeywords = /\b(import|export|const|let|var|function|async|await|return|class|if|else|for|while|def|console|document|window|MutationObserver|initializeApp|getAuth)\b/.test(cleanLine);
-    const hasSymbols = /[\{\}\(\)\[\];=><\+\-\*\/]/.test(cleanLine);
+    const hasKeywords = /\b(import|export|const|let|var|function|async|await|return|class|def|console\.log|document\.|window\.)\b/.test(cleanLine);
+    const hasCodeSymbols = /(=>|===|!==|[{}\];]|<[a-zA-Z\/]|<\/)/.test(cleanLine);
 
-    return hasKeywords || hasSymbols;
+    return hasKeywords || hasCodeSymbols;
 }
 
 function updateAutoCodeRender(forceRender = false) {
@@ -1074,6 +1092,8 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
     if (!isRemoteSync) cleanupEmptyNotes(id);
 
     const isSameNote = (activeNoteId === id);
+    // 同一メモ（自動保存やリモート差分受信）の場合は現在のスクロール位置を完全に退避
+    const prevScroll = isSameNote ? getEditorScrollState() : null;
     activeNoteId = id;
     const n = currentNotes[id] || { title: '', body: '', pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
 
@@ -1081,8 +1101,12 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
     noteBody.disabled = isTrashNote;
     noteTitleInput.disabled = isTrashNote;
 
-    noteBody.scrollTop = 0;
-    noteCodeView.scrollTop = 0;
+    // ★ 別のメモを選択した時のみスクロールを最上部にリセット！同一メモの自動保存では絶対にリセットしない！
+    if (!isSameNote) {
+        noteBody.scrollTop = 0;
+        noteCodeView.scrollTop = 0;
+        if (editorArea) editorArea.scrollTop = 0;
+    }
 
     if (document.activeElement === noteTitleInput) {
         if (noteTitleInput.value !== (n.title || '')) {
@@ -1092,7 +1116,9 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
             noteTitleInput.setSelectionRange(start, end);
         }
     } else {
-        noteTitleInput.value = n.title || '';
+        if (noteTitleInput.value !== (n.title || '')) {
+            noteTitleInput.value = n.title || '';
+        }
     }
 
     if (document.activeElement === noteBody) {
@@ -1101,9 +1127,14 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
             const end = noteBody.selectionEnd;
             noteBody.value = n.body || '';
             noteBody.setSelectionRange(start, end);
+            if (isSameNote) restoreEditorScrollState(prevScroll);
         }
     } else {
-        noteBody.value = n.body || '';
+        // ★ 内容が変更されている場合のみ再代入（同一文字列の再代入によるブラウザのスクロールリセットを完全に防ぐ）
+        if (noteBody.value !== (n.body || '')) {
+            noteBody.value = n.body || '';
+            if (isSameNote) restoreEditorScrollState(prevScroll);
+        }
         if (!isSameNote) {
             resetTextHistory(n.body || '');
         }
@@ -1130,14 +1161,19 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
     updateEditorFooter();
     renderList(searchInput.value);
 
-    updateAutoCodeRender();
+    // ★ 同一メモの更新時は勝手にコードビューに切り替えずエディタとスクロール位置を完全維持
+    if (!isSameNote) {
+        updateAutoCodeRender();
+    } else {
+        restoreEditorScrollState(prevScroll);
+    }
 
     if (window.innerWidth <= 768) {
         mainLayout.classList.add('view-editor');
         btnBack.classList.remove('hidden');
     }
 
-    if (autoFocus && !isTrashNote) {
+    if (autoFocus && !isTrashNote && !isSameNote) {
         setTimeout(() => {
             noteBody.focus();
             noteBody.setSelectionRange(noteBody.value.length, noteBody.value.length);
@@ -1276,6 +1312,22 @@ window.addEventListener('keydown', e => {
         if (imagePreviewModal && !imagePreviewModal.classList.contains('hidden')) {
             e.preventDefault();
             closeImagePreviewModal();
+        } else if (deleteModal && !deleteModal.classList.contains('hidden')) {
+            e.preventDefault();
+            deleteModal.classList.add('hidden');
+        } else if (emptyTrashModal && !emptyTrashModal.classList.contains('hidden')) {
+            e.preventDefault();
+            emptyTrashModal.classList.add('hidden');
+        } else if (logoutModal && !logoutModal.classList.contains('hidden')) {
+            e.preventDefault();
+            logoutModal.classList.add('hidden');
+        } else if (settingsModal && !settingsModal.classList.contains('hidden')) {
+            e.preventDefault();
+            settingsModal.classList.add('hidden');
+        } else if (customDropdown && customDropdown.classList.contains('open')) {
+            e.preventDefault();
+            dropdownMenuList?.classList.add('hidden');
+            customDropdown.classList.remove('open');
         }
     }
 });
@@ -2923,6 +2975,8 @@ onAuthStateChanged(auth, async user => {
                     }
                 });
 
+                let activeNoteChanged = false;
+
                 Object.values(remoteNotes).forEach(n => {
                     const local = currentNotes[n.id];
                     if (!local || (n.updatedAt || 0) >= (local.updatedAt || 0)) {
@@ -2930,6 +2984,9 @@ onAuthStateChanged(auth, async user => {
                             currentNotes[n.id] = n;
                             saveLocalNote(n);
                             hasChanges = true;
+                            if (activeNoteId === n.id) {
+                                activeNoteChanged = true;
+                            }
                         }
                     }
                 });
@@ -2943,7 +3000,11 @@ onAuthStateChanged(auth, async user => {
                 updateExtensionBadge();
 
                 if (activeNoteId && currentNotes[activeNoteId]) {
-                    selectNote(activeNoteId, false, true);
+                    // ★ 自身が更新したエコーバック等で内容差分がない時は無駄な再描画・スクロールリセットを100%抑止！
+                    // 他端末からアクティブなメモが実際に更新された場合のみ位置を維持して同期
+                    if (activeNoteChanged) {
+                        selectNote(activeNoteId, false, true);
+                    }
                 } else {
                     const isMobile = window.innerWidth <= 768;
                     if (!isMobile) {

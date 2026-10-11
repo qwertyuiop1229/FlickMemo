@@ -575,6 +575,7 @@ select {
     background: var(--m3-bg);
     padding: 1rem 1.5rem;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .editor-toolbar {
@@ -2657,10 +2658,6 @@ body.is-extension-popup {
     }
 }
 
-.image-preview-dialog {
-    width: clamp(320px, 90vw, 760px) !important;
-
-
 @keyframes toastSlideOut {
     0% {
         opacity: 1;
@@ -2672,8 +2669,6 @@ body.is-extension-popup {
     }
 }
 
-.image-preview-dialog {
-    width: clamp(320px, 90vw, 760px) !important;
 .image-preview-dialog {
     width: clamp(320px, 90vw, 760px) !important;
     max-width: 92vw !important;
