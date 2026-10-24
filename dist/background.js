@@ -1,3 +1,5 @@
+import { validAuthResponse, trustedAuthSender } from './authProtocol.js';
+
 // 拡張機能アイコンの左クリックで直接サイドパネルを開く設定 (Edge & Chrome 両対応)
 if (typeof chrome !== 'undefined' && chrome?.sidePanel?.setPanelBehavior) {
     chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error(error));
@@ -9,12 +11,13 @@ if (typeof chrome !== 'undefined' && chrome?.sidePanel?.setPanelBehavior) {
     });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
     if (typeof chrome !== 'undefined' && chrome?.sidePanel?.setPanelBehavior) {
         chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error(error));
     }
 
-    // コンテキストメニューの作成
+    // Updates must not recreate menu IDs that already exist.
+    await chrome.contextMenus.removeAll();
     chrome.contextMenus.create({
         id: "add-selection-to-flickmemo",
         title: "選択したテキストをFlickMemoに追加",
@@ -33,6 +36,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 // コンテキストメニューがクリックされた時の処理
+let quickNoteQueue = Promise.resolve();
 chrome.contextMenus.onClicked.addListener((info, tab) => {
     let textToAdd = "";
     if (info.menuItemId === "add-selection-to-flickmemo" && info.selectionText) {
@@ -51,22 +55,33 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
     if (!textToAdd) return;
 
-    chrome.storage.local.get(['pendingQuickNote'], (res) => {
-        let currentText = res.pendingQuickNote ? res.pendingQuickNote + "\n\n---\n\n" : "";
-        chrome.storage.local.set({ pendingQuickNote: currentText + textToAdd }, () => {
-            chrome.action.setBadgeText({ text: "" });
-        });
-    });
+    quickNoteQueue = quickNoteQueue.then(async () => {
+        const res = await chrome.storage.local.get('pendingQuickNote');
+        const currentText = res.pendingQuickNote ? res.pendingQuickNote + '\n\n---\n\n' : '';
+        const text = currentText + textToAdd;
+        if (text.length > 500000) {
+            await chrome.action.setBadgeText({ text: '!' });
+            return;
+        }
+        await chrome.storage.local.set({ pendingQuickNote: text });
+        await chrome.action.setBadgeText({ text: '' });
+    }).catch(error => console.error('Quick note save failed:', error.message));
 });
 
 // 外部Webページ (auth.html) からの認証メッセージ受信・サイドパネルへの安全な中継
 if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessageExternal) {
     chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-        if (message && message.type === 'FLICKMEMO_AUTH_SUCCESS') {
-            // サイドパネルやポップアップ側へメッセージをブロードキャスト
-            chrome.runtime.sendMessage(message).catch(() => {});
-            sendResponse({ received: true });
-        }
+        if (!trustedAuthSender(sender)) return;
+        (async () => {
+            const { pendingAuth } = await chrome.storage.session.get('pendingAuth');
+            if (!validAuthResponse(message, pendingAuth)) {
+                sendResponse({ received: false });
+                return;
+            }
+            const response = await chrome.runtime.sendMessage(message);
+            sendResponse({ received: response?.received === true });
+        })().catch(() => sendResponse({ received: false }));
+        return true;
     });
 }
 

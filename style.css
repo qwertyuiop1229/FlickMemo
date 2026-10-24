@@ -2767,3 +2767,7 @@ body.is-extension-popup {
     margin-left: 0.35rem;
     vertical-align: middle;
 }
+
+/* One shared identity for web, installed PWA and the browser side panel. */
+.app-brand-image { display: inline-block; border-radius: 22%; flex-shrink: 0; object-fit: contain; }
+.brand-icon .app-brand-image { margin-bottom: 0.65rem; }

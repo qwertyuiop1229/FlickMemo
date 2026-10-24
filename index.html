@@ -11,9 +11,10 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="theme-color" content="#131314">
     <title>FlickMemo</title>
-    <link rel="icon" type="image/png" href="icon.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="icon.png">
-    <link rel="apple-touch-icon" href="icon.png">
+    <link rel="icon" href="/icons/favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/icon-16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png">
     <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto+Mono&display=swap">
     <link rel="stylesheet"
@@ -34,7 +35,7 @@
     <div id="auth-container" class="center-screen hidden">
         <div class="m3-card auth-card">
             <div class="brand-icon">
-                <span class="material-symbols-outlined">edit_note</span>
+                <img src="/icons/icon-128.png" alt="FlickMemo" width="64" height="64" class="app-brand-image">
             </div>
             <h2>FlickMemo</h2>
             <p>即座に書ける、超軽量メモ帳</p>
@@ -51,6 +52,9 @@
                 <button id="btn-guest-login" class="btn-text-subtle" type="button">
                     ログインせずに使う (オフラインメモ / 共有リンク送受信)
                 </button>
+                <button id="btn-google-other" class="btn-text-subtle" type="button">
+                    別のGoogleアカウントでログイン
+                </button>
             </div>
         </div>
     </div>
@@ -65,7 +69,7 @@
                     <span class="material-symbols-outlined">arrow_back</span>
                 </button>
                 <div class="brand-logo">
-                    <span class="material-symbols-outlined brand-spark">auto_awesome</span>
+                    <img src="/icons/icon-64.png" alt="" width="28" height="28" class="app-brand-image">
                     <span class="logo-text">FlickMemo</span>
                 </div>
             </div>
@@ -279,7 +283,7 @@
                                 <span class="material-symbols-outlined session-connected-icon">swap_horizontal_circle</span>
                                 <div>
                                     <div id="session-device-name" class="session-device-name">接続中: 相手端末</div>
-                                    <div class="session-sub-text">双方向でファイルを何度でも送受信できます</div>
+                                    <div class="session-sub-text">双方向で送受信できます。履歴は最新10件・合計64MiBまで保持します</div>
                                 </div>
                             </div>
                             <button id="btn-disconnect-session" class="m3-icon-button-danger" title="切断" type="button">
@@ -310,7 +314,7 @@
                             <input type="file" id="file-input" class="hidden" multiple>
                             <div class="dropzone-content">
                                 <span class="material-symbols-outlined dropzone-icon">upload_file</span>
-                                <p class="dropzone-hint">クリックまたはドラッグ＆ドロップでファイルを選択</p>
+                                <p class="dropzone-hint">クリックまたはドラッグ＆ドロップでファイルを選択（1回64MiBまで）</p>
                                 <button id="btn-browse-files" class="m3-button btn-secondary-sm" type="button">
                                     <span class="material-symbols-outlined">folder_open</span> ファイルを選択
                                 </button>

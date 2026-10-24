@@ -10,6 +10,7 @@ const copyExtensionFiles = () => ({
         if (fs.existsSync('manifest.json')) fs.copyFileSync('manifest.json', 'dist/manifest.json');
         if (fs.existsSync('manifest.webmanifest')) fs.copyFileSync('manifest.webmanifest', 'dist/manifest.webmanifest');
         if (fs.existsSync('background.js')) fs.copyFileSync('background.js', 'dist/background.js');
+        fs.copyFileSync('authProtocol.js', 'dist/authProtocol.js');
         if (fs.existsSync('version.json')) fs.copyFileSync('version.json', 'dist/version.json');
         if (fs.existsSync('icon.png')) fs.copyFileSync('icon.png', 'dist/icon.png');
         if (fs.existsSync('404.html')) fs.copyFileSync('404.html', 'dist/404.html');
@@ -17,6 +18,12 @@ const copyExtensionFiles = () => ({
             fs.readdirSync('icons').forEach(file => {
                 fs.copyFileSync(`icons/${file}`, `dist/icons/${file}`);
             });
+        }
+        // Vite injects LF into Windows CRLF source HTML. Keep generated files
+        // consistent before packaging instead of committing mixed line endings.
+        for (const file of fs.readdirSync('dist').filter(file => file.endsWith('.html'))) {
+            const path = resolve('dist', file);
+            fs.writeFileSync(path, fs.readFileSync(path, 'utf8').replace(/\r\n/g, '\n').replace(/[\t ]+$/gm, ''));
         }
 
         // 自動で最新版の配布用 ZIP (dist/flickmemo-extension.zip) を生成
@@ -54,7 +61,7 @@ const fixiOSCompatibility = () => ({
     name: 'fix-ios-compatibility',
     // writeBundle は全ファイルが書き出された後に実行される（transformIndexHtml より確実）
     writeBundle() {
-        const htmlPath = resolve(__dirname, 'dist/index.html');
+        const htmlPath = resolve(import.meta.dirname, 'dist/index.html');
         if (!fs.existsSync(htmlPath)) return;
 
         let html = fs.readFileSync(htmlPath, 'utf-8');
@@ -86,9 +93,9 @@ export default defineConfig({
         outDir: 'dist',
         rollupOptions: {
             input: {
-                popup: resolve(__dirname, 'index.html'),
-                auth: resolve(__dirname, 'auth.html'),
-                download: resolve(__dirname, 'download.html')
+                popup: resolve(import.meta.dirname, 'index.html'),
+                auth: resolve(import.meta.dirname, 'auth.html'),
+                download: resolve(import.meta.dirname, 'download.html')
             },
             output: {
                 entryFileNames: 'assets/[name]-[hash].js',

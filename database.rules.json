@@ -8,12 +8,80 @@
     },
     "public_rooms": {
       "$roomId": {
-        ".read": true,
-        ".write": true,
+        ".read": "$roomId.matches(/^rm_[A-Za-z0-9_-]{32}$/)",
         "members": {
           "$deviceId": {
-            ".validate": "newData.hasChildren(['id', 'name', 'joinedAt'])"
+            ".write": "$roomId.matches(/^rm_[A-Za-z0-9_-]{32}$/) && $deviceId.matches(/^dev_[A-Za-z0-9_-]{1,80}$/)",
+            ".validate": "newData.hasChildren(['id', 'name', 'joinedAt'])",
+            "id": {
+              ".validate": "newData.val() === $deviceId"
+            },
+            "name": {
+              ".validate": "newData.isString() && newData.val().length <= 100"
+            },
+            "joinedAt": {
+              ".validate": "newData.isNumber() && newData.val() <= now + 60000"
+            },
+            "$other": {
+              ".validate": false
+            }
           }
+        },
+        "signaling": {
+          "$deviceId": {
+            ".write": "$roomId.matches(/^rm_[A-Za-z0-9_-]{32}$/) && $deviceId.matches(/^dev_[A-Za-z0-9_-]{1,80}$/)",
+            ".validate": "newData.hasChildren(['fromDeviceId', 'offer', 'timestamp', 'proof'])",
+            "fromDeviceId": {
+              ".validate": "newData.isString() && newData.val().matches(/^dev_[A-Za-z0-9_-]{1,80}$/)"
+            },
+            "offer": {
+              ".validate": "newData.isString() && newData.val().length <= 65536"
+            },
+            "timestamp": {
+              ".validate": "newData.isNumber() && newData.val() > now - 300000 && newData.val() <= now + 60000"
+            },
+            "proof": {
+              ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+            },
+            "$other": {
+              ".validate": false
+            },
+            "mode": {
+              ".validate": "newData.val() === 'AUTO' || newData.val() === 'LAN_P2P' || newData.val() === 'WAN_P2P' || newData.val() === 'WEB_RELAY'"
+            }
+          }
+        },
+        "answers": {
+          "$deviceId": {
+            ".write": "$roomId.matches(/^rm_[A-Za-z0-9_-]{32}$/) && $deviceId.matches(/^dev_[A-Za-z0-9_-]{1,80}$/)",
+            ".validate": "newData.hasChildren(['fromDeviceId', 'answer', 'timestamp', 'proof'])",
+            "fromDeviceId": {
+              ".validate": "newData.isString() && newData.val().matches(/^dev_[A-Za-z0-9_-]{1,80}$/)"
+            },
+            "answer": {
+              ".validate": "newData.isString() && newData.val().length <= 65536"
+            },
+            "timestamp": {
+              ".validate": "newData.isNumber() && newData.val() > now - 300000 && newData.val() <= now + 60000"
+            },
+            "proof": {
+              ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "candidates": {
+          "$deviceId": {
+            ".write": "$roomId.matches(/^rm_[A-Za-z0-9_-]{32}$/) && $deviceId.matches(/^dev_[A-Za-z0-9_-]{1,80}$/)",
+            "$candidateId": {
+              ".validate": "newData.isString() && newData.val().length <= 8192"
+            }
+          }
+        },
+        "$other": {
+          ".validate": false
         }
       }
     }

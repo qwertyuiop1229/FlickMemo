@@ -1,5 +1,7 @@
+import { validNote } from './noteData.js';
+import { NoteStore } from './noteStore.js';
 import { initializeApp } from "firebase/app";
-import JSZip from 'jszip';
+import { AUTH_ORIGIN, AUTH_TTL_MS, validAuthResponse } from './authProtocol.js';
 import {
     getAuth,
     signInWithPopup,
@@ -23,18 +25,16 @@ import {
     off
 } from "firebase/database";
 
-import Prism from 'prismjs';
-import 'prismjs/components/prism-javascript';
-import 'prismjs/components/prism-typescript';
-import 'prismjs/components/prism-python';
-import 'prismjs/components/prism-css';
-import 'prismjs/components/prism-markup';
-import 'prismjs/components/prism-json';
+let Prism = null;
+let prismLoading = null;
+function loadPrism() {
+    return prismLoading ||= import('./syntaxHighlight.js').then(module => (Prism = module.default));
+}
 
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.75";
+const APP_VERSION = "1.3.77";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -55,7 +55,8 @@ let currentDbRef = null;
 
 // ★ 全デバイス対応 コンソールログ収集・保持（開発者タブ用）
 const devLogs = [];
-const MAX_DEV_LOGS = 500;
+const MAX_DEV_LOGS = 100;
+const MAX_LOG_CHARS = 2000;
 let currentDevFilter = 'all';
 
 function formatLogArg(arg) {
@@ -76,7 +77,7 @@ function formatLogArg(arg) {
 
 function captureLog(level, args) {
     const timeStr = new Date().toISOString().slice(11, 23);
-    const message = Array.from(args).map(formatLogArg).join(' ');
+    const message = Array.from(args).map(formatLogArg).join(' ').slice(0, MAX_LOG_CHARS);
     devLogs.push({ time: timeStr, level, message });
     if (devLogs.length > MAX_DEV_LOGS) {
         devLogs.shift();
@@ -120,7 +121,7 @@ window.addEventListener('unhandledrejection', (event) => {
 function updateDevConsoleUI() {
     const viewer = document.getElementById('dev-console-viewer');
     const logCountElem = document.getElementById('dev-log-count');
-    if (!viewer) return;
+    if (!viewer || viewer.closest('.hidden')) return;
 
     const filtered = devLogs.filter(item => {
         if (currentDevFilter === 'all') return true;
@@ -154,24 +155,50 @@ function updateDevConsoleUI() {
     }
 }
 
+function handleSyncError(error) {
+    setStatus('offline', 'クラウド保存に失敗しました（ローカル保存済み）');
+    console.error('Cloud write failed:', error.code || error.message);
+    return false;
+}
+
+function trackedCloudWrite(id, operation, fields = null) {
+    const owner = currentUserId;
+    const note = currentNotes[id] ? structuredClone(currentNotes[id]) : null;
+    return operation.then(async () => {
+        if (note) {
+            const acknowledged = await noteStore.acknowledge(owner, note, fields);
+            if (acknowledged && currentUserId === owner && JSON.stringify(currentNotes[id]) === JSON.stringify(note)) pendingLocalIds.delete(id);
+        }
+        return true;
+    }).catch(error => {
+        lastSyncedData = {}; // A failed write must not suppress the next retry.
+        return handleSyncError(error);
+    });
+}
+
 // 完全保存
 function syncSaveNote(note) {
     if (!currentUserId || !note || !note.id) return;
     const noteRef = ref(db, `users/${currentUserId}/notes/${note.id}`);
-    set(noteRef, note);
+    return trackedCloudWrite(note.id, set(noteRef, note));
 }
 
 // 1文字単位の差分更新（RTDB通信量を最小限にする）
 function syncUpdateNoteFields(id, fields) {
     if (!currentUserId || !id || !fields) return;
     const noteRef = ref(db, `users/${currentUserId}/notes/${id}`);
-    update(noteRef, fields);
+    return trackedCloudWrite(id, update(noteRef, fields), fields);
 }
 
 function syncDeleteNote(id) {
     if (!currentUserId || !id) return;
     const noteRef = ref(db, `users/${currentUserId}/notes/${id}`);
-    remove(noteRef);
+    const owner = currentUserId;
+    return remove(noteRef).then(() => {
+        noteStore.delete(owner, id).catch(localSaveError);
+        if (currentUserId === owner) pendingDeleteIds.delete(id);
+        return true;
+    }).catch(handleSyncError);
 }
 
 function syncClearTrash() {
@@ -278,14 +305,13 @@ const toastMsg = document.getElementById('toast-msg');
 const toastText = document.getElementById('toast-text');
 const btnToastAction = document.getElementById('btn-toast-action');
 
-let currentNotes = {};
+let currentNotes = Object.create(null);
 let activeNoteId = null;
 let pendingDeleteId = null;
 let lastMovedToTrashNote = null;
 let currentTab = 'notes';
 let toastTimer = null;
 let currentUserId = null;
-let forceAccountSelect = false;
 let isGuestMode = false;
 
 // 省メモリ・通信節約用の最適化タイマー＆差分キャッシュ
@@ -401,7 +427,7 @@ function showToast(msg, duration = 4000, actions = null) {
     const toasts = container.querySelectorAll('.m3-toast-item:not(.dismissing)');
     if (toasts.length > 3) {
         for (let i = 0; i < toasts.length - 3; i++) {
-            toasts[i].classList.add('stacked-faded');
+            toasts[i].remove();
         }
     }
 
@@ -417,8 +443,8 @@ function renderAppVersion() {
 }
 
 function getInitialsAvatar(name) {
-    const initial = (name || 'U').charAt(0).toUpperCase();
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#042f66" rx="32"/><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" fill="#a8c7fa" font-size="28" font-family="sans-serif" font-weight="bold">${initial}</text></svg>`;
+    const initial = Array.from(String(name || 'U'))[0].toUpperCase();
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#042f66" rx="32"/><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" fill="#a8c7fa" font-size="28" font-family="sans-serif" font-weight="bold">${escapeHTML(initial)}</text></svg>`;
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
@@ -477,6 +503,13 @@ function isCodeLine(line) {
 
 function updateAutoCodeRender(forceRender = false) {
     const text = noteBody.value || '';
+    // Avoid constructing a second full copy and token tree while typing or for huge notes.
+    if ((!forceRender && document.activeElement === noteBody) || text.length > 100000) {
+        noteCodeView.replaceChildren();
+        noteBody.classList.remove('hidden');
+        noteCodeView.classList.add('hidden');
+        return;
+    }
     if (!text.trim()) {
         noteBody.classList.remove('hidden');
         noteCodeView.classList.add('hidden');
@@ -581,9 +614,9 @@ function updateAutoCodeRender(forceRender = false) {
 
     if (hasAnyCode && (forceRender || document.activeElement !== noteBody)) {
         noteCodeView.innerHTML = html;
-        if (Prism) {
-            Prism.highlightAllUnder(noteCodeView);
-        }
+        loadPrism().then(highlighter => {
+            if (!noteCodeView.classList.contains('hidden')) highlighter.highlightAllUnder(noteCodeView);
+        }).catch(error => console.warn('Code highlighting unavailable:', error.message));
 
         noteCodeView.querySelectorAll('.copy-code-btn').forEach(btn => {
             btn.onclick = (e) => {
@@ -667,7 +700,7 @@ function buildCodeBlockHTML(lang, rawCode, index, isCollapsed) {
           <button class="code-header-btn collapse-code-btn" data-index="${index}" title="折りたたみ">
             <span class="material-symbols-outlined" style="font-size:16px;">${iconName}</span>
           </button>
-          <button class="code-header-btn copy-code-btn" data-code="${encodeURIComponent(rawCode)}" title="コピー">
+          <button class="code-header-btn copy-code-btn" data-code="${escapeHTML(encodeURIComponent(rawCode))}" title="コピー">
             <span class="material-symbols-outlined" style="font-size:14px;">content_copy</span> コピー
           </button>
         </div>
@@ -678,7 +711,7 @@ function buildCodeBlockHTML(lang, rawCode, index, isCollapsed) {
 }
 
 function escapeHTML(str) {
-    return str
+    return String(str ?? '')
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
@@ -691,6 +724,7 @@ let historyIndex = -1;
 let historyDebounceTimer = null;
 
 function resetTextHistory(initialText = '') {
+    clearTimeout(historyDebounceTimer);
     textHistory = [initialText];
     historyIndex = 0;
     updateUndoRedoButtons();
@@ -702,7 +736,10 @@ function pushTextHistory(text) {
     historyDebounceTimer = setTimeout(() => {
         textHistory = textHistory.slice(0, historyIndex + 1);
         textHistory.push(text);
-        if (textHistory.length > 25) textHistory.shift();
+        let historyChars = textHistory.reduce((sum, item) => sum + item.length, 0);
+        while (textHistory.length > 1 && (textHistory.length > 25 || historyChars > 1000000)) {
+            historyChars -= textHistory.shift().length;
+        }
         historyIndex = textHistory.length - 1;
         updateUndoRedoButtons();
     }, 300);
@@ -735,6 +772,7 @@ function scheduleSaveNote(id, updatedFields) {
 
     Object.assign(currentNotes[id], updatedFields);
     currentNotes[id].updatedAt = Date.now();
+    saveLocalNote(currentNotes[id]);
 
     updateActiveNoteItemDOM(id);
     updateTitlePlaceholder(currentNotes[id]);
@@ -763,14 +801,15 @@ function flushPendingSave(id) {
         return;
     }
 
-    lastSyncedData[note.id] = { body: note.body, title: note.title, pinned: note.pinned };
-    syncUpdateNoteFields(note.id, {
+    lastSyncedData = { [note.id]: { body: note.body, title: note.title, pinned: note.pinned } };
+    const pendingWrite = syncUpdateNoteFields(note.id, {
         body: note.body,
         title: note.title,
         pinned: note.pinned,
         updatedAt: note.updatedAt
     });
-    setStatus('synced', 'クラウド同期完了');
+    if (!currentUserId) setStatus('synced', 'ローカル保存済み');
+    else pendingWrite?.then(result => { if (result !== false) setStatus('synced', 'クラウド同期完了'); });
 }
 
 function updateExtensionBadge() {
@@ -846,14 +885,13 @@ btnRedo.onclick = () => {
 
 function getNoteDisplayTitle(note) {
     if (!note) return "空のメモ";
-    if (note.title && note.title.trim()) {
-        return note.title.trim();
+    if (typeof note.title === 'string' && note.title.trim()) {
+        return note.title.trim().slice(0, 500);
     }
-    const body = note.body || '';
+    const body = typeof note.body === 'string' ? note.body : '';
     if (!body.trim()) return "空のメモ";
-    const lines = body.split("\n").map(l => l.trim()).filter(l => l.length > 0);
-    if (lines.length === 0) return "空のメモ";
-    const firstLine = lines[0];
+    const firstLine = body.trimStart().split('\n', 1)[0].trim().slice(0, 500);
+    if (!firstLine) return '空のメモ';
     return firstLine.replace(/^([#*\-–—•>\d\.\s]+)/, '').trim() || firstLine;
 }
 
@@ -882,47 +920,54 @@ function getDaysRemaining(deletedAt) {
     return Math.max(0, days);
 }
 
-// IndexedDB (ローカル高速読み書き用)
-let idb = null;
-const dbReq = indexedDB.open('FlickMemoDB', 1);
-dbReq.onupgradeneeded = e => e.target.result.createObjectStore('notes', { keyPath: 'id' });
-dbReq.onsuccess = e => {
-    idb = e.target.result;
-    loadLocalNotes();
-};
-
-function loadLocalNotes() {
-    if (!idb) return;
-    const tx = idb.transaction('notes', 'readonly');
-    const req = tx.objectStore('notes').getAll();
-    req.onsuccess = () => {
-        currentNotes = {};
-        req.result.forEach(n => currentNotes[n.id] = n);
-        cleanExpiredTrash();
-        cleanupEmptyNotes();
+// Local caches are scoped to the authenticated UID; guest notes survive reloads.
+const noteStore = new NoteStore();
+let pendingLocalIds = new Set();
+let pendingDeleteIds = new Set();
+let cacheGeneration = 0;
+let authGeneration = 0;
+const cacheOwner = () => currentUserId || 'guest';
+function localSaveError(error) {
+    setStatus('offline', 'ローカル保存に失敗しました。空き容量を確認してください');
+    console.error('Local cache error:', error.message);
+}
+async function loadLocalNotes() {
+    const owner = cacheOwner();
+    const generation = ++cacheGeneration;
+    try {
+        const entries = await noteStore.entries(owner);
+        const notes = entries.map(row => row.note).filter(note => validNote(note));
+        if (generation !== cacheGeneration || owner !== cacheOwner()) return;
+        currentNotes = Object.fromEntries(notes.map(note => [note.id, note]));
+        pendingLocalIds = new Set(entries.filter(row => row.pending && validNote(row.note)).map(row => row.id));
+        pendingDeleteIds = new Set(entries.filter(row => row.pending && row.note === null).map(row => row.id));
         renderList(searchInput.value);
-        initAutoNote();
-    };
+        if (isGuestMode) initAutoNote();
+    } catch (error) { localSaveError(error); }
 }
-
-function saveLocalNote(note) {
-    if (!idb || !note.id) return;
-    const tx = idb.transaction('notes', 'readwrite');
-    tx.objectStore('notes').put(note);
+function saveLocalNote(note, pending = true) {
+    if (!note?.id) return;
+    if (pending && currentUserId) pendingLocalIds.add(note.id);
+    noteStore.put(cacheOwner(), note, pending && !!currentUserId).catch(localSaveError);
 }
-
-function deleteLocalNote(id) {
-    if (!idb || !id) return;
-    const tx = idb.transaction('notes', 'readwrite');
-    tx.objectStore('notes').delete(id);
+function deleteLocalNote(id, pending = true) {
+    if (!id) return;
+    pendingLocalIds.delete(id);
+    if (pending && currentUserId) pendingDeleteIds.add(id);
+    noteStore.delete(cacheOwner(), id, pending && !!currentUserId).catch(localSaveError);
 }
-
 async function clearLocalData() {
-    currentNotes = {};
+    ++cacheGeneration;
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+    lastSyncedData = {};
+    pendingLocalIds = new Set();
+    pendingDeleteIds = new Set();
+    resetTextHistory();
+    currentNotes = Object.create(null);
     activeNoteId = null;
     pendingDeleteId = null;
     lastMovedToTrashNote = null;
-
     noteBody.value = '';
     noteTitleInput.value = '';
     noteBody.disabled = true;
@@ -931,17 +976,13 @@ async function clearLocalData() {
     noteTitleInput.classList.add('hidden');
     charCount.classList.add('hidden');
     dateDisplay.classList.add('hidden');
+    noteCodeView.replaceChildren();
     noteCodeView.classList.add('hidden');
-
+    closeImagePreviewModal();
+    clearTransferHistoryUI();
+    stagedFilesQueue = [];
+    renderStagedFilesUI();
     renderList('');
-
-    if (idb) {
-        return new Promise((resolve) => {
-            const tx = idb.transaction('notes', 'readwrite');
-            tx.objectStore('notes').clear();
-            tx.oncomplete = () => resolve();
-        });
-    }
 }
 
 function cleanupEmptyNotes(exceptId = null) {
@@ -991,7 +1032,11 @@ function cleanExpiredTrash() {
     });
 }
 
+let listVisibleLimit = 150;
+let lastListScope = '';
 function renderList(filter = '') {
+    const scope = currentTab + ':' + filter;
+    if (scope !== lastListScope) { lastListScope = scope; listVisibleLimit = 150; }
     noteList.innerHTML = '';
     const now = Date.now();
 
@@ -1020,7 +1065,7 @@ function renderList(filter = '') {
 
     let currentGroupKey = '';
 
-    filtered.forEach(n => {
+    filtered.slice(0, listVisibleLimit).forEach(n => {
         let groupKey = '';
         let groupHeaderHTML = '';
 
@@ -1051,7 +1096,7 @@ function renderList(filter = '') {
         const titleSpan = document.createElement('span');
         titleSpan.className = 'title';
         if (n.pinned && currentTab === 'notes') {
-            titleSpan.innerHTML = `<span class="material-symbols-outlined pin-icon">push_pin</span> ${getNoteDisplayTitle(n)}`;
+            titleSpan.innerHTML = `<span class="material-symbols-outlined pin-icon">push_pin</span> ${escapeHTML(getNoteDisplayTitle(n))}`;
         } else {
             titleSpan.textContent = getNoteDisplayTitle(n);
         }
@@ -1083,6 +1128,14 @@ function renderList(filter = '') {
         li.appendChild(delBtn);
         noteList.appendChild(li);
     });
+    if (filtered.length > listVisibleLimit) {
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'btn-text-subtle';
+        more.textContent = `さらに表示（残り${filtered.length - listVisibleLimit}件）`;
+        more.onclick = () => { listVisibleLimit += 150; renderList(filter); };
+        noteList.appendChild(more);
+    }
 }
 
 function selectNote(id, autoFocus = true, isRemoteSync = false) {
@@ -1383,6 +1436,7 @@ function renderDeviceChips(devices) {
 }
 
 let autoDismissProgressTimer = null;
+let lastProgressPaint = 0;
 
 function clearTransferHistoryUI() {
     if (!transferHistoryList) return;
@@ -1453,8 +1507,12 @@ function handleTransferStatus(event, data) {
     } else if (event === 'room_member_joined') {
         showToast("相手端末を検出しました！接続中...");
         if (transferManager && data.otherDeviceId) {
-            transferManager.connectToDevice(data.otherDeviceId, true);
+            transferManager.connectToDevice(data.otherDeviceId, true).catch(error => showToast('接続に失敗しました: ' + error.message));
         }
+    } else if (event === 'channel_error') {
+        showToast('ファイル転送エラー: ' + (data?.message || '接続を確認してください'));
+        updateTransferSteps(false);
+        setTransferUILock(false);
     } else if (event === 'channel_open') {
         showToast("P2P転送チャネルが開きました（接続完了）");
         const devName = selectedTargetDeviceId && transferManager?.activeDevices[selectedTargetDeviceId]?.name;
@@ -1736,12 +1794,15 @@ function handleFileReceived(blob, filename, mode) {
 }
 
 function handleTransferProgress(bytes, total, name, direction) {
+    const paintTime = performance.now();
+    if (bytes > 0 && bytes < total && paintTime - lastProgressPaint < 100) return;
+    lastProgressPaint = paintTime;
     if (!transferProgressCard) return;
     if (autoDismissProgressTimer) clearTimeout(autoDismissProgressTimer);
     transferProgressCard.classList.remove('hidden');
     transferFilename.textContent = `${direction === 'send' ? '送信:' : '受信:'} ${name}`;
 
-    const percent = Math.min(100, Math.round((bytes / total) * 100));
+    const percent = total === 0 ? 100 : Math.min(100, Math.round((bytes / total) * 100));
     transferProgressFill.style.width = `${percent}%`;
     transferPercent.textContent = `${percent}%`;
 
@@ -1856,7 +1917,14 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = nul
         };
     }
 
+    li.dataset.bytes = String(fileOrBlob?.size || 0);
     transferHistoryList.prepend(li);
+    // Event handlers retain the Blob. Removing old rows also releases their handlers.
+    let retainedBytes = 0;
+    [...transferHistoryList.children].forEach((row, index) => {
+        retainedBytes += Number(row.dataset.bytes || 0);
+        if (index > 0 && (index >= 10 || retainedBytes > 64 * 1024 * 1024)) row.remove();
+    });
 }
 
 let stagedFilesQueue = [];
@@ -2002,6 +2070,7 @@ if (btnStartSend) {
                 fileToSend = stagedFilesQueue[0];
             } else {
                 showToast("複数ファイルを軽量ZIP圧縮中...");
+                const { default: JSZip } = await import('jszip');
                 const zip = new JSZip();
                 const usedNames = new Map();
 
@@ -2061,6 +2130,7 @@ const btnBackTransfer = document.getElementById('btn-back-transfer');
 
 function openTransferView() {
     currentTab = 'transfer';
+    if (auth.currentUser && !isGuestMode) ensureTransferManager().startDevicePresence();
     applyGuestUIRestrictions();
     if (mainLayout) mainLayout.classList.add('view-transfer');
     if (transferPanel) transferPanel.classList.remove('hidden');
@@ -2260,7 +2330,7 @@ if (btnCreateRoom) {
         tm.joinRoom(newRoomId);
 
         // クライアントローカルで処理される #key (ハッシュ) で E2EE 暗号化鍵を共有
-        const shareUrl = `${window.location.origin}${window.location.pathname}?room=${newRoomId}#key=${randomKey}`;
+        const shareUrl = `${AUTH_ORIGIN}/?room=${newRoomId}#key=${randomKey}`;
         updateRoomUI(newRoomId, shareUrl);
 
         navigator.clipboard.writeText(shareUrl).then(() => {
@@ -2295,9 +2365,10 @@ function checkAndHandleAutoJoinRoom() {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     if (!roomParam) return false;
+    if (!/^rm_[A-Za-z0-9_-]{32}$/.test(roomParam)) { showToast('共有リンクが正しくありません'); return false; }
 
-    // 共有リンクアクセス時はゲストモードを即時設定
-    isGuestMode = true;
+    // Preserve the signed-in account when opening a shared link.
+    isGuestMode = !auth.currentUser;
 
     // ハッシュから暗号化キーを復元
     let keyParam = null;
@@ -2307,11 +2378,12 @@ function checkAndHandleAutoJoinRoom() {
         keyParam = hashParams.get('key') || hashStr.replace(/^key=/, '');
     }
 
+    if (!/^[a-f0-9]{64}$/.test(keyParam || '')) { showToast('共有リンクの暗号化キーが正しくありません'); return false; }
     const tm = ensureTransferManager();
     if (keyParam) {
         tm.setCustomEncryptionKey(keyParam);
     }
-    tm.isGuestMode = true;
+    tm.isGuestMode = isGuestMode;
 
     // ログイン画面を強制スキップしてファイル転送画面へ直接遷移
     splashScreen?.classList.add('hidden');
@@ -2327,8 +2399,8 @@ function checkAndHandleAutoJoinRoom() {
     return true;
 }
 
-// スクリプト読み込み直後に判定
-checkAndHandleAutoJoinRoom();
+// Join after auth initialization so its first callback cannot tear the room down.
+let initialRoomHandled = false;
 
 tabNotes.onclick = openNotesView;
 
@@ -2356,6 +2428,7 @@ btnPin.onclick = () => {
     if (!activeNoteId || !currentNotes[activeNoteId] || !currentNotes[activeNoteId].id) return;
     const isPinned = !currentNotes[activeNoteId].pinned;
     currentNotes[activeNoteId].pinned = isPinned;
+    currentNotes[activeNoteId].updatedAt = Date.now();
     btnPin.classList.toggle('active', isPinned);
     saveLocalNote(currentNotes[activeNoteId]);
     renderList(searchInput.value);
@@ -2448,7 +2521,10 @@ window.addEventListener('keydown', e => {
 btnModalCancel.onclick = () => logoutModal.classList.add('hidden');
 btnModalConfirm.onclick = () => {
     logoutModal.classList.add('hidden');
-    signOut(auth);
+    finishAuthAttempt();
+    if (typeof chrome !== 'undefined' && chrome.storage?.session) chrome.storage.session.remove('pendingAuth').catch(() => {});
+    if (syncDebounceTimer && activeNoteId) flushPendingSave(activeNoteId);
+    signOut(auth).catch(error => showToast('ログアウトに失敗しました: ' + error.code));
 };
 
 // Discord風設定タブ切り替え
@@ -2460,6 +2536,7 @@ document.querySelectorAll('.settings-tab-btn').forEach(btn => {
         btn.classList.add('active');
         const tabName = btn.getAttribute('data-tab');
         document.getElementById(`tab-content-${tabName}`).classList.remove('hidden');
+        updateDevConsoleUI();
     };
 });
 
@@ -2497,7 +2574,7 @@ btnSettingsTrigger.onclick = () => {
         if (btnSwitch) {
             btnSwitch.classList.remove('hidden');
             btnSwitch.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">login</span> ログイン`;
-            btnSwitch.onclick = () => loginWithProvider(new GoogleAuthProvider());
+            btnSwitch.onclick = switchGoogleAccount;
         }
         if (settingsNavSystem) settingsNavSystem.classList.add('hidden');
         if (settingsNavAccount) settingsNavAccount.click();
@@ -2513,7 +2590,7 @@ btnSettingsTrigger.onclick = () => {
         if (btnSwitch) {
             btnSwitch.classList.remove('hidden');
             btnSwitch.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">sync_alt</span> 切り替え`;
-            btnSwitch.onclick = () => loginWithProvider(new GoogleAuthProvider());
+            btnSwitch.onclick = switchGoogleAccount;
         }
         if (settingsNavSystem) settingsNavSystem.classList.remove('hidden');
     }
@@ -2541,41 +2618,12 @@ btnSettingsLogoutAction.onclick = () => {
     logoutModal.classList.remove('hidden');
 };
 
-if (btnSettingsSwitchAction) {
-    btnSettingsSwitchAction.onclick = async () => {
-        settingsModal.classList.add('hidden');
-        try {
-            if (typeof chrome !== 'undefined' && chrome?.identity?.removeCachedAuthToken && chrome?.identity?.getAuthToken && !/edg/i.test(navigator.userAgent)) {
-                // キャッシュされているトークンを取得して安全に破棄（Edge環境ではスキップ）
-                try {
-                    await new Promise((resolve) => {
-                        chrome.identity.getAuthToken({ interactive: false }, (token) => {
-                            if (chrome.runtime.lastError || !token) {
-                                resolve();
-                                return;
-                            }
-                            chrome.identity.removeCachedAuthToken({ token }, () => {
-                                resolve();
-                            });
-                        });
-                    });
-                } catch (e) {}
-            }
-            await signOut(auth);
-            showToast("アカウントを切替中... Googleログイン画面を開きます");
-
-            // アプリのログイン画面で止まらず、そのままダイレクトにGoogleログイン（アカウント選択）を自動起動
-            setTimeout(() => {
-                const googleProvider = new GoogleAuthProvider();
-                googleProvider.setCustomParameters({ prompt: 'select_account' });
-                loginWithProvider(googleProvider);
-            }, 300);
-        } catch (err) {
-            console.error("Account switch error:", err);
-            showToast("切り替え準備に失敗しました: " + (err.message || ""));
-        }
-    };
+function switchGoogleAccount() {
+    settingsModal.classList.add('hidden');
+    // Keep the current account until a different sign-in actually succeeds.
+    return loginWithProvider(new GoogleAuthProvider(), { selectAccount: true });
 }
+if (btnSettingsSwitchAction) btnSettingsSwitchAction.onclick = switchGoogleAccount;
 
 // 自動更新検出機能 (起動時にバックグラウンドで version.json を無キャッシュチェック)
 async function checkForNewVersionAuto() {
@@ -2707,50 +2755,84 @@ if (statusBar) {
 }
 
 // リダイレクト認証結果のチェック（iOS PWA / Safari リダイレクト対応）
-getRedirectResult(auth).then(result => {
+if (location.protocol !== 'chrome-extension:') getRedirectResult(auth).then(result => {
     if (result && result.user) {
-        console.log("Redirect login successful:", result.user.email);
+        console.info("Redirect login successful");
     }
 }).catch(err => {
     console.error("Redirect Result Error:", err);
 });
 
-// Web認証ポップアップ（auth.html）からのメッセージ受信リスナー（Edge/Chrome拡張機能連携）
-async function handleExternalAuthSuccess(authData) {
-    if (!authData || authData.type !== 'FLICKMEMO_AUTH_SUCCESS') return;
-    try {
-        const { googleIdToken, googleAccessToken } = authData;
-        if (googleIdToken || googleAccessToken) {
-            const credential = GoogleAuthProvider.credential(googleIdToken, googleAccessToken);
-            await setPersistence(auth, browserLocalPersistence);
-            await signInWithCredential(auth, credential);
-            showToast("Googleアカウントでログインしました");
-        }
-    } catch (err) {
-        console.error("signInWithCredential from auth error:", err);
-        showToast("ログイン処理に失敗しました: " + (err.message || ""));
-        authLoading?.classList.add('hidden');
-        authButtons?.classList.remove('hidden');
-    }
+let pendingAuth = null;
+let authPopup = null;
+let authWatchTimer = null;
+let authBusy = false;
+
+function finishAuthAttempt() {
+    clearInterval(authWatchTimer);
+    authWatchTimer = null;
+    pendingAuth = null;
+    authBusy = false;
+    authLoading?.classList.add('hidden');
+    authButtons?.classList.remove('hidden');
 }
 
-window.addEventListener('message', (event) => {
-    if (event.data && event.data.type === 'FLICKMEMO_AUTH_SUCCESS') {
-        handleExternalAuthSuccess(event.data);
-    }
+async function handleExternalAuthSuccess(data) {
+    if (!validAuthResponse(data, pendingAuth)) return false;
+    pendingAuth = null; // Consume before awaiting anything; reject duplicates/replays.
+    clearInterval(authWatchTimer);
+    await chrome.storage.session.remove('pendingAuth');
+    try {
+        const credential = GoogleAuthProvider.credential(data.googleIdToken, data.googleAccessToken);
+        await setPersistence(auth, browserLocalPersistence);
+        await signInWithCredential(auth, credential);
+        showToast('Googleアカウントでログインしました');
+        return true;
+    } catch (error) {
+        showToast('ログイン処理に失敗しました: ' + (error.code || '再試行してください'));
+        return false;
+    } finally { finishAuthAttempt(); }
+}
+
+window.addEventListener('message', event => {
+    if (event.origin !== AUTH_ORIGIN || !authPopup || event.source !== authPopup) return;
+    handleExternalAuthSuccess(event.data).catch(handleSyncError);
 });
 
-// 拡張機能内部メッセージ（chrome.runtime.onMessage / onMessageExternal）対応
-if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
-    chrome.runtime.onMessage.addListener((message) => {
-        if (message && message.type === 'FLICKMEMO_AUTH_SUCCESS') {
-            handleExternalAuthSuccess(message);
-        }
+if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        if (sender.id !== chrome.runtime.id || sender.tab) return;
+        handleExternalAuthSuccess(message).then(received => sendResponse({ received })).catch(() => sendResponse({ received: false }));
+        return true;
     });
 }
 
+async function openExtensionAuth() {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    pendingAuth = { extensionId: chrome.runtime.id,
+        state: Array.from(bytes, value => value.toString(16).padStart(2, '0')).join(''), createdAt: Date.now() };
+    // Open synchronously within the button gesture, before storage awaits.
+    const url = new URL('/auth.html', AUTH_ORIGIN);
+    url.search = new URLSearchParams({ extension_id: pendingAuth.extensionId,
+        state: pendingAuth.state, created_at: String(pendingAuth.createdAt) });
+    authPopup = window.open(url.href, 'flickmemo_auth', 'width=500,height=620');
+    await chrome.storage.session.set({ pendingAuth });
+    if (!authPopup) await chrome.tabs.create({ url: url.href });
+    authWatchTimer = setInterval(() => {
+        if (!pendingAuth) return;
+        if ((authPopup && authPopup.closed) || Date.now() - pendingAuth.createdAt >= AUTH_TTL_MS) {
+            chrome.storage.session.remove('pendingAuth').catch(() => {});
+            finishAuthAttempt();
+            showToast('ログインを中止しました。もう一度お試しください');
+        }
+    }, 1000);
+}
+
 // 認証処理（Webアプリ / iOS PWA / Chrome・Edge拡張機能 自動対応）
-async function loginWithProvider(provider) {
+async function loginWithProvider(provider, { selectAccount = false } = {}) {
+    if (authBusy) return;
+    authBusy = true;
+    if (syncDebounceTimer && activeNoteId) flushPendingSave(activeNoteId);
     try {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
@@ -2769,7 +2851,7 @@ async function loginWithProvider(provider) {
         // ── 拡張機能（サイドパネル）環境: Chrome & Microsoft Edge 対応 ────────
         if (isExtension) {
             // Chrome かつ chrome.identity.getAuthToken が利用可能な場合はまず試行
-            if (!isEdge && chrome?.identity?.getAuthToken) {
+            if (!selectAccount && !isEdge && chrome?.identity?.getAuthToken) {
                 try {
                     await new Promise((resolve, reject) => {
                         chrome.identity.getAuthToken({ interactive: false }, (existingToken) => {
@@ -2802,6 +2884,7 @@ async function loginWithProvider(provider) {
                             }
                         });
                     });
+                    finishAuthAttempt();
                     return;
                 } catch (chromeAuthErr) {
                     console.warn("chrome.identity.getAuthToken fallback to web popup:", chromeAuthErr);
@@ -2809,25 +2892,7 @@ async function loginWithProvider(provider) {
             }
 
             // Microsoft Edge 拡張機能 または Chrome フォールバック: Web認証ポップアップ (auth.html) を開く
-            const webAuthUrl = 'https://flickmemo-qwe.web.app/auth.html';
-            const popupWidth = 500;
-            const popupHeight = 620;
-            const left = Math.max(0, Math.round((window.screen.width - popupWidth) / 2));
-            const top = Math.max(0, Math.round((window.screen.height - popupHeight) / 2));
-            const authWin = window.open(
-                webAuthUrl,
-                'flickmemo_auth',
-                `width=${popupWidth},height=${popupHeight},top=${top},left=${left},menubar=no,toolbar=no,location=yes,status=no`
-            );
-
-            if (!authWin) {
-                if (chrome?.tabs?.create) {
-                    chrome.tabs.create({ url: webAuthUrl });
-                    showToast("認証タブを開きました。ログインを完了してください");
-                } else {
-                    throw new Error("認証ウィンドウがブロックされました。ポップアップを許可してください。");
-                }
-            }
+            await openExtensionAuth();
             return;
         } else if (isIOS || isStandalone) {
             // iOS Safari / iOS PWA: リダイレクト方式
@@ -2842,6 +2907,7 @@ async function loginWithProvider(provider) {
             }
             try {
                 await signInWithPopup(auth, provider);
+                finishAuthAttempt();
             } catch (popupErr) {
                 if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/operation-not-supported-in-this-environment') {
                     console.warn("Popup blocked. Falling back to signInWithRedirect...");
@@ -2852,7 +2918,8 @@ async function loginWithProvider(provider) {
             }
         }
     } catch (error) {
-        console.error("Login Error:", error);
+        finishAuthAttempt();
+        console.error("Login Error:", error.code || error.message);
         let msg = error.message || "認証に失敗しました";
         if (error.code === 'auth/popup-closed-by-user') {
             msg = "ログイン画面が閉じられました。";
@@ -2863,7 +2930,7 @@ async function loginWithProvider(provider) {
         } else if (error.message?.includes('OAuth2 not granted or revoked') || error.message?.includes('Not granted')) {
             msg = "Googleアカウントへのアクセスが拒否されました。Chromeにログイン中のGoogleアカウントを確認してください。";
         }
-        alert("ログインに失敗しました: " + msg);
+        showToast('ログインに失敗しました: ' + msg);
         authLoading.classList.add('hidden');
         authButtons.classList.remove('hidden');
     }
@@ -2912,18 +2979,24 @@ if (toggleSessionE2ee) {
 }
 
 document.getElementById('btn-google').onclick = () => loginWithProvider(new GoogleAuthProvider());
+document.getElementById('btn-google-other').onclick = () => loginWithProvider(new GoogleAuthProvider(), { selectAccount: true });
 
 onAuthStateChanged(auth, async user => {
+    const generation = ++authGeneration;
+    if (currentDbRef) { off(currentDbRef); currentDbRef = null; }
+    // Stop using the previous UID's presence paths before starting the new one.
+    if (transferManager && currentUserId !== (user?.uid || null)) transferManager.stopDevicePresence();
+    if (user) finishAuthAttempt();
     splashScreen.classList.add('hidden');
-    const hasRoomParam = new URLSearchParams(window.location.search).has('room');
+    const hasRoomParam = /^rm_[A-Za-z0-9_-]{32}$/.test(new URLSearchParams(window.location.search).get('room') || '');
 
     if (user) {
         isGuestMode = false;
         if (transferManager) transferManager.isGuestMode = false;
-        if (currentUserId !== null && currentUserId !== user.uid) {
-            await clearLocalData();
-        }
+        await clearLocalData();
         currentUserId = user.uid;
+        await loadLocalNotes();
+        if (generation !== authGeneration) return;
 
         authContainer.classList.add('hidden');
         appContainer.classList.remove('hidden');
@@ -2949,16 +3022,20 @@ onAuthStateChanged(auth, async user => {
         if (currentDbRef) {
             off(currentDbRef);
         }
+        // Replay only this account's durable pending edits before attaching the snapshot listener.
+        for (const id of pendingDeleteIds) syncDeleteNote(id);
+        for (const id of pendingLocalIds) syncSaveNote(currentNotes[id]);
         currentDbRef = ref(db, `users/${user.uid}/notes`);
         onValue(currentDbRef, snapshot => {
+            if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
             try {
                 const remoteNotes = snapshot.val() || {};
                 let hasChanges = false;
 
                 Object.keys(currentNotes).forEach(id => {
-                    if (!remoteNotes[id]) {
+                    if (!remoteNotes[id] && !pendingLocalIds.has(id)) {
                         delete currentNotes[id];
-                        deleteLocalNote(id);
+                        deleteLocalNote(id, false);
                         hasChanges = true;
                         if (activeNoteId === id) {
                             activeNoteId = null;
@@ -2977,12 +3054,14 @@ onAuthStateChanged(auth, async user => {
 
                 let activeNoteChanged = false;
 
-                Object.values(remoteNotes).forEach(n => {
+                Object.entries(remoteNotes).forEach(([id, n]) => {
+                    if (!validNote(n, id) || pendingDeleteIds.has(id)) return;
                     const local = currentNotes[n.id];
+                    if (pendingLocalIds.has(n.id) && local && JSON.stringify(local) !== JSON.stringify(n)) return;
                     if (!local || (n.updatedAt || 0) >= (local.updatedAt || 0)) {
                         if (!local || JSON.stringify(local) !== JSON.stringify(n)) {
                             currentNotes[n.id] = n;
-                            saveLocalNote(n);
+                            saveLocalNote(n, false);
                             hasChanges = true;
                             if (activeNoteId === n.id) {
                                 activeNoteChanged = true;
@@ -3027,18 +3106,16 @@ onAuthStateChanged(auth, async user => {
             console.error("Sync Error:", error);
             setStatus('offline', '同期オフライン');
         });
-        const tm = ensureTransferManager();
-        tm.startDevicePresence();
+        // Presence starts only when file transfer is opened.
+        if (currentTab === 'transfer') ensureTransferManager().startDevicePresence();
     } else {
-        if (transferManager) {
-            transferManager.stopDevicePresence();
-        }
         await clearLocalData();
         if (currentDbRef) {
             off(currentDbRef);
             currentDbRef = null;
         }
         currentUserId = null;
+        if (generation !== authGeneration) return;
 
         // 共有リンクアクセス時は未ログインでもログイン画面を表示せずゲストとして接続維持
         if (hasRoomParam) {
@@ -3056,6 +3133,10 @@ onAuthStateChanged(auth, async user => {
             authLoading.classList.add('hidden');
             authButtons.classList.remove('hidden');
         }
+    }
+    if (generation === authGeneration && !initialRoomHandled) {
+        initialRoomHandled = true;
+        checkAndHandleAutoJoinRoom();
     }
 });
 
