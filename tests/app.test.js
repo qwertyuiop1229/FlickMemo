@@ -6,6 +6,8 @@ import { webcrypto } from 'node:crypto';
 import { JSDOM } from 'jsdom';
 import { IDBFactory } from 'fake-indexeddb';
 import { NoteStore } from '../noteStore.js';
+import * as archiveNames from '../archiveNames.js';
+import * as clipboardFiles from '../clipboardFiles.js';
 import * as noteData from '../noteData.js';
 import * as protocol from '../authProtocol.js';
 
@@ -52,7 +54,7 @@ async function setup({ edge = false, extension = false } = {}) {
     const factory = new IDBFactory();
     const dependencies = {
         'firebase/app': { initializeApp: () => ({}) }, 'firebase/auth': authApi, 'firebase/database': dbApi,
-        './authProtocol.js': protocol, './noteData.js': noteData,
+        './archiveNames.js': archiveNames, './clipboardFiles.js': clipboardFiles, './authProtocol.js': protocol, './noteData.js': noteData,
         './noteStore.js': { NoteStore: class extends NoteStore { constructor() { super(factory); } } },
         './fileTransfer.js': { FileTransferManager: class { stopDevicePresence() {} } }
     };

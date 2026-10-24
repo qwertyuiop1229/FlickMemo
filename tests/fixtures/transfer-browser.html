@@ -1,0 +1,60 @@
+<!doctype html><html lang="ja"><meta charset="utf-8"><title>FlickMemo transfer browser verification</title>
+<style>body{font:16px system-ui;padding:2rem;max-width:900px;background:#f3efe7;color:#252622}li{padding:.4rem}button{font:inherit;padding:.7rem}</style>
+<h1>FlickMemo: actual WebRTC transfer verification</h1><p>Local test data only. No Firebase connection or system clipboard writes.</p>
+<button id="run">Run real DataChannel tests</button><ol id="results"></ol><p id="status">Ready</p>
+<script type="module">
+import { FileTransferManager } from '/fileTransfer.js';
+import { normalizeImageToPng } from '/clipboardFiles.js';
+const result = document.querySelector('#results'), status = document.querySelector('#status');
+function check(condition, message) { if (!condition) throw new Error(message); }
+function report(text) { const li = document.createElement('li'); li.textContent = text; result.append(li); }
+async function makePair(room) {
+  const files = [], errors = [];
+  const a = new FileTransferManager({}, {}, (s,e) => { if(s==='channel_error')errors.push(e); });
+  const b = new FileTransferManager({}, {}, (s,e) => { if(s==='channel_error')errors.push(e); }, blob => files.push(blob));
+  if(room) { a.setCustomEncryptionKey('a'.repeat(64)); b.setCustomEncryptionKey('a'.repeat(64)); }
+  const original = b.decryptChunk.bind(b);
+  b.decryptChunk = async (...args) => { await new Promise(r=>setTimeout(r,20)); return original(...args); };
+  const pa = a.peerConnection = new RTCPeerConnection({iceServers:[]});
+  const pb = b.peerConnection = new RTCPeerConnection({iceServers:[]});
+  const ca=[],cb=[];
+  pa.onicecandidate = e => { if(e.candidate) { if(pb.remoteDescription)pb.addIceCandidate(e.candidate).catch(e=>errors.push(e)); else cb.push(e.candidate); } };
+  pb.onicecandidate = e => { if(e.candidate) { if(pa.remoteDescription)pa.addIceCandidate(e.candidate).catch(e=>errors.push(e)); else ca.push(e.candidate); } };
+  const incoming = new Promise(resolve=>{ pb.ondatachannel=e=>{b.dataChannel=e.channel;b.setupDataChannelHandlers(e.channel);resolve(b._readyPromise);} });
+  a._isInitiator=true;
+  a.dataChannel=pa.createDataChannel('flickmemo_transfer',{ordered:true});a.setupDataChannelHandlers(a.dataChannel);
+  await pa.setLocalDescription(await pa.createOffer());await pb.setRemoteDescription(pa.localDescription);
+  for(const c of cb)await pb.addIceCandidate(c);
+  await pb.setLocalDescription(await pb.createAnswer());await pa.setRemoteDescription(pb.localDescription);
+  for(const c of ca)await pa.addIceCandidate(c);
+  await Promise.all([a._readyPromise,incoming]);
+  return {a,b,files,errors,close(){a.cleanupPeerConnection();b.cleanupPeerConnection();}};
+}
+document.querySelector('#run').onclick=async()=>{
+  document.querySelector('#run').disabled=true; status.textContent='Running';
+  try {
+    for(const room of [false,true]) {
+      const peers=await makePair(room);
+      try {
+        for(const size of [0,1,32768,32769,1048576]) {
+          const data=Uint8Array.from({length:size},(_,i)=>i%251);
+          await peers.a.sendFileP2P(new File([data],`test-${size}.bin`));
+          const actual=new Uint8Array(await peers.files.at(-1).arrayBuffer());
+          check(actual.length===size && actual.every((v,i)=>v===data[i]),'Byte mismatch');
+          report(`PASS ${room?'shared link':'account session'}: ${size} exact bytes, receiver ACK confirmed`);
+        }
+        const canvas=document.createElement('canvas');canvas.width=48;canvas.height=32;
+        canvas.getContext('2d').fillRect(0,0,48,32);
+        const png=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+        await peers.a.sendFileP2P(new File([png],'image.png',{type:'image/png'}));
+        const converted=await normalizeImageToPng(peers.files.at(-1));
+        const bitmap=await createImageBitmap(converted);
+        check(bitmap.width===48 && bitmap.height===32,'Invalid received PNG');bitmap.close();
+        report(`PASS ${room?'shared link':'account session'}: encrypted PNG transfer + actual decoder + canvas conversion`);
+        check(peers.errors.length===0,peers.errors.map(e=>e.message).join('; '));
+      } finally {peers.close();}
+    }
+    status.textContent='PASS: 12 real WebRTC and PNG checks';document.body.dataset.result='passed';
+  } catch(error) {status.textContent='FAIL: '+error.message;document.body.dataset.result='failed';}
+};
+</script></html>

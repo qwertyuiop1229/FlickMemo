@@ -2,6 +2,10 @@ import { getDatabase, ref, set, push, onValue, off, remove, get, onDisconnect } 
 
 export const MAX_RECEIVE_BYTES = 64 * 1024 * 1024;
 const MAX_QUEUED_BYTES = 4 * 1024 * 1024;
+export const TRANSFER_PROTOCOL_VERSION = 2;
+const CHUNK_SIZE = 32768;
+const SEND_WINDOW_BYTES = 256 * 1024;
+const UPDATE_MESSAGE = '送受信の方式が一致しません。両端を最新版に更新してください。Chrome拡張は最新ZIPへの入れ替えが必要です';
 
 export class FileTransferManager {
     constructor(auth, db, onStatusUpdate, onFileReceived, onProgress) {
@@ -40,6 +44,9 @@ export class FileTransferManager {
         this._receiveGeneration = 0;
         this._sessionKey = null;
         this._isInitiator = false;
+        this._protocolReady = false;
+        this._chunkSize = CHUNK_SIZE;
+        this._outgoing = null;
     }
 
     setCustomEncryptionKey(keyString) {
@@ -71,38 +78,40 @@ export class FileTransferManager {
     }
 
     async generateEncryptionKey() {
-        if (!this.cryptoKey) {
-            const rawKey = this.customKeyString || this._sessionKey;
-            if (!rawKey) throw new Error('暗号化セッションが準備できていません');
-            const keyMaterial = new TextEncoder().encode(rawKey);
-            const hash = await window.crypto.subtle.digest("SHA-256", keyMaterial);
-            this.cryptoKey = await window.crypto.subtle.importKey(
-                "raw",
-                hash,
-                { name: "AES-GCM" },
-                false,
-                ["encrypt", "decrypt"]
-            );
+        const rawKey = this.customKeyString || this._sessionKey;
+        const generation = this._receiveGeneration;
+        if (!rawKey) throw new Error('暗号化セッションが準備できていません');
+        if (this.cryptoKey) return this.cryptoKey;
+        const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(rawKey));
+        const key = await crypto.subtle.importKey('raw', hash, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+        if (generation !== this._receiveGeneration || rawKey !== (this.customKeyString || this._sessionKey)) {
+            throw new Error('暗号化中に接続または暗号鍵が変更されました');
         }
-        return this.cryptoKey;
+        this.cryptoKey = key;
+        return key;
     }
 
-    async encryptChunk(buffer) {
-        if (!this.isE2EEEnabled) return buffer;
+    async encryptChunk(buffer, context = '') {
+        // The caller freezes encryption policy in the file header. A UI toggle
+        // during a send must never turn encrypted chunks into plaintext.
         const key = await this.generateEncryptionKey();
-        const iv = window.crypto.getRandomValues(new Uint8Array(12));
-        const encrypted = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, buffer);
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv,
+            additionalData: new TextEncoder().encode(context) }, key, buffer);
         const combined = new Uint8Array(iv.byteLength + encrypted.byteLength);
-        combined.set(iv, 0);
-        combined.set(new Uint8Array(encrypted), iv.byteLength);
+        combined.set(iv); combined.set(new Uint8Array(encrypted), iv.byteLength);
         return combined.buffer;
     }
 
-    async decryptChunk(buffer) {
+    async decryptChunk(buffer, context = '') {
         if (buffer.byteLength < 28) throw new Error('暗号化データが不正です');
         const key = await this.generateEncryptionKey();
-        const iv = buffer.slice(0, 12);
-        return window.crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(iv) }, key, buffer.slice(12));
+        try {
+            return await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(buffer, 0, 12),
+                additionalData: new TextEncoder().encode(context) }, key, buffer.slice(12));
+        } catch {
+            throw new Error('ファイルを復号できません。両端を更新し、共有リンクを作り直して送り直してください（壊れたデータは保存していません）');
+        }
     }
 
     async signRoomData(data, basePath) {
@@ -303,7 +312,14 @@ export class FileTransferManager {
         }
     }
 
-    cleanupPeerConnection() {
+    cleanupPeerConnection(error = new Error('転送中に接続が切断されました')) {
+        clearTimeout(this._handshakeTimer);
+        clearTimeout(this._receiveTimer);
+        clearTimeout(this._connectionTimer);
+        this._rejectReady?.(error);
+        this._rejectReady = null;
+        this._protocolReady = false;
+        this._outgoing?.fail(error);
         ++this._receiveGeneration;
         this._sessionKey = null;
         this.cryptoKey = null;
@@ -390,6 +406,12 @@ export class FileTransferManager {
 
         const config = { iceServers, iceTransportPolicy };
         const pc = new RTCPeerConnection(config);
+        this._connectionTimer = setTimeout(() => {
+            if (this.peerConnection !== pc) return;
+            const error = new Error('相手端末に接続できませんでした。両端を開いた状態で再接続してください');
+            this.cleanupPeerConnection(error);
+            this.onStatusUpdate('channel_error', error);
+        }, 30000);
 
         pc.onicecandidate = async (event) => {
             if (this.peerConnection === pc && event.candidate && targetDeviceId && basePath) {
@@ -404,7 +426,9 @@ export class FileTransferManager {
 
         this._disconnectGraceTimer = null;
         pc.oniceconnectionstatechange = () => {
+            if (this.peerConnection !== pc) return;
             if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                clearTimeout(this._connectionTimer);
                 if (this._disconnectGraceTimer) {
                     clearTimeout(this._disconnectGraceTimer);
                     this._disconnectGraceTimer = null;
@@ -418,6 +442,7 @@ export class FileTransferManager {
                         this._disconnectGraceTimer = null;
                         if (this.peerConnection && (this.peerConnection.iceConnectionState === 'disconnected' || this.peerConnection.iceConnectionState === 'failed')) {
                             this.cleanupSignalingData(basePath, targetDeviceId);
+                            this.cleanupPeerConnection();
                             this.onStatusUpdate('p2p_disconnected', { targetDeviceId });
                         }
                     }, 7000);
@@ -428,6 +453,7 @@ export class FileTransferManager {
                     this._disconnectGraceTimer = null;
                 }
                 this.cleanupSignalingData(basePath, targetDeviceId);
+                this.cleanupPeerConnection();
                 this.onStatusUpdate('p2p_disconnected', { targetDeviceId });
             }
         };
@@ -593,102 +619,156 @@ export class FileTransferManager {
         this._candidateUnsubscribers.push(candUnsub);
     }
 
+    get isSending() { return !!this._outgoing; }
+    get isReady() { return this._protocolReady; }
+
+    async keyProof(nonce) {
+        const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(this.customKeyString),
+            { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+        const bytes = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`flickmemo-v2:${nonce}`));
+        return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
+    }
+
     setupDataChannelHandlers(dc) {
         dc.binaryType = 'arraybuffer';
-
-        dc.onopen = () => {
+        this._protocolReady = false;
+        const handshake = { nonce: Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join(''),
+            sent: false, hello: false, acknowledged: false, keySent: false,
+            roomKey: this.customKeyString, localChunkSize: CHUNK_SIZE };
+        this._readyPromise = new Promise((resolve, reject) => { this._resolveReady = resolve; this._rejectReady = reject; });
+        this._readyPromise.catch(() => {});
+        const fail = error => {
             if (this.dataChannel !== dc) return;
-            if (this.customKeyString) {
-                this.onStatusUpdate('channel_open');
-            } else if (this._isInitiator) {
-                this._sessionKey = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
-                dc.send(JSON.stringify({ type: 'SESSION_KEY', key: this._sessionKey }));
+            // Tell the sender it failed; never label corrupted bytes as received.
+            try { dc.send(JSON.stringify({ type: 'transfer_error', id: this.incomingFileInfo?.id, message: error.message })); } catch {}
+            this.cleanupPeerConnection(error);
+            this.onStatusUpdate('channel_error', error);
+            this.onStatusUpdate('remote_transfer_lock', false);
+        };
+        const ready = () => {
+            if (this.dataChannel !== dc || this._protocolReady) return;
+            this._protocolReady = true;
+            clearTimeout(this._handshakeTimer);
+            this._resolveReady?.();
+            this._rejectReady = null;
+            this.onStatusUpdate('channel_open');
+        };
+        const receiveProgress = () => {
+            clearTimeout(this._receiveTimer);
+            this._receiveTimer = setTimeout(() => fail(new Error('受信が途切れました。ファイルを送り直してください')), 30000);
+        };
+        const start = () => {
+            if (this.dataChannel !== dc || handshake.sent || dc.readyState !== 'open') return;
+            const maximum = this.peerConnection?.sctp?.maxMessageSize;
+            handshake.localChunkSize = Number.isFinite(maximum) && maximum > 0 ? Math.min(CHUNK_SIZE, Math.floor(maximum - 28)) : CHUNK_SIZE;
+            if (handshake.localChunkSize < 4096) { fail(new Error('このブラウザの転送サイズに対応していません。ブラウザを更新してください')); return; }
+            handshake.sent = true;
+            try { dc.send(JSON.stringify({ type: 'HELLO', protocol: TRANSFER_PROTOCOL_VERSION,
+                nonce: handshake.nonce, mode: handshake.roomKey ? 'room' : 'session', chunkSize: handshake.localChunkSize })); }
+            catch (error) { fail(error); return; }
+            this._handshakeTimer = setTimeout(() => fail(new Error(UPDATE_MESSAGE)), 10000);
+        };
+        const maybeReady = () => {
+            if (!handshake.hello || !handshake.acknowledged) return;
+            if (handshake.roomKey) { ready(); return; }
+            if (this._isInitiator && !handshake.keySent) {
+                handshake.keySent = true;
+                this._sessionKey = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join('');
+                dc.send(JSON.stringify({ type: 'SESSION_KEY', key: this._sessionKey, protocol: TRANSFER_PROTOCOL_VERSION }));
             }
         };
-
-        dc.onerror = (err) => {
-            console.warn("DataChannel error:", err);
-            this.onStatusUpdate('channel_error', err);
-        };
-
+        dc.onopen = start;
+        if (dc.readyState === 'open') queueMicrotask(start);
+        dc.onerror = () => fail(new Error('ファイル転送チャネルでエラーが発生しました'));
         dc.onmessage = event => {
             if (this.dataChannel !== dc) return;
             const generation = this._receiveGeneration;
             const data = event.data;
-            const queuedBytes = typeof data === 'string' ? data.length * 2 : (data.byteLength ?? data.size ?? 0);
+            const queuedBytes = typeof data === 'string' ? data.length * 2 : (data?.byteLength ?? data?.size ?? 0);
             this._queuedReceiveBytes += queuedBytes;
-            if (this._queuedReceiveBytes > MAX_QUEUED_BYTES) {
-                this.cleanupPeerConnection();
-                this.onStatusUpdate('channel_error', new Error('受信待ちデータが上限を超えました'));
-                return;
-            }
-            // Serialize control messages as well as chunks: a second header must
-            // never reset the first file while its last chunk is being decrypted.
+            if (this._queuedReceiveBytes > MAX_QUEUED_BYTES) { fail(new Error('受信待ちデータが上限を超えました')); return; }
             this._receiveChain = this._receiveChain.then(async () => {
                 if (generation !== this._receiveGeneration || this.dataChannel !== dc) return;
                 try {
                     if (typeof data === 'string') {
                         if (data.length > 8192) throw new Error('制御データが大きすぎます');
                         const meta = JSON.parse(data);
-                        if (meta.type === 'SESSION_KEY') {
-                            if (this.customKeyString || this._isInitiator || this._sessionKey || !/^[a-f0-9]{64}$/.test(meta.key || '')) throw new Error('暗号化セッション情報が不正です');
-                            this._sessionKey = meta.key;
-                            this.cryptoKey = null;
-                            dc.send(JSON.stringify({ type: 'SESSION_READY' }));
-                            this.onStatusUpdate('channel_open');
+                        if (!meta || typeof meta.type !== 'string') throw new Error('制御データが不正です');
+                        if (meta.type === 'HELLO') {
+                            start();
+                            if (handshake.hello || meta.protocol !== TRANSFER_PROTOCOL_VERSION ||
+                                !/^[a-f0-9]{32}$/.test(meta.nonce || '') || meta.mode !== (handshake.roomKey ? 'room' : 'session') || !Number.isSafeInteger(meta.chunkSize) || meta.chunkSize < 4096 || meta.chunkSize > CHUNK_SIZE) throw new Error(UPDATE_MESSAGE);
+                            handshake.hello = true;
+                            this._chunkSize = Math.min(handshake.localChunkSize, meta.chunkSize);
+                            const proof = handshake.roomKey ? await this.keyProof(meta.nonce) : null;
+                            if (generation !== this._receiveGeneration) return;
+                            dc.send(JSON.stringify({ type: 'HELLO_ACK', protocol: TRANSFER_PROTOCOL_VERSION, nonce: meta.nonce, proof }));
+                            maybeReady();
+                        } else if (meta.type === 'HELLO_ACK') {
+                            if (meta.protocol !== TRANSFER_PROTOCOL_VERSION || meta.nonce !== handshake.nonce) throw new Error(UPDATE_MESSAGE);
+                            if (handshake.roomKey && meta.proof !== await this.keyProof(handshake.nonce)) throw new Error('共有リンクの暗号鍵が一致しません。リンクを作り直して再接続してください');
+                            if (generation !== this._receiveGeneration) return;
+                            handshake.acknowledged = true; maybeReady();
+                        } else if (meta.type === 'SESSION_KEY') {
+                            if (!handshake.hello || !handshake.acknowledged || handshake.roomKey || this._isInitiator || this._sessionKey ||
+                                !/^[a-f0-9]{64}$/.test(meta.key || '')) throw new Error(UPDATE_MESSAGE);
+                            this._sessionKey = meta.key; this.cryptoKey = null;
+                            dc.send(JSON.stringify({ type: 'SESSION_READY' })); ready();
                         } else if (meta.type === 'SESSION_READY') {
-                            if (!this._isInitiator || !this._sessionKey) throw new Error('暗号化セッションが不正です');
-                            this.onStatusUpdate('channel_open');
-                        } else if (meta.type === 'file_header') {
-                            if (this.incomingFileInfo || !Number.isSafeInteger(meta.size) || meta.size < 0 || meta.size > MAX_RECEIVE_BYTES ||
-                                typeof meta.name !== 'string' || meta.name.length > 255 || typeof meta.encrypted !== 'boolean') {
-                                throw new Error('受信ファイルの情報が不正、または64MiBの上限を超えています');
-                            }
-                            if (this.currentRoomId && this.isE2EEEnabled && !meta.encrypted) throw new Error('暗号化されていない受信を拒否しました');
-                            this.resetReceiveBuffer();
-                            this.incomingFileInfo = meta;
-                            this.onProgress(0, meta.size, meta.name, 'rec');
-                        } else if (meta.type === 'file_end') {
-                            const info = this.incomingFileInfo;
-                            if (!info || this.receivedSize !== info.size) throw new Error('ファイルの受信サイズが一致しません');
-                            const blob = new Blob(this.receiveBuffer, { type: typeof info.mime === 'string' ? info.mime : 'application/octet-stream' });
-                            this.resetReceiveBuffer();
-                            this.onFileReceived(blob, this.sanitizeFilename(info.name), info.mode || 'WAN_P2P');
-                            this.onStatusUpdate('remote_transfer_lock', false);
-                        } else if (meta.type === 'TRANSFER_LOCK' || meta.type === 'TRANSFER_UNLOCK') {
-                            this.onStatusUpdate('remote_transfer_lock', meta.type === 'TRANSFER_LOCK');
-                        } else if (meta.type === 'EXPLICIT_DISCONNECT') {
-                            this.disconnect();
+                            if (!handshake.keySent || !this._sessionKey) throw new Error(UPDATE_MESSAGE);
+                            ready();
+                        } else if (meta.type === 'transfer_error') {
+                            throw new Error(typeof meta.message === 'string' ? meta.message.slice(0, 300) : '相手側で受信に失敗しました');
+                        } else if (meta.type === 'chunk_received' || meta.type === 'file_received') {
+                            const outgoing = this._outgoing;
+                            if (!outgoing || meta.id !== outgoing.id) return;
+                            if (meta.type === 'chunk_received') outgoing.ack(meta.bytes);
+                            else outgoing.complete(meta.bytes);
+                        } else {
+                            if (!this._protocolReady) throw new Error(UPDATE_MESSAGE);
+                            if (meta.type === 'file_header') {
+                                if (this.incomingFileInfo || !/^[a-f0-9]{32}$/.test(meta.id || '') || !Number.isSafeInteger(meta.size) || meta.size < 0 || meta.size > MAX_RECEIVE_BYTES ||
+                                    typeof meta.name !== 'string' || meta.name.length > 255 || typeof meta.encrypted !== 'boolean' || meta.chunkSize !== this._chunkSize) throw new Error('受信情報が不正、または64MiBの上限を超えています');
+                                if (this.isE2EEEnabled && !meta.encrypted) throw new Error('暗号化されていない受信を拒否しました');
+                                this.resetReceiveBuffer(); this.incomingFileInfo = meta;
+                                receiveProgress();
+                                this.onProgress(0, meta.size, meta.name, 'rec');
+                            } else if (meta.type === 'file_end') {
+                                const info = this.incomingFileInfo;
+                                if (!info || meta.id !== info.id || this.receivedSize !== info.size) throw new Error('受信ファイルが不完全です');
+                                const blob = new Blob(this.receiveBuffer, { type: typeof info.mime === 'string' ? info.mime : 'application/octet-stream' });
+                                this.resetReceiveBuffer();
+                                clearTimeout(this._receiveTimer);
+                                await this.onFileReceived(blob, this.sanitizeFilename(info.name), info.mode || 'WAN_P2P');
+                                if (generation !== this._receiveGeneration) return;
+                                dc.send(JSON.stringify({ type: 'file_received', id: info.id, bytes: info.size }));
+                                this.onStatusUpdate('remote_transfer_lock', false);
+                            } else if (meta.type === 'TRANSFER_LOCK' || meta.type === 'TRANSFER_UNLOCK') {
+                                this.onStatusUpdate('remote_transfer_lock', meta.type === 'TRANSFER_LOCK');
+                            } else if (meta.type === 'EXPLICIT_DISCONNECT') this.disconnect();
                         }
                     } else {
                         const info = this.incomingFileInfo;
-                        if (!info || queuedBytes > 65536) throw new Error('予期しない受信データです');
+                        if (!this._protocolReady || !info || queuedBytes > (info?.chunkSize || CHUNK_SIZE) + 28) throw new Error('予期しない受信データです');
                         let buffer = data instanceof Blob ? await data.arrayBuffer() : data;
                         if (ArrayBuffer.isView(buffer)) buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
                         if (!(buffer instanceof ArrayBuffer)) throw new Error('受信形式が不正です');
-                        const payload = info.encrypted ? await this.decryptChunk(buffer) : buffer;
+                        const context = `${info.id}:${this.receivedSize}`;
+                        const payload = info.encrypted ? await this.decryptChunk(buffer, context) : buffer;
                         if (generation !== this._receiveGeneration) return;
-                        if (payload.byteLength !== Math.min(32768, info.size - this.receivedSize) || payload.byteLength === 0) {
-                            throw new Error('受信チャンクのサイズが不正です');
-                        }
-                        if (this.receivedSize + payload.byteLength > info.size) throw new Error('受信データが指定サイズを超えました');
-                        this.receiveBuffer.push(payload);
-                        this.receivedSize += payload.byteLength;
+                        if (payload.byteLength !== Math.min(info.chunkSize, info.size - this.receivedSize) || payload.byteLength === 0) throw new Error('受信チャンクのサイズが不正です');
+                        this.receiveBuffer.push(payload); this.receivedSize += payload.byteLength;
+                        receiveProgress();
+                        dc.send(JSON.stringify({ type: 'chunk_received', id: info.id, bytes: this.receivedSize }));
                         this.onProgress(this.receivedSize, info.size, info.name, 'rec');
                     }
-                } catch (error) {
-                    this.cleanupPeerConnection();
-                    this.onStatusUpdate('channel_error', error);
-                    this.onStatusUpdate('remote_transfer_lock', false);
-                } finally {
-                    if (generation === this._receiveGeneration) this._queuedReceiveBytes -= queuedBytes;
-                }
+                } catch (error) { fail(error); }
+                finally { if (generation === this._receiveGeneration) this._queuedReceiveBytes -= queuedBytes; }
             });
         };
-
         dc.onclose = () => {
-            this.onStatusUpdate('channel_close');
-            this.cleanupPeerConnection();
+            if (this.dataChannel !== dc) return;
+            this.cleanupPeerConnection(); this.onStatusUpdate('channel_close');
         };
     }
 
@@ -751,125 +831,82 @@ export class FileTransferManager {
         return 'WAN_P2P';
     }
 
-    async sendFileP2P(file, transferMode) {
+    async sendFileP2P(file) {
         const channel = this.dataChannel;
-        if (!channel || channel.readyState !== 'open') {
-            throw new Error("接続が確立されていません。送信先デバイスを選択または共有リンクで接続してください。");
-        }
-
-        if (file.size > MAX_RECEIVE_BYTES) throw new Error('省メモリのため1回の転送は64MiBまでです');
-        channel.send(JSON.stringify({ type: 'TRANSFER_LOCK' }));
-
+        if (!channel || channel.readyState !== 'open') throw new Error('送信先に接続してください');
+        await this._readyPromise;
+        if (!this._protocolReady || this.dataChannel !== channel) throw new Error(UPDATE_MESSAGE);
+        if (this._outgoing) throw new Error('別のファイルを送信中です');
+        if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_RECEIVE_BYTES) throw new Error('1回の転送は64MiBまでです');
+        const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+        const encrypted = !!this.isE2EEEnabled;
+        const chunkSize = this._chunkSize;
+        let sent = 0, acknowledged = 0, ended = false, failed = null, timer;
+        const waiters = new Set();
+        const wake = () => { for (const resolve of waiters) resolve(); waiters.clear(); };
+        let resolveComplete, rejectComplete;
+        const completion = new Promise((resolve, reject) => { resolveComplete = resolve; rejectComplete = reject; });
+        completion.catch(() => {});
+        const resetTimer = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => outgoing.fail(new Error('相手から受信確認がありません。両端の更新と接続を確認してください')), 30000);
+        };
+        const outgoing = {
+            id,
+            fail: error => { if (!failed) failed = error; clearTimeout(timer); rejectComplete(error); wake(); },
+            ack: bytes => {
+                if (!Number.isSafeInteger(bytes) || bytes < acknowledged || bytes > sent) { outgoing.fail(new Error('受信確認のサイズが不正です')); return; }
+                if (bytes > acknowledged) { acknowledged = bytes; resetTimer(); wake(); }
+            },
+            complete: bytes => {
+                if (!ended || bytes !== file.size || acknowledged !== sent) { outgoing.fail(new Error('受信完了の確認が不正です')); return; }
+                clearTimeout(timer); resolveComplete();
+            }
+        };
+        this._outgoing = outgoing; resetTimer();
+        const assertConnected = () => {
+            if (failed) throw failed;
+            if (this.dataChannel !== channel || channel.readyState !== 'open') throw new Error('転送中に接続が変更または切断されました');
+        };
         try {
-            const actualMode = await this.getConnectedTransportMode();
-            if (this.dataChannel !== channel || channel.readyState !== 'open') throw new Error('転送先の接続が変更されました');
-            const isEncrypted = !!this.isE2EEEnabled;
-
-            // ★ WebRTC DataChannel の規格上限 (max-message-size) に 100% 抵触しない安全チャンクサイズ
-            // 全ブラウザ (Chrome / Safari / Firefox / Edge) の SCTP 上限 (64KB / 256KB) を下回り、
-            // AES-GCM 暗号化オーバーヘッド (28バイト: IV 12B + Tag 16B) を含めても 65,535 バイト未満に完全保証
-            const CHUNK_SIZE = 32 * 1024; // 32,768 bytes
-
-            // バックプレッシャー制御の閾値 (DataChannel バッファ溢れ・強制切断の根本防止)
-            // OS / SCTP スタックのメモリ上限を超えないよう、512KB で待機、128KB で再開
-            const BUFFER_HIGH = 512 * 1024;
-            const BUFFER_LOW = 128 * 1024;
-
-            channel.bufferedAmountLowThreshold = BUFFER_LOW;
-
-            const header = {
-                type: 'file_header',
-                name: file.name,
-                size: file.size,
-                mime: file.type || 'application/octet-stream',
-                mode: actualMode,
-                encrypted: isEncrypted
-            };
-
-            if (this.dataChannel === channel && channel.readyState === 'open') {
-                channel.send(JSON.stringify(header));
-            } else {
-                throw new Error("転送開始前に接続が切断されました。");
+            const mode = await this.getConnectedTransportMode(); assertConnected();
+            this.onProgress(0, file.size, file.name, 'send');
+            channel.send(JSON.stringify({ type: 'TRANSFER_LOCK' }));
+            channel.send(JSON.stringify({ type: 'file_header', id, name: file.name, size: file.size,
+                mime: file.type || 'application/octet-stream', mode, encrypted, chunkSize }));
+            while (sent < file.size) {
+                while (sent - acknowledged >= SEND_WINDOW_BYTES) {
+                    assertConnected();
+                    await new Promise(resolve => waiters.add(resolve));
+                }
+                assertConnected();
+                const offset = sent;
+                const raw = await file.slice(offset, offset + chunkSize).arrayBuffer();
+                assertConnected();
+                if (raw.byteLength !== Math.min(chunkSize, file.size - sent)) throw new Error('送信元ファイルの読込みに失敗しました');
+                const payload = encrypted ? await this.encryptChunk(raw, `${id}:${offset}`) : raw;
+                assertConnected();
+                // Account before send, including synchronous test transports.
+                sent += raw.byteLength;
+                channel.send(payload);
+                this.onProgress(sent, file.size, file.name, 'send');
             }
-
-            // 0バイトファイルの場合はヘッダーと終了通知のみで即時完了
-            if (file.size === 0) {
-                this.onProgress(0, 0, file.name, 'send');
-                if (this.dataChannel === channel && channel.readyState === 'open') {
-                    channel.send(JSON.stringify({ type: 'file_end' }));
-                }
-                return actualMode;
+            ended = true;
+            channel.send(JSON.stringify({ type: 'file_end', id }));
+            await completion;
+            assertConnected();
+            return mode;
+        } catch (error) {
+            outgoing.fail(error);
+            if (this.dataChannel === channel) {
+                try { channel.send(JSON.stringify({ type: 'transfer_error', id, message: '送信を中止しました。送り直してください' })); } catch {}
+                this.cleanupPeerConnection();
+                this.onStatusUpdate('channel_error', error);
             }
-
-            let offset = 0;
-            const total = file.size;
-
-            while (offset < total) {
-                // 安全な接続オープンチェック
-                if (this.dataChannel !== channel || channel.readyState !== 'open') {
-                    throw new Error("転送中にP2P接続が切断されました。");
-                }
-
-                // 真のバックプレッシャー制御: バッファが過密になったら bufferedamountlow を確実に待機
-                if (channel.bufferedAmount > BUFFER_HIGH) {
-                    await new Promise((resolve, reject) => {
-                        let timer = null;
-                        const onLow = () => {
-                            if (timer) clearTimeout(timer);
-                            if (channel) {
-                                channel.removeEventListener('bufferedamountlow', onLow);
-                            }
-                            resolve();
-                        };
-                        channel.addEventListener('bufferedamountlow', onLow, { once: true });
-                        // 回線不通時のセーフティタイムアウト (15秒)
-                        timer = setTimeout(() => {
-                            if (channel) {
-                                channel.removeEventListener('bufferedamountlow', onLow);
-                            }
-                            reject(new Error('転送タイムアウト: 相手端末へのデータ送信が停滞しました'));
-                        }, 15000);
-                    });
-                }
-
-                // 切断の二重チェック
-                if (this.dataChannel !== channel || channel.readyState !== 'open') {
-                    throw new Error("転送中にP2P接続が切断されました。");
-                }
-
-                const slice = file.slice(offset, offset + CHUNK_SIZE);
-                const rawBuffer = await slice.arrayBuffer();
-
-                let chunkToSend = rawBuffer;
-                if (isEncrypted) {
-                    chunkToSend = await this.encryptChunk(rawBuffer);
-                }
-
-                if (this.dataChannel !== channel || channel.readyState !== 'open') {
-                    throw new Error("転送中にP2P接続が切断されました。");
-                }
-
-                try {
-                    channel.send(chunkToSend);
-                } catch (sendErr) {
-                    console.warn("Send chunk warning, retrying after drain:", sendErr);
-                    await new Promise(r => setTimeout(r, 50));
-                    if (this.dataChannel !== channel || channel.readyState !== 'open') {
-                        throw new Error("転送中にP2P接続が切断されました。");
-                    }
-                    channel.send(chunkToSend);
-                }
-
-                offset += rawBuffer.byteLength;
-                this.onProgress(offset, total, file.name, 'send');
-            }
-
-            // 終了通知 (安全送信)
-            if (this.dataChannel === channel && channel.readyState === 'open') {
-                channel.send(JSON.stringify({ type: 'file_end' }));
-            }
-            return actualMode;
+            throw error;
         } finally {
+            clearTimeout(timer); wake();
+            if (this._outgoing === outgoing) this._outgoing = null;
             if (this.dataChannel === channel) this.sendControlMessage({ type: 'TRANSFER_UNLOCK' });
         }
     }

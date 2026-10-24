@@ -1,3 +1,5 @@
+import { uniqueArchiveName } from './archiveNames.js';
+import { copyClipboardFile } from './clipboardFiles.js';
 import { validNote } from './noteData.js';
 import { NoteStore } from './noteStore.js';
 import { initializeApp } from "firebase/app";
@@ -34,7 +36,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.79";
+const APP_VERSION = "1.3.80";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1510,7 +1512,9 @@ function handleTransferStatus(event, data) {
             transferManager.connectToDevice(data.otherDeviceId, true).catch(error => showToast('接続に失敗しました: ' + error.message));
         }
     } else if (event === 'channel_error') {
-        showToast('ファイル転送エラー: ' + (data?.message || '接続を確認してください'));
+        showToast('ファイル転送エラー: ' + (data?.message || '接続を確認してください'), 10000);
+        if (transferStatusLabel) transferStatusLabel.textContent = '転送失敗';
+        clearTimeout(autoDismissProgressTimer);
         updateTransferSteps(false);
         setTransferUILock(false);
     } else if (event === 'channel_open') {
@@ -1530,15 +1534,14 @@ function handleTransferStatus(event, data) {
         setTransferUILock(false); // ★ 送信中UIロックを強制解除して操作不能を防止
         // 履歴は消さずに保持し、直前に受信した画像のプレビューや再ダウンロードを可能にする
     } else if (event === 'p2p_connected') {
-        showToast("デバイス間P2P接続が確立しました");
-        updateTransferSteps(true);
+        if (!transferManager?.isReady) showToast('通信に接続しました。送受信の互換性と暗号鍵を確認しています...');
     } else if (event === 'remote_transfer_lock') {
         const isLocked = !!data;
         if (transferLockBanner) {
             if (isLocked) transferLockBanner.classList.remove('hidden');
             else transferLockBanner.classList.add('hidden');
         }
-        if (btnStartSend) btnStartSend.disabled = isLocked;
+        if (btnStartSend) btnStartSend.disabled = isLocked || !!transferManager?.isSending;
     }
 }
 
@@ -1557,104 +1560,20 @@ function getFileIconEmoji(filename, type) {
 
 // クリップボードへ全形式（ZIP/PDF/画像/テキスト/バイナリ等）のファイルをコピーする共通関数
 async function copyFileToClipboard(fileOrBlob, filename = '') {
-    if (!fileOrBlob) return;
+    if (!fileOrBlob) return false;
     const name = filename || fileOrBlob.name || 'file';
-    const type = fileOrBlob.type || '';
-    const emoji = getFileIconEmoji(name, type);
-
-    // 1. 画像形式 (image/*) → ClipboardItem で PNG 形式としてコピー
-    if (type.startsWith('image/')) {
-        try {
-            let pngBlob = fileOrBlob;
-            if (type !== 'image/png') {
-                pngBlob = await new Promise((resolve) => {
-                    const img = new Image();
-                    const url = URL.createObjectURL(fileOrBlob);
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        canvas.width = img.naturalWidth || img.width;
-                        canvas.height = img.naturalHeight || img.height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0);
-                        canvas.toBlob((b) => {
-                            URL.revokeObjectURL(url);
-                            resolve(b || fileOrBlob);
-                        }, 'image/png');
-                    };
-                    img.onerror = () => {
-                        URL.revokeObjectURL(url);
-                        resolve(fileOrBlob);
-                    };
-                    img.src = url;
-                });
-            }
-            if (navigator.clipboard && navigator.clipboard.write) {
-                await navigator.clipboard.write([
-                    new ClipboardItem({ 'image/png': pngBlob })
-                ]);
-                showToast(`${emoji} 画像「${name}」をクリップボードにコピーしました`);
-                return true;
-            }
-        } catch (imgErr) {
-            console.warn("Direct image write failed, trying binary write:", imgErr);
-        }
-    }
-
-    // 2. ZIP, PDF, 動画, 音声, バイナリファイル等を含む全ファイル直接コピー (ClipboardItem)
-    if (navigator.clipboard && navigator.clipboard.write) {
-        try {
-            const mime = type || 'application/octet-stream';
-            const clipboardData = {};
-            clipboardData[mime] = fileOrBlob;
-            await navigator.clipboard.write([
-                new ClipboardItem(clipboardData)
-            ]);
-            showToast(`${emoji} ファイル「${name}」をクリップボードにコピーしました`);
-            return true;
-        } catch (itemErr) {
-            console.warn("ClipboardItem write failed, trying text/data fallback:", itemErr);
-        }
-    }
-
-    // 3. テキスト・コード・Markdown・JSON等 → text/plain としてテキスト内容をコピー
-    const isTextLike = type.startsWith('text/') ||
-        /\.(txt|md|json|js|ts|py|html|css|csv|xml|yaml|yml|log|sh|bat|c|cpp|h|java|kt|go|rs|sql)$/i.test(name);
-
-    if (isTextLike) {
-        try {
-            const text = await fileOrBlob.text();
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                await navigator.clipboard.writeText(text);
-                showToast(`📄 テキスト「${name}」をクリップボードにコピーしました`);
-                return true;
-            }
-        } catch (tErr) {}
-    }
-
-    // 4. 一般バイナリ・フォールバック (Data URL Base64 またはファイル名)
     try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            if (fileOrBlob.size <= 3 * 1024 * 1024) {
-                const reader = new FileReader();
-                reader.onload = async () => {
-                    try {
-                        await navigator.clipboard.writeText(reader.result);
-                        showToast(`${emoji} 「${name}」のデータ(Base64)をクリップボードにコピーしました`);
-                    } catch (e) {
-                        await navigator.clipboard.writeText(name);
-                        showToast(`ファイル名「${name}」をコピーしました`);
-                    }
-                };
-                reader.readAsDataURL(fileOrBlob);
-                return true;
-            } else {
-                await navigator.clipboard.writeText(name);
-                showToast(`ファイル名「${name}」をコピーしました`);
-                return true;
-            }
-        }
-    } catch (fbErr) {
-        console.warn("Clipboard fallback error:", fbErr);
+        const kind = await copyClipboardFile(fileOrBlob, { name, env: window });
+        showToast(kind === 'filename'
+            ? 'この形式はファイル本体をコピーできないため、ファイル名をコピーしました。ファイルは「保存」から取得できます'
+            : kind === 'image' ? '画像をクリップボードにコピーしました' : 'テキストをクリップボードにコピーしました');
+        return true;
+    } catch (error) {
+        console.warn('Clipboard copy failed:', error.name, error.message);
+        showToast(error.name === 'NotAllowedError'
+            ? 'コピーが許可されませんでした。画面を開いてコピーを押し直すか「保存」を使用してください'
+            : 'コピーできませんでした: ' + (error.message || '「保存」を使用してください'));
+        return false;
     }
 }
 
@@ -1761,6 +1680,7 @@ if (btnPreviewDownload) {
 
 function handleFileReceived(blob, filename, mode) {
     const emoji = getFileIconEmoji(filename, blob.type);
+    if (transferStatusLabel) transferStatusLabel.textContent = '受信完了';
     const isImage = isImageFile(filename, blob.type);
 
     // 履歴に追加（手動ダウンロード・コピーボタン付き）
@@ -1807,18 +1727,16 @@ function handleTransferProgress(bytes, total, name, direction) {
     transferPercent.textContent = `${percent}%`;
 
     const now = Date.now();
-    if (!transferStartTime || percent === 0) transferStartTime = now;
+    if (!transferStartTime || bytes === 0) transferStartTime = now;
     const elapsedSec = (now - transferStartTime) / 1000;
     if (elapsedSec > 0.2) {
         const speedMBs = ((bytes / (1024 * 1024)) / elapsedSec).toFixed(2);
         transferSpeed.textContent = `${speedMBs} MB/s`;
     }
 
-    transferStatusLabel.textContent = percent >= 100 ? "完了" : `${(bytes / (1024 * 1024)).toFixed(1)} / ${(total / (1024 * 1024)).toFixed(1)} MB`;
+    transferStatusLabel.textContent = percent >= 100 ? (direction === 'send' ? '相手の受信確認中...' : '受信データを確認中...') : `${(bytes / (1024 * 1024)).toFixed(1)} / ${(total / (1024 * 1024)).toFixed(1)} MB`;
 
-    if (percent >= 100) {
-        scheduleProgressAutoDismiss();
-    }
+    // Dismiss only after the received file or its completion ACK is verified.
 }
 
 function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = null) {
@@ -2025,6 +1943,7 @@ if (btnClearStaged) {
 let isTransferring = false;
 
 function setTransferUILock(isLocked) {
+    isLocked = isLocked || !!transferManager?.isSending || !!transferManager?.incomingFileInfo;
     isTransferring = isLocked;
     const elementsToLock = [
         dropzoneArea,
@@ -2069,27 +1988,15 @@ if (btnStartSend) {
             if (stagedFilesQueue.length === 1) {
                 fileToSend = stagedFilesQueue[0];
             } else {
+                if (stagedFilesQueue.reduce((sum, file) => sum + file.size, 0) > 60 * 1024 * 1024) throw new Error('まとめて送信するファイルは合計60MiBまでです');
                 showToast("複数ファイルを軽量ZIP圧縮中...");
                 const { default: JSZip } = await import('jszip');
                 const zip = new JSZip();
-                const usedNames = new Map();
+                const usedNames = new Set();
 
                 for (let i = 0; i < stagedFilesQueue.length; i++) {
                     const file = stagedFilesQueue[i];
-                    let name = file.name || `file_${i + 1}`;
-                    
-                    if (usedNames.has(name)) {
-                        const count = usedNames.get(name) + 1;
-                        usedNames.set(name, count);
-                        const extIdx = name.lastIndexOf('.');
-                        if (extIdx > 0) {
-                            name = `${name.substring(0, extIdx)}_${count}${name.substring(extIdx)}`;
-                        } else {
-                            name = `${name}_${count}`;
-                        }
-                    } else {
-                        usedNames.set(name, 1);
-                    }
+                    const name = uniqueArchiveName(file.name || `file_${i + 1}`, usedNames);
 
                     // DOM File から生バイトデータ (ArrayBuffer) を読み出して ZIP に追加
                     const arrayBuffer = await file.arrayBuffer();
@@ -2112,6 +2019,8 @@ if (btnStartSend) {
 
             const actualMode = await transferManager.sendFileP2P(fileToSend);
 
+            if (transferStatusLabel) transferStatusLabel.textContent = '相手の受信完了を確認しました';
+            scheduleProgressAutoDismiss();
             addTransferHistory(fileToSend.name, fileToSend.size, '送信', actualMode);
             showToast(`✅ 「${fileToSend.name}」の送信が完了しました！`);
 
@@ -2628,10 +2537,8 @@ if (btnSettingsSwitchAction) btnSettingsSwitchAction.onclick = switchGoogleAccou
 // 自動更新検出機能 (起動時にバックグラウンドで version.json を無キャッシュチェック)
 async function checkForNewVersionAuto() {
     try {
-        const vRes = await fetch(`./version.json?nocache=${Date.now()}`, {
-            cache: 'no-store',
-            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
-        });
+        const versionUrl = location.protocol === 'chrome-extension:' ? AUTH_ORIGIN + '/version.json' : './version.json';
+        const vRes = await fetch(`${versionUrl}?nocache=${Date.now()}`, { cache: 'no-store' });
         if (vRes.ok) {
             const vData = await vRes.json();
             if (vData.version && vData.version !== APP_VERSION) {
@@ -2647,6 +2554,11 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 btnUpdateCheck.onclick = async () => {
+    if (location.protocol === 'chrome-extension:') {
+        showToast('拡張機能は画面の再読込みだけでは更新されません。ダウンロードページの最新ZIPへ入れ替え、Chromeの拡張機能画面で再読み込みしてください', 12000);
+        await chrome.tabs.create({ url: AUTH_ORIGIN + '/download' });
+        return;
+    }
     setStatus('saving', '最新コード取得＆キャッシュ完全消去中...');
     showToast("最新コードを取得するため全キャッシュを完全破棄中...");
     

@@ -89,6 +89,10 @@
           {
             "key": "Expires",
             "value": "0"
+          },
+          {
+            "key": "Access-Control-Allow-Origin",
+            "value": "*"
           }
         ]
       },
@@ -132,6 +136,42 @@
           {
             "key": "Permissions-Policy",
             "value": "camera=(), microphone=(), geolocation=()"
+          }
+        ]
+      },
+      {
+        "source": "/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate, max-age=0"
+          }
+        ]
+      },
+      {
+        "source": "/index.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate, max-age=0"
+          }
+        ]
+      },
+      {
+        "source": "/auth",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate, max-age=0"
+          }
+        ]
+      },
+      {
+        "source": "/download",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate, max-age=0"
           }
         ]
       }
