@@ -26,6 +26,13 @@ try {
         fs.writeFileSync('package.json', JSON.stringify(pkgData, null, 4));
     }
 
+    if (fs.existsSync('package-lock.json')) {
+        const lockData = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+        lockData.version = newVersion;
+        if (lockData.packages?.['']) lockData.packages[''].version = newVersion;
+        fs.writeFileSync('package-lock.json', JSON.stringify(lockData, null, 4) + '\n');
+    }
+
     // manifest.json 内の version を同期書き換え
     if (fs.existsSync('manifest.json')) {
         const manifestData = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
@@ -36,4 +43,5 @@ try {
     console.log(`🚀 自動バージョンアップ＆全構成ファイル同期完了: v${newVersion}`);
 } catch (err) {
     console.error("バージョン更新エラー:", err);
+    process.exitCode = 1;
 }
