@@ -11,6 +11,30 @@ thread_local! { static STATE: RefCell<Option<Arc<Shared>>> = const { RefCell::ne
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
+fn input_desktop_is_unlocked() -> bool {
+    use windows_sys::Win32::System::StationsAndDesktops::*;
+    unsafe {
+        let desktop = OpenInputDesktop(0, 0, DESKTOP_READOBJECTS);
+        if desktop.is_null() {
+            return false;
+        }
+        let mut name = [0u16; 256];
+        let mut needed = 0;
+        let ok = GetUserObjectInformationW(
+            desktop,
+            UOI_NAME,
+            name.as_mut_ptr().cast(),
+            (name.len() * 2) as u32,
+            &mut needed,
+        );
+        CloseDesktop(desktop);
+        if ok == 0 {
+            return false;
+        }
+        let end = name.iter().position(|v| *v == 0).unwrap_or(0);
+        String::from_utf16_lossy(&name[..end]).eq_ignore_ascii_case("Default")
+    }
+}
 
 fn excluded() -> bool {
     unsafe {
@@ -85,6 +109,9 @@ impl Drop for ClipboardGuard {
 }
 
 fn read(hwnd: HWND, shared: &Shared) -> Result<Option<(String, &'static str)>, String> {
+    if !input_desktop_is_unlocked() {
+        return Ok(None);
+    }
     unsafe {
         let mut opened = false;
         for _ in 0..3 {
@@ -169,6 +196,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                             && s.generation == generation
                             && s.recording
                             && !s.locked
+                            && input_desktop_is_unlocked()
                         {
                             match result {
                                 Ok(Some((text, kind))) => {
@@ -292,6 +320,20 @@ pub fn copy_text(text: &str, hwnd: HWND) -> Result<(), String> {
 }
 
 pub fn import_windows(shared: &Shared) -> Result<usize, String> {
+    use std::sync::atomic::Ordering;
+    if shared.import_busy.swap(true, Ordering::SeqCst) {
+        return Err("既存履歴の取込みは既に実行中です".into());
+    }
+    struct Importing<'a>(&'a Shared);
+    impl Drop for Importing<'_> {
+        fn drop(&mut self) {
+            self.0.import_busy.store(false, Ordering::SeqCst);
+        }
+    }
+    let _importing = Importing(shared);
+    if !input_desktop_is_unlocked() {
+        return Err("画面ロック中・保護されたデスクトップでは取得できません".into());
+    }
     use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
     if unsafe { CoInitializeEx(std::ptr::null(), COINIT_MULTITHREADED as u32) } < 0 {
         return Err("Windows履歴の読取りを開始できません".into());
@@ -358,7 +400,11 @@ pub fn import_windows(shared: &Shared) -> Result<usize, String> {
             continue;
         }
         let mut s = shared.inner.lock().map_err(|_| "履歴を保存できません")?;
-        if s.owner != owner || s.generation != generation || s.locked {
+        if s.owner != owner
+            || s.generation != generation
+            || s.locked
+            || !input_desktop_is_unlocked()
+        {
             return Err("アカウントが変わったため取込みを中止しました".into());
         }
         s.store.record(&owner, &text, kind)?;

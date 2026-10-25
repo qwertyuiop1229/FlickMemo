@@ -32,6 +32,7 @@ pub struct Shared {
     device: String,
     auth_busy: AtomicBool,
     auth_cancel: AtomicBool,
+    import_busy: AtomicBool,
     quitting: AtomicBool,
     diagnostic_directory: Option<std::path::PathBuf>,
     ready_count: AtomicUsize,
@@ -262,7 +263,7 @@ fn show(app: &tauri::AppHandle) -> tauri::Result<()> {
     let mut builder =
         tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()));
     if let Some(root) = app.state::<Arc<Shared>>().diagnostic_directory.as_ref() {
-        builder = builder.data_directory(root.join("webview"));
+        builder = builder.data_directory(root.join("webview")).visible(false);
     }
     builder
         .title("FlickMemo")
@@ -407,6 +408,7 @@ fn main() {
                 app: app.handle().clone(),
                 auth_busy: AtomicBool::new(false),
                 auth_cancel: AtomicBool::new(false),
+                import_busy: AtomicBool::new(false),
                 quitting: AtomicBool::new(false),
                 diagnostic_directory: if diagnostic {
                     Some(directory.clone())
