@@ -45,6 +45,7 @@ jobs:
             src-tauri/target/release/flickmemo-desktop.exe
             desktop-reports/memory.csv
             desktop-reports/lifecycle.json
+            desktop-reports/clipboard.json
           if-no-files-found: error
           retention-days: 7
       - uses: actions/cache/save@v4

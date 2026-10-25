@@ -16,7 +16,7 @@ export function createHistoryPanel({ desktop, adapter, saveNote, selectedText, n
     const message = element('p', '', 'history-error'); message.setAttribute('role', 'status');
     const status = element('p', '', 'history-status');
     const controls = element('section');
-    let settings = null, local = !!desktop, offset = 0, entries = [], selections = [], generation = 0;
+    let settings = null, local = !!desktop, offset = 0, entries = [], selections = [], generation = 0, lifecycle = 0;
     let stopHistory = null, stopSelection = null, stopNative = null, timer = null, debounce = null;
     const actions = element('div', null, 'history-actions');
     const localButton = element('button', 'このPCの履歴'); localButton.hidden = !desktop;
@@ -115,7 +115,7 @@ export function createHistoryPanel({ desktop, adapter, saveNote, selectedText, n
         }); controls.append(importButton);
     }
     function unsubscribe() {
-        ++generation;
+        ++generation; ++lifecycle;
         stopHistory?.(); stopHistory = null;
         stopSelection?.(); stopSelection = null;
         stopNative?.(); stopNative = null;
@@ -123,14 +123,14 @@ export function createHistoryPanel({ desktop, adapter, saveNote, selectedText, n
     }
     async function source(useLocal) {
         unsubscribe(); local = useLocal; offset = 0; entries = []; selections = [];
-        const ticket = generation;
+        const ticket = lifecycle;
         controls.hidden = !local; message.textContent = ''; status.textContent = local ? '' : '同期された新しい50件を表示。コピーは押したときだけ実行します。';
         render(); renderSelection();
         if (local) {
             await load();
-            if (!dialog.open || generation !== ticket) return;
+            if (!dialog.open || lifecycle !== ticket) return;
             const stop = await desktop.changed(() => { clearTimeout(debounce); debounce = setTimeout(() => load().catch(error), 150); });
-            if (!dialog.open || generation !== ticket) { stop(); return; }
+            if (!dialog.open || lifecycle !== ticket) { stop(); return; }
             stopNative = stop;
         }
         else { stopHistory = adapter.watchHistory(values => { entries = values; render(); }, error); }

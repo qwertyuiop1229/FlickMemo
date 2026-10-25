@@ -17,6 +17,7 @@ document.querySelector('#run').onclick=async()=>{
     const click=async label=>{const button=[...document.querySelectorAll('dialog button')].find(b=>b.textContent===label);assert(button,`Missing button ${label}`);button.click();await settle();};
     try {
         await panel.open();
+        assert(listeners===2,'native and selection subscriptions must start after initial load');
         assert(document.querySelectorAll('.history-card').length===2,'render text and placeholder');
         assert(!document.querySelector('.history-card img'),'clipboard text must never become HTML');checks.push('text XSS prevention');
         assert(document.querySelectorAll('.history-card button').length===6,'image has only pin/delete controls');checks.push('image placeholder without false copy');

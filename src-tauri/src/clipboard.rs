@@ -278,6 +278,9 @@ pub fn start(shared: Arc<Shared>) -> Result<(), String> {
         .map_err(|_| "通知処理の開始がタイムアウトしました")?
 }
 pub fn copy_text(text: &str, hwnd: HWND) -> Result<(), String> {
+    write_text(text, hwnd, true)
+}
+fn write_text(text: &str, hwnd: HWND, mark: bool) -> Result<(), String> {
     if text.contains('\0') {
         return Err("終端文字を含む文字列はコピーできません".into());
     }
@@ -310,13 +313,143 @@ pub fn copy_text(text: &str, hwnd: HWND) -> Result<(), String> {
             GlobalFree(handle);
             return Err("コピーできませんでした".into());
         }
-        let marker = RegisterClipboardFormatW(wide("FlickMemo.PrivateClipboard").as_ptr());
-        let flag = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, 4);
-        if marker != 0 && !flag.is_null() && SetClipboardData(marker, flag).is_null() {
-            GlobalFree(flag);
+        if mark {
+            let marker = RegisterClipboardFormatW(wide("FlickMemo.PrivateClipboard").as_ptr());
+            let flag = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, 4);
+            if marker != 0 && !flag.is_null() && SetClipboardData(marker, flag).is_null() {
+                GlobalFree(flag);
+            }
         }
         Ok(())
     }
+}
+
+/// Synthetic OS clipboard test. Never runs in a normal app or a local diagnostic.
+pub fn diagnostic_capture(shared: &Shared, hwnd: HWND) -> Result<(), String> {
+    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
+        || shared.diagnostic_directory.is_none()
+    {
+        return Err("使い捨てCI環境だけで行うテストです".into());
+    }
+    struct Stop<'a>(&'a Shared);
+    impl Drop for Stop<'_> {
+        fn drop(&mut self) {
+            if let Ok(mut s) = self.0.inner.lock() {
+                s.recording = false;
+            }
+        }
+    }
+    let _stop = Stop(shared);
+    {
+        let mut s = shared
+            .inner
+            .lock()
+            .map_err(|_| "診断状態を変更できません")?;
+        if !s.listener_ready {
+            return Err("Clipboard listener is unavailable".into());
+        }
+        s.recording = true;
+    }
+    let wait_count = |expected: i64| -> Result<(), String> {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < until {
+            if shared
+                .inner
+                .lock()
+                .map_err(|_| "診断DBを確認できません")?
+                .store
+                .stats("guest")?
+                .count
+                == expected
+            {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        Err(format!(
+            "Clipboard notification did not persist expected {expected} records"
+        ))
+    };
+    let text = "FlickMemo synthetic clipboard 日本語😀\nline 2";
+    write_text(text, hwnd, false)?;
+    wait_count(1)?;
+    {
+        let s = shared.inner.lock().map_err(|_| "診断DBを読めません")?;
+        if s.store.page("guest", 0, "", false)?[0].text != text {
+            return Err("Unicode clipboard text changed".into());
+        }
+    }
+    copy_text("FlickMemo self-copy must be excluded", hwnd)?;
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    if shared
+        .inner
+        .lock()
+        .map_err(|_| "診断DBを読めません")?
+        .store
+        .stats("guest")?
+        .count
+        != 1
+    {
+        return Err("Self-copy was recorded".into());
+    }
+    unsafe {
+        if OpenClipboard(hwnd) == 0 {
+            return Err("Synthetic image clipboard open failed".into());
+        }
+        let _guard = ClipboardGuard;
+        let handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, 44);
+        if handle.is_null() {
+            return Err("Synthetic image allocation failed".into());
+        }
+        let ptr = GlobalLock(handle).cast::<u8>();
+        if ptr.is_null() {
+            GlobalFree(handle);
+            return Err("Synthetic image lock failed".into());
+        }
+        let bytes = std::slice::from_raw_parts_mut(ptr, 44);
+        bytes[0..4].copy_from_slice(&40u32.to_le_bytes());
+        bytes[4..8].copy_from_slice(&1i32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&1i32.to_le_bytes());
+        bytes[12..14].copy_from_slice(&1u16.to_le_bytes());
+        bytes[14..16].copy_from_slice(&32u16.to_le_bytes());
+        GlobalUnlock(handle);
+        if EmptyClipboard() == 0 || SetClipboardData(8, handle).is_null() {
+            GlobalFree(handle);
+            return Err("Synthetic image write failed".into());
+        }
+    }
+    wait_count(2)?;
+    {
+        let s = shared.inner.lock().map_err(|_| "診断DBを読めません")?;
+        let page = s.store.page("guest", 0, "", false)?;
+        if !page
+            .iter()
+            .any(|v| v.kind == "image_placeholder" && v.text.is_empty())
+        {
+            return Err("Image placeholder was not recorded".into());
+        }
+    }
+    {
+        shared
+            .inner
+            .lock()
+            .map_err(|_| "診断状態を変更できません")?
+            .recording = false;
+    }
+    write_text("FlickMemo paused capture must be ignored", hwnd, false)?;
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    if shared
+        .inner
+        .lock()
+        .map_err(|_| "診断DBを読めません")?
+        .store
+        .stats("guest")?
+        .count
+        != 2
+    {
+        return Err("Paused recording captured a value".into());
+    }
+    Ok(())
 }
 
 pub fn import_windows(shared: &Shared) -> Result<usize, String> {

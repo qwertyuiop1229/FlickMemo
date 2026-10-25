@@ -317,6 +317,28 @@ fn diagnostic_smoke(shared: Arc<Shared>) {
             false
         };
         report(0, "starting", None);
+        if std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true") {
+            let result = shared
+                .app
+                .get_webview_window("main")
+                .ok_or("Diagnostic window missing".to_string())
+                .and_then(|window| {
+                    window
+                        .hwnd()
+                        .map_err(|_| "Diagnostic HWND missing".to_string())
+                })
+                .and_then(|hwnd| clipboard::diagnostic_capture(&shared, hwnd.0));
+            let _ = std::fs::write(
+                root.join("clipboard.json"),
+                serde_json::json!({"passed":result.is_ok(),"error":result.as_ref().err()})
+                    .to_string(),
+            );
+            if let Err(error) = result {
+                report(0, "failed", Some(&error));
+                shared.app.exit(1);
+                return;
+            }
+        }
         for cycle in 1..=20 {
             if cycle > 1 {
                 let app = shared.app.clone();
