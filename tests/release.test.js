@@ -8,6 +8,7 @@ import { bump, nextVersion } from '../bump.js';
 import { repositoryFromRemote, validateRelease, verifyAsset, releaseUrl } from '../scripts/release.mjs';
 import { acquireDeployLock } from '../scripts/deploy-lock.mjs';
 import { windowsInstallerUrl } from '../platform/windowsRelease.js';
+import { verifyInstalledBinary } from '../scripts/verify-installed-binary.mjs';
 
 test('one bump synchronizes web, extension, native Cargo and installer versions', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flickmemo-version-'));
@@ -50,4 +51,12 @@ test('public installer links only accept the official versioned GitHub release',
     for(const change of [{repository:'attacker/FlickMemo'},{version:'../../evil'},{version:'javascript:alert(1)'},{commit:''},{schemaVersion:2},{files:{}}]) assert.throws(()=>windowsInstallerUrl({...release,...change}));
     assert.throws(()=>windowsInstallerUrl({...release,files:{'FlickMemo-Setup.exe':{bytes:0,sha256:'b'.repeat(64)}}}));
     assert.throws(()=>windowsInstallerUrl('<html>SPA fallback</html>'));
+});
+test('installed NSIS binaries accept exactly the Tauri bundle marker patch and reject other changes',()=>{
+    const original=Buffer.from('MZ synthetic data\0__TAURI_BUNDLE_TYPE_VAR_UNK\0unchanged');
+    const installed=Buffer.from('MZ synthetic data\0__TAURI_BUNDLE_TYPE_VAR_NSS\0unchanged');
+    assert.match(verifyInstalledBinary(original,installed),/^[a-f0-9]{64}$/);
+    const corrupted=Buffer.from(installed);corrupted[3]^=1;assert.throws(()=>verifyInstalledBinary(original,corrupted));
+    assert.throws(()=>verifyInstalledBinary(original,original));
+    assert.throws(()=>verifyInstalledBinary(Buffer.from('no marker'),installed));
 });

@@ -13,13 +13,14 @@ function Invoke-FlickInstaller([string]$File,[string]$Arguments){
     if(!$flickInstallerProcess.WaitForExit(240000)){Stop-Process -Id $flickInstallerProcess.Id;throw 'Installer timed out'}
     if($flickInstallerProcess.ExitCode -ne 0){throw "Installer exited: $($flickInstallerProcess.ExitCode)"}
 }
-$flickExpected=(Get-FileHash -LiteralPath src-tauri/target/release/flickmemo-desktop.exe -Algorithm SHA256).Hash
 Write-Output 'Testing isolated per-user installation'
 Invoke-FlickInstaller $flickInstaller "/S /D=$flickInstallRoot"
-if((Get-FileHash -LiteralPath $flickInstalledExe -Algorithm SHA256).Hash -ne $flickExpected){throw 'Installed binary differs from the build'}
+$flickVerification=& node scripts/verify-installed-binary.mjs src-tauri/target/release/flickmemo-desktop.exe $flickInstalledExe
+if($LASTEXITCODE -ne 0){throw 'Installed binary verification failed'}
+$flickExpected=($flickVerification | ConvertFrom-Json).sha256
 Write-Output 'Testing reinstall without removing user data'
 Invoke-FlickInstaller $flickInstaller "/S /D=$flickInstallRoot"
-if((Get-FileHash -LiteralPath $flickInstalledExe -Algorithm SHA256).Hash -ne $flickExpected){throw 'Reinstalled binary differs from the build'}
+if((Get-FileHash -LiteralPath $flickInstalledExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $flickExpected){throw 'Reinstalled binary differs from the verified installation'}
 & (Join-Path $PSScriptRoot 'measure-windows.ps1') -Executable $flickInstalledExe
 Write-Output 'Testing isolated uninstallation'
 $flickUninstaller=Join-Path $flickInstallRoot 'uninstall.exe'
