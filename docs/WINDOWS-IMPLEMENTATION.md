@@ -1,5 +1,7 @@
 # FlickMemo Windows 0.1.0 開発記録
 
+これは初版の履歴です。現在の共通バージョンによる配信方法は[DEPLOY.md](DEPLOY.md)、その後の修正と検証結果は[WINDOWS-AUDIT-2026-10-25.md](WINDOWS-AUDIT-2026-10-25.md)を参照してください。
+
 更新日: 2026-10-25。開発ブランチ: `codex/windows-desktop`。
 
 ## 構成
