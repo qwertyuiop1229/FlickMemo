@@ -263,6 +263,20 @@ impl Store {
             .map_err(db_error)?;
         value.map(|data| privacy::unseal(&data, key)).transpose()
     }
+    pub fn prune_all(&mut self) -> Result<(), String> {
+        let owners: Vec<String> = {
+            let mut stmt = self
+                .db
+                .prepare("SELECT DISTINCT owner FROM history")
+                .map_err(db_error)?;
+            let rows = stmt.query_map([], |r| r.get(0)).map_err(db_error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(db_error)?
+        };
+        for owner in owners {
+            self.prune(&owner)?;
+        }
+        Ok(())
+    }
     pub fn mark_uploading(&self, owner: &str, entries: &[Entry]) -> Result<(), String> {
         for entry in entries {
             self.db

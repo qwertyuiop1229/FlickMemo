@@ -250,6 +250,9 @@ pub fn start(shared: Arc<Shared>) -> Result<(), String> {
         .map_err(|_| "通知処理の開始がタイムアウトしました")?
 }
 pub fn copy_text(text: &str, hwnd: HWND) -> Result<(), String> {
+    if text.contains('\0') {
+        return Err("終端文字を含む文字列はコピーできません".into());
+    }
     if text.len() > MAX_TEXT {
         return Err("コピーできるのは64KiBまでです".into());
     }

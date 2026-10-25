@@ -31,12 +31,22 @@ pub struct Shared {
     app: tauri::AppHandle,
     device: String,
     auth_busy: AtomicBool,
+    auth_cancel: AtomicBool,
     quitting: AtomicBool,
     diagnostic_directory: Option<std::path::PathBuf>,
     ready_count: AtomicUsize,
 }
 impl Shared {
     pub fn changed(&self) {
+        if let Ok(inner) = self.inner.try_lock() {
+            if let Some(tray) = self.app.tray_by_id("flickmemo") {
+                let _ = tray.set_tooltip(Some(if inner.recording && !inner.locked {
+                    "FlickMemo — クリップボード記録中"
+                } else {
+                    "FlickMemo — クリップボード記録停止中"
+                }));
+            }
+        }
         let _ = self.app.emit_to("main", "desktop-history-changed", ());
     }
 }
@@ -219,6 +229,7 @@ async fn desktop_login(state: State<'_, Arc<Shared>>) -> Result<auth::Credential
 }
 #[tauri::command]
 async fn desktop_close(window: WebviewWindow, state: State<'_, Arc<Shared>>) -> Result<(), String> {
+    state.auth_cancel.store(true, Ordering::SeqCst);
     if state.quitting.load(Ordering::SeqCst) {
         window.app_handle().exit(0);
         Ok(())
@@ -395,6 +406,7 @@ fn main() {
                 wake: Condvar::new(),
                 app: app.handle().clone(),
                 auth_busy: AtomicBool::new(false),
+                auth_cancel: AtomicBool::new(false),
                 quitting: AtomicBool::new(false),
                 diagnostic_directory: if diagnostic {
                     Some(directory.clone())
@@ -403,16 +415,14 @@ fn main() {
                 },
                 ready_count: AtomicUsize::new(0),
             });
-            if !diagnostic {
+            {
                 match clipboard::start(shared.clone()) {
                     Ok(()) => shared.inner.lock().unwrap().listener_ready = true,
                     Err(error) => shared.inner.lock().unwrap().last_error = Some(error),
                 }
             }
             app.manage(shared.clone());
-            if !diagnostic {
-                history_sync::start(shared.clone());
-            }
+            history_sync::start(shared.clone());
             use tauri::{
                 menu::{Menu, MenuItem},
                 tray::TrayIconBuilder,
@@ -422,7 +432,7 @@ fn main() {
                 MenuItem::with_id(app, "pause", "クリップボード記録を停止", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &pause, &quit])?;
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("flickmemo")
                 .icon(
                     app.default_window_icon()
                         .ok_or("アイコンがありません")?

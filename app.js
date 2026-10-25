@@ -2472,11 +2472,12 @@ window.addEventListener('keydown', e => {
 });
 
 btnModalCancel.onclick = () => logoutModal.classList.add('hidden');
-btnModalConfirm.onclick = () => {
+btnModalConfirm.onclick = async () => {
     logoutModal.classList.add('hidden');
     finishAuthAttempt();
     if (typeof chrome !== 'undefined' && chrome.storage?.session) chrome.storage.session.remove('pendingAuth').catch(() => {});
     if (syncDebounceTimer && activeNoteId) flushPendingSave(activeNoteId);
+    await clipboardAdapter?.stopSelection().catch(() => {});
     signOut(auth).catch(error => showToast('ログアウトに失敗しました: ' + error.code));
 };
 
@@ -2580,6 +2581,7 @@ if (btnSettingsSwitchAction) btnSettingsSwitchAction.onclick = switchGoogleAccou
 
 // 自動更新検出機能 (起動時にバックグラウンドで version.json を無キャッシュチェック)
 async function checkForNewVersionAuto() {
+    if (isDesktop) return;
     try {
         const versionUrl = location.protocol === 'chrome-extension:' ? AUTH_ORIGIN + '/version.json' : './version.json';
         const vRes = await fetch(`${versionUrl}?nocache=${Date.now()}`, { cache: 'no-store' });
@@ -2790,6 +2792,7 @@ async function loginWithProvider(provider, { selectAccount = false } = {}) {
     authBusy = true;
     if (syncDebounceTimer && activeNoteId) flushPendingSave(activeNoteId);
     try {
+        await clipboardAdapter?.stopSelection().catch(() => {});
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
@@ -2949,6 +2952,7 @@ document.getElementById('btn-google-other').onclick = () => loginWithProvider(ne
 
 onAuthStateChanged(auth, async user => {
     const generation = ++authGeneration;
+    historySelection = '';
     historyPanel?.accountChanged();
     clipboardAdapter?.stopSelection().catch(() => {});
     if (isDesktop) {

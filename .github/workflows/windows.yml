@@ -22,7 +22,9 @@ jobs:
         with:
           path: src-tauri/target
           key: windows-rust-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: windows-rust-${{ hashFiles('src-tauri/Cargo.lock') }}-
+          restore-keys: |
+            windows-rust-${{ hashFiles('src-tauri/Cargo.lock') }}-
+            windows-rust-
       - name: Verify Web and extension regression suite
         run: npm run check
       - name: Build shared desktop frontend

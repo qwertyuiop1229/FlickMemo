@@ -31,6 +31,7 @@ pub fn start(shared: Arc<Shared>) {
             Err(_) => return,
         };
         let mut token: Option<(String, String, i64)> = None;
+        let mut last_prune = 0;
         let mut wait = std::time::Duration::from_secs(60);
         loop {
             let mut inner = match shared.inner.lock() {
@@ -39,6 +40,15 @@ pub fn start(shared: Arc<Shared>) {
             };
             let enabled =
                 inner.sync_enabled && inner.session.as_ref().is_some_and(|s| s.uid == inner.owner);
+            if !enabled {
+                token = None;
+            }
+            if now() - last_prune >= 60000 {
+                if let Err(error) = inner.store.prune_all() {
+                    inner.last_error = Some(error);
+                }
+                last_prune = now();
+            }
             let batch = if enabled {
                 inner.store.page(&inner.owner, 0, "", true)
             } else {

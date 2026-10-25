@@ -4,13 +4,14 @@ const encoder = new TextEncoder();
 export function validHistoryEntry(value, now = Date.now()) {
     return !!value && typeof value === 'object' && /^[a-f0-9]{32}$/.test(value.id || '') &&
         ['text', 'image_placeholder'].includes(value.kind) && typeof value.text === 'string' &&
+        !value.text.includes('\0') &&
         encoder.encode(value.text).length <= MAX_HISTORY_TEXT_BYTES &&
         (value.kind !== 'image_placeholder' || value.text === '') &&
         ['createdAt', 'updatedAt', 'expiresAt'].every(key => Number.isSafeInteger(value[key]) && value[key] > 0) &&
         value.updatedAt <= now + 60_000 && value.createdAt <= value.updatedAt &&
         typeof value.pinned === 'boolean' && Number.isSafeInteger(value.count) && value.count > 0 &&
         /^[a-f0-9]{32}$/.test(value.originDeviceId || '') &&
-        (!value.deletedAt || Number.isSafeInteger(value.deletedAt) && value.deletedAt > 0);
+        Number.isSafeInteger(value.deletedAt) && value.deletedAt >= 0;
 }
 export function visibleHistory(values, now = Date.now()) {
     return values.filter(value => validHistoryEntry(value, now) && !value.deletedAt &&
