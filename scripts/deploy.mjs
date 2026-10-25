@@ -100,6 +100,9 @@ async function main() {
         state.phase = 'windows'; await save(state);
     }
     const release = await waitForWindows(state);
+    if (state.commit !== await git('rev-parse', 'HEAD') || await git('status', '--porcelain', '--', '.', ':(exclude)dist')) {
+        throw new Error('Windowsの検証中にコードが変更されました。npm run deploy を再実行して、同じコードから全プラットフォームを配信してください');
+    }
     // Resume from a fresh build, so dist from another version can never be uploaded.
     await npm('build'); await npm('verify-build');
     const directory = path.join(root, 'dist/windows');

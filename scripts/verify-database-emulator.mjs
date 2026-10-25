@@ -4,6 +4,8 @@ import { getAuth, connectAuthEmulator, signInAnonymously } from 'firebase/auth';
 import { getDatabase, connectDatabaseEmulator, ref, set, get, update, query, orderByChild, limitToLast, goOffline } from 'firebase/database';
 if (process.env.FIREBASE_DATABASE_EMULATOR_HOST !== '127.0.0.1:9000' || process.env.FIREBASE_AUTH_EMULATOR_HOST !== '127.0.0.1:9099') throw new Error('Only isolated local emulators may be used');
 const apps = [];
+let exitCode = 0;
+const watchdog = setTimeout(() => { console.error('Database emulator verification timed out'); process.exit(1); }, 90_000);
 async function client(name, login = true) {
     const app = initializeApp({ projectId: 'demo-flickmemo', apiKey: 'demo-key', databaseURL: 'https://demo-flickmemo-default-rtdb.firebaseio.com' }, name); apps.push(app);
     const auth = getAuth(app); connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
@@ -32,4 +34,16 @@ try {
     await assert.rejects(update(ref(b.db, base), { 'clipboardHistory/id1': null, 'clipboardHistoryTombstones/id1': { deletedAt: 1 } }));
     assert.equal((await get(ref(a.db, `${base}/clipboardHistory/id1`))).val().text, 'synthetic-1');
     console.log('Database emulator: own-account CRUD, cross-account/guest rejection, atomic history deletion, newest-50 visibility, note preservation PASS');
-} finally { for (const app of apps) { goOffline(getDatabase(app)); await deleteApp(app); } }
+} catch (error) {
+    exitCode = 1;
+    console.error(error);
+} finally {
+    // Firebase Auth can retain sockets/timers in Node even after app deletion.
+    // This is a one-shot CLI: bound cleanup and explicitly return the test result.
+    await Promise.race([
+        Promise.all(apps.map(async app => { goOffline(getDatabase(app)); await deleteApp(app); })),
+        new Promise(resolve => setTimeout(resolve, 3000))
+    ]).catch(error => { exitCode = 1; console.error(error); });
+    clearTimeout(watchdog);
+}
+process.exit(exitCode);

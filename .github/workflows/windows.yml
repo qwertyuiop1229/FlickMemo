@@ -45,6 +45,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Database rules and history deletion in isolated emulators
+        timeout-minutes: 10
         run: |
           npm install --global firebase-tools@15.9.1
           firebase emulators:exec --project demo-flickmemo --only "auth,database" --config firebase.emulator.json "node scripts/verify-database-emulator.mjs"
