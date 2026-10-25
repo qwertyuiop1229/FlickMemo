@@ -2,6 +2,7 @@ import { uniqueArchiveName } from './archiveNames.js';
 import { copyClipboardFile } from './clipboardFiles.js';
 import { validNote } from './noteData.js';
 import { NoteStore } from './noteStore.js';
+import { WriteBarrier } from './platform/writeBarrier.js';
 import { initializeApp } from "firebase/app";
 import { AUTH_ORIGIN, AUTH_TTL_MS, validAuthResponse } from './authProtocol.js';
 import {
@@ -54,6 +55,46 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 let currentDbRef = null;
+const isDesktop = !!window.__TAURI_INTERNALS__;
+const localWrites = new WriteBarrier();
+const desktopReady = isDesktop ? import('./platform/desktop.js') : Promise.resolve(null);
+let historyPanel = null;
+let historyLoading = null;
+let historySelection = '';
+let desktopSessionChain = Promise.resolve();
+const historyDeviceId = crypto.randomUUID().replaceAll('-', '');
+let clipboardAdapter = null;
+
+async function getClipboardAdapter() {
+    if (!clipboardAdapter) {
+        const { historyAdapter } = await import('./history/firebaseAdapter.js');
+        clipboardAdapter = historyAdapter(db, auth, historyDeviceId);
+    }
+    return clipboardAdapter;
+}
+async function openHistoryPanel() {
+    if (!historyPanel) {
+        historyLoading ||= (async () => {
+            const [{ createHistoryPanel }, native, adapter] = await Promise.all([
+                import('./history/panel.js'), desktopReady, getClipboardAdapter()
+            ]);
+            return createHistoryPanel({ desktop: native?.desktop, adapter,
+                selectedText: () => historySelection, notify: showToast,
+                saveNote: async text => {
+                    const id = 'note_' + crypto.randomUUID();
+                    const note = { id, title: '', body: text, pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
+                    currentNotes[id] = note;
+                    await saveLocalNote(note);
+                    await localWrites.drain();
+                    renderList(searchInput.value);
+                    syncSaveNote(note);
+                }
+            });
+        })().catch(error => { historyLoading = null; throw error; });
+        historyPanel = await historyLoading;
+    }
+    await historyPanel.open();
+}
 
 // ★ 全デバイス対応 コンソールログ収集・保持（開発者タブ用）
 const devLogs = [];
@@ -950,13 +991,13 @@ async function loadLocalNotes() {
 function saveLocalNote(note, pending = true) {
     if (!note?.id) return;
     if (pending && currentUserId) pendingLocalIds.add(note.id);
-    noteStore.put(cacheOwner(), note, pending && !!currentUserId).catch(localSaveError);
+    return localWrites.track(`${cacheOwner()}:${note.id}`, noteStore.put(cacheOwner(), note, pending && !!currentUserId)).catch(localSaveError);
 }
 function deleteLocalNote(id, pending = true) {
     if (!id) return;
     pendingLocalIds.delete(id);
     if (pending && currentUserId) pendingDeleteIds.add(id);
-    noteStore.delete(cacheOwner(), id, pending && !!currentUserId).catch(localSaveError);
+    localWrites.track(`${cacheOwner()}:${id}`, noteStore.delete(cacheOwner(), id, pending && !!currentUserId)).catch(localSaveError);
 }
 async function clearLocalData() {
     ++cacheGeneration;
@@ -2749,6 +2790,16 @@ async function loginWithProvider(provider, { selectAccount = false } = {}) {
         authLoading.classList.remove('hidden');
         authButtons.classList.add('hidden');
 
+        if (isDesktop) {
+            const native = await desktopReady;
+            const result = await native.desktop.login();
+            const credential = GoogleAuthProvider.credential(result.googleIdToken, result.googleAccessToken);
+            await setPersistence(auth, browserLocalPersistence);
+            await signInWithCredential(auth, credential);
+            finishAuthAttempt();
+            return;
+        }
+
         if (!provider) {
             provider = new GoogleAuthProvider();
         }
@@ -2895,6 +2946,17 @@ document.getElementById('btn-google-other').onclick = () => loginWithProvider(ne
 
 onAuthStateChanged(auth, async user => {
     const generation = ++authGeneration;
+    historyPanel?.accountChanged();
+    clipboardAdapter?.stopSelection().catch(() => {});
+    if (isDesktop) {
+        // Serialize notifications so a slow previous login cannot restore the wrong native owner.
+        desktopSessionChain = desktopSessionChain.catch(() => {}).then(async () => {
+            const { desktop } = await desktopReady;
+            if (generation !== authGeneration) return;
+            await desktop.session(user ? { uid: user.uid, refreshToken: user.refreshToken } : null);
+        });
+        desktopSessionChain.catch(error => showToast('Windowsのアカウント設定に失敗しました: ' + String(error)));
+    }
     if (currentDbRef) { off(currentDbRef); currentDbRef = null; }
     // Stop using the previous UID's presence paths before starting the new one.
     if (transferManager && currentUserId !== (user?.uid || null)) transferManager.stopDevicePresence();
@@ -3095,3 +3157,40 @@ document.addEventListener('visibilitychange', () => {
         checkPendingExtensionNotes();
     }
 });
+
+// History UI and Firebase subscriptions are loaded only when explicitly opened.
+const historyButton = document.createElement('button');
+historyButton.type = 'button'; historyButton.className = 'm3-icon-button';
+historyButton.title = 'クリップボード履歴・選択共有';
+historyButton.setAttribute('aria-label', historyButton.title);
+const historyIcon = document.createElement('span');
+historyIcon.className = 'material-symbols-outlined'; historyIcon.textContent = 'content_paste';
+historyButton.append(historyIcon);
+document.querySelector('.header-right').prepend(historyButton);
+historyButton.onpointerdown = () => {
+    const target = document.activeElement;
+    if ((target === noteBody || target === noteTitleInput) && target.selectionStart !== target.selectionEnd) {
+        historySelection = target.value.slice(target.selectionStart, target.selectionEnd);
+    } else { historySelection = window.getSelection()?.toString() || ''; }
+};
+historyButton.onclick = () => openHistoryPanel().catch(error => showToast(String(error?.message || error)));
+
+if (isDesktop) {
+    desktopReady.then(async ({ setupDesktop }) => {
+        await setupDesktop({ notify: showToast, prepareClose: async () => {
+            if ((transferManager?.isSending || transferManager?.incomingFileInfo) &&
+                !window.confirm('ファイル転送中です。転送を中止して画面を閉じますか？')) {
+                throw new Error('画面を開いたまま転送を続けます');
+            }
+            document.body.inert = true;
+            try {
+                handleNoteSave();
+                if (activeNoteId && currentNotes[activeNoteId]) await saveLocalNote(currentNotes[activeNoteId]);
+                await localWrites.drain();
+                localStorage.setItem(`desktop-active:${cacheOwner()}`, activeNoteId || '');
+            } finally { document.body.inert = false; }
+        }});
+        const update = document.getElementById('btn-update-check');
+        if (update) update.onclick = () => showToast('Windows版の更新は新しいインストーラーから行ってください');
+    }).catch(error => showToast('Windows機能を開始できませんでした: ' + String(error)));
+}

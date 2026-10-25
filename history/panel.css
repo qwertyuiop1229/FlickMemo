@@ -1,0 +1,14 @@
+.history-dialog { color:var(--md-sys-color-on-surface,#eee); background:var(--md-sys-color-surface,#1b1b1d); border:1px solid #7775; border-radius:20px; width:min(780px,94vw); max-height:88vh; padding:24px; }
+.history-dialog::backdrop { background:#0008; }
+.history-dialog header,.history-actions { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+.history-dialog h2 { font-size:1.25rem; margin:0; flex:1; }
+.history-dialog button { border:1px solid #8886; border-radius:12px; padding:8px 12px; background:transparent; color:inherit; cursor:pointer; }
+.history-dialog button:disabled { opacity:.45; cursor:default; }
+.history-dialog input[type=search],.history-dialog textarea { width:100%; box-sizing:border-box; background:#8881; color:inherit; border:1px solid #8886; border-radius:10px; padding:10px; margin:8px 0; }
+.history-dialog label { display:block; margin:10px 0; }
+.history-status { font-size:.85rem; opacity:.85; white-space:pre-wrap; }
+.history-error { color:#f6b9aa; min-height:1.5em; white-space:pre-wrap; }
+.history-card { border:1px solid #8884; border-radius:12px; padding:14px; margin:12px 0; }
+.history-card pre { font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; margin:10px 0; }
+.history-card small { display:block; opacity:.7; margin-bottom:10px; }
+.history-dialog details { border-block:1px solid #8884; padding:12px 0; margin:12px 0; }

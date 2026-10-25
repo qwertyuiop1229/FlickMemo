@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult,
     GoogleAuthProvider, setPersistence, inMemoryPersistence } from 'firebase/auth';
-import { AUTH_SUCCESS, authRequestFromUrl, validAuthRequest } from './authProtocol.js';
+import { AUTH_SUCCESS, authRequestFromUrl, validAuthRequest, desktopAuthRequestFromUrl } from './authProtocol.js';
 
 const auth = getAuth(initializeApp({
     apiKey: 'AIzaSyB1Yt1bCaMmOe84_737RSMcd2NlMkPZLaE',
@@ -10,12 +10,27 @@ const auth = getAuth(initializeApp({
     appId: '1:998795111125:web:8e40535e8f2623283a105c'
 }, 'extension-auth'));
 const request = authRequestFromUrl(location.href);
+const desktopRequest = desktopAuthRequestFromUrl(location.href);
 const msg = document.getElementById('msg');
 const spinner = document.getElementById('spinner');
 const btnManual = document.getElementById('btn-login-manual');
 const setMsg = text => { msg.textContent = text; };
 
 async function complete(result) {
+    if (desktopRequest) {
+        if (!desktopAuthRequestFromUrl(location.href)) throw new Error('認証の有効期限が切れました。Windowsアプリから再試行してください');
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (!credential?.idToken && !credential?.accessToken) throw new Error('認証情報を取得できませんでした');
+        // Top-level POST navigation: credentials never appear in a callback URL or browser history.
+        // Native receiver verifies the exact HTTPS Origin, one-time state, length and deadline.
+        const form = document.createElement('form');
+        form.method = 'POST'; form.action = `http://127.0.0.1:${desktopRequest.port}/callback`;
+        for (const [name, value] of Object.entries({ state: desktopRequest.state,
+            googleIdToken: credential.idToken || '', googleAccessToken: credential.accessToken || '' })) {
+            const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = value; form.append(input);
+        }
+        document.body.append(form); form.submit(); return;
+    }
     if (!validAuthRequest(request)) throw new Error('認証の有効期限が切れました。拡張機能から再度ログインしてください。');
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.idToken && !credential?.accessToken) throw new Error('認証情報を取得できませんでした');
@@ -45,9 +60,9 @@ function showError(error) {
 }
 
 async function start() {
-    if (!request) {
+    if (!request && !desktopRequest) {
         spinner.style.display = 'none';
-        setMsg('拡張機能のログインボタンからこの画面を開いてください。');
+        setMsg('FlickMemoアプリ・拡張機能のログインボタンからこの画面を開いてください。');
         return;
     }
     // Do not replace the website's persisted signed-in account.

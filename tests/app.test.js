@@ -10,6 +10,7 @@ import * as archiveNames from '../archiveNames.js';
 import * as clipboardFiles from '../clipboardFiles.js';
 import * as noteData from '../noteData.js';
 import * as protocol from '../authProtocol.js';
+import { WriteBarrier } from '../platform/writeBarrier.js';
 
 async function setup({ edge = false, extension = false } = {}) {
     const extensionId = 'a'.repeat(32);
@@ -56,6 +57,7 @@ async function setup({ edge = false, extension = false } = {}) {
         'firebase/app': { initializeApp: () => ({}) }, 'firebase/auth': authApi, 'firebase/database': dbApi,
         './archiveNames.js': archiveNames, './clipboardFiles.js': clipboardFiles, './authProtocol.js': protocol, './noteData.js': noteData,
         './noteStore.js': { NoteStore: class extends NoteStore { constructor() { super(factory); } } },
+        './platform/writeBarrier.js': { WriteBarrier },
         './fileTransfer.js': { FileTransferManager: class { stopDevicePresence() {} } }
     };
     const sandbox = { window, document: window.document, navigator: window.navigator, location: window.location,

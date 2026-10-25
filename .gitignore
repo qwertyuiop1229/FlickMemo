@@ -67,3 +67,9 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+
+# Desktop build outputs and local WebView/SQLite profiles
+src-tauri/target/
+src-tauri/gen/
+dist-desktop/
+desktop-reports/
