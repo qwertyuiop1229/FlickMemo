@@ -4,6 +4,7 @@ import { visibleHistory, validSelection, selectionPayload } from './model.js';
 // Narrow adapter: UI code never constructs Firebase paths or uploads images.
 export function historyAdapter(db, auth, deviceId) {
     let activeUid = null;
+    let expiryTimer = null;
     const currentUid = () => {
         const uid = auth.currentUser?.uid;
         if (!uid) throw new Error('Googleログインが必要です');
@@ -23,6 +24,7 @@ export function historyAdapter(db, auth, deviceId) {
             }, error);
         },
         async shareSelection(text) {
+            clearTimeout(expiryTimer);
             const uid = currentUid();
             const payload = selectionPayload(text, deviceId);
             const target = ref(db, `users/${uid}/liveSelection/${deviceId}`);
@@ -30,8 +32,15 @@ export function historyAdapter(db, auth, deviceId) {
             if (auth.currentUser?.uid !== uid) throw new Error('アカウントが変わったため共有を中止しました');
             activeUid = uid;
             await set(target, payload);
+            expiryTimer = setTimeout(() => {
+                if (activeUid === uid && auth.currentUser?.uid === uid) {
+                    activeUid = null;
+                    remove(target).catch(() => {});
+                }
+            }, 30_000);
         },
         async stopSelection() {
+            clearTimeout(expiryTimer); expiryTimer = null;
             const uid = activeUid;
             activeUid = null;
             if (uid && auth.currentUser?.uid === uid) await remove(ref(db, `users/${uid}/liveSelection/${deviceId}`));

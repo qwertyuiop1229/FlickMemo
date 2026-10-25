@@ -11,6 +11,7 @@
         "verify-build": "node scripts/verify-build.mjs",
         "test:browser": "node scripts/verify-transfer-browser.mjs",
         "dev:desktop": "tauri dev",
+        "dev:desktop:web": "vite --host 127.0.0.1 --port 5175 --strictPort",
         "build:desktop": "vite build --config vite.desktop.config.js",
         "package:windows": "tauri build",
         "check:windows": "node scripts/check-windows-environment.mjs"

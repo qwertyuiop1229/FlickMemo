@@ -29,4 +29,5 @@ export async function setupDesktop({ prepareClose, notify }) {
     // A destroyed WebView will recreate this module and its listeners on next open.
     document.documentElement.dataset.platform = 'windows';
     document.querySelector('link[rel="manifest"]')?.remove();
+    await invoke('desktop_ready');
 }

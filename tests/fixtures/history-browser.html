@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8"><title>History development checks</title>
+<button id="run">Run history checks</button><pre id="result"></pre>
+<script type="module">
+import { createHistoryPanel } from '/history/panel.js';
+const now = Date.now();
+const make = (n, kind='text') => ({ id:n.toString(16).padStart(32,'0'),kind,text:kind==='text' ? `<img src=x onerror=alert(1)> 日本語 ${n}` : '',createdAt:now-100,updatedAt:now-n,expiresAt:now+86400000,pinned:false,count:1,deletedAt:0,originDeviceId:'b'.repeat(32),syncState:'pending' });
+const assert = (value, message) => { if (!value) throw new Error(message); };
+document.querySelector('#run').onclick=async()=>{
+    const checks=[]; let rows=[make(1),make(2,'image_placeholder')],copied=[],notes=[],listeners=0,settings={recording:false,syncEnabled:false,owner:'guest',locked:false,listenerReady:true,lastError:null,stats:{count:2,bytes:128},excluded:[]};
+    let nativeChanged=null;
+    const desktop={status:async()=>settings,history:async(offset,search)=>rows.filter(row=>row.text.includes(search)).slice(offset,offset+50),changed:async callback=>{listeners++;nativeChanged=callback;return()=>{listeners--;};},
+        settings:async value=>{settings={...settings,...value};},importWindows:async()=>2,
+        copy:async text=>{copied.push(text);},mutate:async(id,action)=>{if(action==='delete')rows=rows.filter(r=>r.id!==id);else rows.find(r=>r.id===id).pinned=action==='pin';}};
+    const adapter={watchHistory:cb=>{listeners++;cb(rows);return()=>{listeners--;};},watchSelection:()=>{listeners++;return()=>{listeners--;};},shareSelection:async()=>{},stopSelection:async()=>{}};
+    const panel=createHistoryPanel({desktop,adapter,saveNote:async text=>notes.push(text),selectedText:()=>'',notify:()=>{}});
+    const settle=()=>new Promise(resolve=>setTimeout(resolve,80));
+    const click=async label=>{const button=[...document.querySelectorAll('dialog button')].find(b=>b.textContent===label);assert(button,`Missing button ${label}`);button.click();await settle();};
+    try {
+        await panel.open();
+        assert(document.querySelectorAll('.history-card').length===2,'render text and placeholder');
+        assert(!document.querySelector('.history-card img'),'clipboard text must never become HTML');checks.push('text XSS prevention');
+        assert(document.querySelectorAll('.history-card button').length===6,'image has only pin/delete controls');checks.push('image placeholder without false copy');
+        await click('コピー');assert(copied.length===1&&copied[0].includes('<img'),'exact text copy through injected bridge');checks.push('copy exact Unicode text');
+        await click('メモに保存');assert(notes[0]===copied[0],'save exact text');checks.push('memo conversion');
+        await click('固定');assert(rows[0].pinned,'pin');checks.push('pin local history');
+        await click('削除');assert(rows.length===1,'delete local history');checks.push('delete local history');
+        await click('他の端末・クラウド');assert(listeners===2,'local subscription disposed on source switch');checks.push('source subscription disposal');
+        panel.accountChanged();await settle();assert(!document.querySelector('dialog').open&&listeners===0,'owner change clears all listeners');checks.push('account privacy cleanup');
+        for(let n=0;n<20;n++){await panel.open();panel.accountChanged();await settle();assert(listeners===0,'no listener leak on reopen');}checks.push('twenty reopen cycles');
+        panel.destroy();
+        let release; const slowDesktop={...desktop,status:()=>new Promise(resolve=>{release=()=>resolve(settings);})};
+        const slowPanel=createHistoryPanel({desktop:slowDesktop,adapter,saveNote:async()=>{},selectedText:()=>'',notify:()=>{}});
+        const opening=slowPanel.open();slowPanel.accountChanged();release();await opening;await settle();
+        assert(listeners===0,'async open after close cannot leak native listener');slowPanel.destroy();checks.push('close during pending native load');
+        document.body.dataset.result='passed';document.querySelector('#result').textContent=JSON.stringify(checks);window.results=checks;
+    }catch(error){panel.destroy();document.body.dataset.result='failed';document.querySelector('#result').textContent=error.stack;}
+};
+</script>

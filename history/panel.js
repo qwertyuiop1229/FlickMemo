@@ -123,9 +123,16 @@ export function createHistoryPanel({ desktop, adapter, saveNote, selectedText, n
     }
     async function source(useLocal) {
         unsubscribe(); local = useLocal; offset = 0; entries = []; selections = [];
+        const ticket = generation;
         controls.hidden = !local; message.textContent = ''; status.textContent = local ? '' : '同期された新しい50件を表示。コピーは押したときだけ実行します。';
         render(); renderSelection();
-        if (local) { await load(); stopNative = await desktop.changed(() => { clearTimeout(debounce); debounce = setTimeout(() => load().catch(error), 150); }); }
+        if (local) {
+            await load();
+            if (!dialog.open || generation !== ticket) return;
+            const stop = await desktop.changed(() => { clearTimeout(debounce); debounce = setTimeout(() => load().catch(error), 150); });
+            if (!dialog.open || generation !== ticket) { stop(); return; }
+            stopNative = stop;
+        }
         else { stopHistory = adapter.watchHistory(values => { entries = values; render(); }, error); }
         try { stopSelection = adapter.watchSelection(values => { selections = values; renderSelection(); }, error); } catch { /* Guest mode can use local history. */ }
         timer = setInterval(() => { if (selections.some(value => !validSelection(value))) { selections = selections.filter(value => validSelection(value)); renderSelection(); } }, 1000);

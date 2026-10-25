@@ -73,6 +73,7 @@ async function getClipboardAdapter() {
     return clipboardAdapter;
 }
 async function openHistoryPanel() {
+    const owner = auth.currentUser?.uid || 'guest';
     if (!historyPanel) {
         historyLoading ||= (async () => {
             const [{ createHistoryPanel }, native, adapter] = await Promise.all([
@@ -93,7 +94,7 @@ async function openHistoryPanel() {
         })().catch(error => { historyLoading = null; throw error; });
         historyPanel = await historyLoading;
     }
-    await historyPanel.open();
+    if ((auth.currentUser?.uid || 'guest') === owner) await historyPanel.open();
 }
 
 // ★ 全デバイス対応 コンソールログ収集・保持（開発者タブ用）
@@ -985,7 +986,9 @@ async function loadLocalNotes() {
         pendingLocalIds = new Set(entries.filter(row => row.pending && validNote(row.note)).map(row => row.id));
         pendingDeleteIds = new Set(entries.filter(row => row.pending && row.note === null).map(row => row.id));
         renderList(searchInput.value);
-        if (isGuestMode) initAutoNote();
+        const restore = isDesktop ? localStorage.getItem(`desktop-active:${owner}`) : null;
+        if (restore && currentNotes[restore] && !currentNotes[restore].deletedAt) selectNote(restore, false);
+        else if (isGuestMode) initAutoNote();
     } catch (error) { localSaveError(error); }
 }
 function saveLocalNote(note, pending = true) {
@@ -2243,7 +2246,7 @@ function updateRoomUI(roomId, fullShareUrl = null) {
     if (roomId) {
         roomActiveStatus?.classList.remove('hidden');
         roomCreateSection?.classList.add('hidden');
-        currentActiveShareUrl = fullShareUrl || `${window.location.origin}${window.location.pathname}?room=${roomId}`;
+        currentActiveShareUrl = fullShareUrl || `${isDesktop ? AUTH_ORIGIN + '/' : window.location.origin + window.location.pathname}?room=${roomId}`;
         if (roomStatusUrl) roomStatusUrl.textContent = currentActiveShareUrl;
     } else {
         roomActiveStatus?.classList.add('hidden');

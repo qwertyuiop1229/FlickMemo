@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "app.flickmemo.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev -- --host 127.0.0.1 --port 5175 --strictPort",
+    "beforeDevCommand": "npm run dev:desktop:web",
     "devUrl": "http://127.0.0.1:5175",
     "beforeBuildCommand": "npm run build:desktop",
     "frontendDist": "../dist-desktop"

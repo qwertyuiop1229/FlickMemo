@@ -8,7 +8,7 @@ mod privacy;
 use history_store::{Entry, Stats, Store};
 use serde::Serialize;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Condvar, Mutex,
 };
 use tauri::{Emitter, Manager, State, WebviewWindow};
@@ -32,6 +32,8 @@ pub struct Shared {
     device: String,
     auth_busy: AtomicBool,
     quitting: AtomicBool,
+    diagnostic_directory: Option<std::path::PathBuf>,
+    ready_count: AtomicUsize,
 }
 impl Shared {
     pub fn changed(&self) {
@@ -74,6 +76,9 @@ async fn desktop_settings(
     sync_enabled: bool,
     excluded: Vec<String>,
 ) -> Result<(), String> {
+    if recording && state.diagnostic_directory.is_some() {
+        return Err("診断中は実際のクリップボードを記録しません".into());
+    }
     if excluded.len() > 50
         || excluded.iter().any(|p| {
             p.is_empty()
@@ -114,6 +119,9 @@ async fn desktop_session(
     state: State<'_, Arc<Shared>>,
     session: Option<history_sync::Session>,
 ) -> Result<(), String> {
+    if session.is_some() && state.diagnostic_directory.is_some() {
+        return Err("診断中は実アカウントを使用しません".into());
+    }
     if session.as_ref().is_some_and(|s| {
         s.uid.is_empty()
             || s.uid.len() > 128
@@ -178,12 +186,22 @@ async fn desktop_mutate(
     Ok(())
 }
 #[tauri::command]
-async fn desktop_copy(window: WebviewWindow, text: String) -> Result<(), String> {
+async fn desktop_copy(
+    window: WebviewWindow,
+    state: State<'_, Arc<Shared>>,
+    text: String,
+) -> Result<(), String> {
+    if state.diagnostic_directory.is_some() {
+        return Err("診断中はOSのクリップボードを書き換えません".into());
+    }
     let hwnd = window.hwnd().map_err(|_| "ウィンドウを確認できません")?;
     clipboard::copy_text(&text, hwnd.0)
 }
 #[tauri::command]
 async fn desktop_import(state: State<'_, Arc<Shared>>) -> Result<usize, String> {
+    if state.diagnostic_directory.is_some() {
+        return Err("診断中はOSの履歴を読みません".into());
+    }
     let shared = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || clipboard::import_windows(&shared))
         .await
@@ -191,6 +209,9 @@ async fn desktop_import(state: State<'_, Arc<Shared>>) -> Result<usize, String> 
 }
 #[tauri::command]
 async fn desktop_login(state: State<'_, Arc<Shared>>) -> Result<auth::Credential, String> {
+    if state.diagnostic_directory.is_some() {
+        return Err("診断中はログインを行いません".into());
+    }
     let shared = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || auth::login(shared))
         .await
@@ -206,8 +227,18 @@ async fn desktop_close(window: WebviewWindow, state: State<'_, Arc<Shared>>) -> 
     }
 }
 #[tauri::command]
-async fn desktop_cancel_close(state: State<'_, Arc<Shared>>) {
+async fn desktop_cancel_close(state: State<'_, Arc<Shared>>) -> Result<(), String> {
     state.quitting.store(false, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+async fn desktop_ready(state: State<'_, Arc<Shared>>) -> Result<bool, String> {
+    if state.diagnostic_directory.is_some() {
+        state.ready_count.fetch_add(1, Ordering::SeqCst);
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn show(app: &tauri::AppHandle) -> tauri::Result<()> {
@@ -217,7 +248,12 @@ fn show(app: &tauri::AppHandle) -> tauri::Result<()> {
         window.set_focus()?;
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()));
+    if let Some(root) = app.state::<Arc<Shared>>().diagnostic_directory.as_ref() {
+        builder = builder.data_directory(root.join("webview"));
+    }
+    builder
         .title("FlickMemo")
         .inner_size(1100., 760.)
         .min_inner_size(500., 480.)
@@ -233,11 +269,65 @@ fn show(app: &tauri::AppHandle) -> tauri::Result<()> {
         .build()?;
     Ok(())
 }
+fn diagnostic_smoke(shared: Arc<Shared>) {
+    std::thread::spawn(move || {
+        let root = shared.diagnostic_directory.as_ref().unwrap();
+        let report = |cycle: usize, stage: &str, error: Option<&str>| {
+            let data = serde_json::json!({"pid":std::process::id(),"cycle":cycle,"stage":stage,"error":error,"readyCount":shared.ready_count.load(Ordering::SeqCst)});
+            let _ = std::fs::write(root.join("result.json"), serde_json::to_vec(&data).unwrap());
+        };
+        let wait = |predicate: &dyn Fn() -> bool| {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(25);
+            while std::time::Instant::now() < until {
+                if predicate() {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            false
+        };
+        report(0, "starting", None);
+        for cycle in 1..=20 {
+            if cycle > 1 {
+                let app = shared.app.clone();
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    let _ = show(&handle);
+                });
+            }
+            if !wait(&|| shared.ready_count.load(Ordering::SeqCst) >= cycle) {
+                report(cycle, "failed", Some("WebView/IPC startup timed out"));
+                shared.app.exit(1);
+                return;
+            }
+            report(cycle, "open", None);
+            std::thread::sleep(std::time::Duration::from_millis(
+                if cycle == 1 || cycle == 20 { 2000 } else { 100 },
+            ));
+            let _ = shared.app.emit_to("main", "desktop-close-requested", ());
+            if !wait(&|| shared.app.get_webview_window("main").is_none()) {
+                report(cycle, "failed", Some("WebView destroy timed out"));
+                shared.app.exit(1);
+                return;
+            }
+            report(cycle, "closed", None);
+            std::thread::sleep(std::time::Duration::from_millis(
+                if cycle == 1 || cycle == 20 { 5000 } else { 100 },
+            ));
+        }
+        report(20, "passed", None);
+        shared.app.exit(0);
+    });
+}
 fn main() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+    let diagnostic = std::env::args().any(|a| a == "--diagnostic-smoke");
+    let mut builder = tauri::Builder::default();
+    if !diagnostic {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
             let _ = show(app);
-        }))
+        }));
+    }
+    builder
         .invoke_handler(tauri::generate_handler![
             desktop_status,
             desktop_settings,
@@ -248,10 +338,19 @@ fn main() {
             desktop_import,
             desktop_login,
             desktop_close,
-            desktop_cancel_close
+            desktop_cancel_close,
+            desktop_ready
         ])
-        .setup(|app| {
-            let directory = app.path().app_local_data_dir()?;
+        .setup(move |app| {
+            let directory = if diagnostic {
+                std::env::temp_dir().join(format!(
+                    "FlickMemo-diagnostic-{}-{}",
+                    std::process::id(),
+                    uuid::Uuid::new_v4().simple()
+                ))
+            } else {
+                app.path().app_local_data_dir()?
+            };
             std::fs::create_dir_all(&directory)?;
             let store = Store::open(&directory.join("history.sqlite3"))?;
             let session: Option<history_sync::Session> = store
@@ -297,13 +396,23 @@ fn main() {
                 app: app.handle().clone(),
                 auth_busy: AtomicBool::new(false),
                 quitting: AtomicBool::new(false),
+                diagnostic_directory: if diagnostic {
+                    Some(directory.clone())
+                } else {
+                    None
+                },
+                ready_count: AtomicUsize::new(0),
             });
-            match clipboard::start(shared.clone()) {
-                Ok(()) => shared.inner.lock().unwrap().listener_ready = true,
-                Err(error) => shared.inner.lock().unwrap().last_error = Some(error),
+            if !diagnostic {
+                match clipboard::start(shared.clone()) {
+                    Ok(()) => shared.inner.lock().unwrap().listener_ready = true,
+                    Err(error) => shared.inner.lock().unwrap().last_error = Some(error),
+                }
             }
             app.manage(shared.clone());
-            history_sync::start(shared.clone());
+            if !diagnostic {
+                history_sync::start(shared.clone());
+            }
             use tauri::{
                 menu::{Menu, MenuItem},
                 tray::TrayIconBuilder,
@@ -345,6 +454,9 @@ fn main() {
                 })
                 .build(app)?;
             show(app.handle())?;
+            if diagnostic {
+                diagnostic_smoke(shared);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
