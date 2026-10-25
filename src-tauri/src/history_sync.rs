@@ -38,8 +38,9 @@ pub fn start(shared: Arc<Shared>) {
                 Ok(s) => s,
                 Err(_) => return,
             };
-            let enabled =
-                inner.sync_enabled && inner.session.as_ref().is_some_and(|s| s.uid == inner.owner);
+            let enabled = inner.session_verified
+                && inner.sync_enabled
+                && inner.session.as_ref().is_some_and(|s| s.uid == inner.owner);
             if !enabled {
                 token = None;
             }

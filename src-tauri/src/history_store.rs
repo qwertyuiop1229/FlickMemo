@@ -54,7 +54,8 @@ impl Store {
                 uploaded INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(owner,id));
             CREATE INDEX IF NOT EXISTS history_page ON history(owner,deleted,updated DESC);
-            CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value BLOB NOT NULL);").map_err(db_error)?;
+            CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS imports(owner TEXT NOT NULL,source TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(owner,source));").map_err(db_error)?;
         let device = match db.query_row("SELECT value FROM settings WHERE key='device'", [], |r| {
             r.get::<_, String>(0)
         }) {
@@ -113,7 +114,7 @@ impl Store {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional().map_err(db_error)?;
         if let Some((id, data, old_kind)) = last {
             if old_kind == kind && privacy::unseal(&data, owner)? == text.as_bytes() {
-                self.db.execute("UPDATE history SET updated=?3,expires=?4,count=count+1,dirty=1 WHERE owner=?1 AND id=?2",
+                self.db.execute("UPDATE history SET updated=MAX(updated+1,?3),expires=?4,count=count+1,dirty=1 WHERE owner=?1 AND id=?2",
                     params![owner,id,now(),now()+7*86400000]).map_err(db_error)?;
                 return Ok(());
             }
@@ -263,6 +264,38 @@ impl Store {
             .map_err(db_error)?;
         value.map(|data| privacy::unseal(&data, key)).transpose()
     }
+    pub fn was_imported(&self, owner: &str, source: &str) -> Result<bool, String> {
+        self.db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM imports WHERE owner=?1 AND source=?2)",
+                params![owner, source],
+                |r| r.get(0),
+            )
+            .map_err(db_error)
+    }
+    pub fn record_import(
+        &mut self,
+        owner: &str,
+        source: &str,
+        text: &str,
+        kind: &str,
+    ) -> Result<bool, String> {
+        if source.is_empty() || source.len() > 256 {
+            return Err("Windows履歴のIDが不正です".into());
+        }
+        if self.was_imported(owner, source)? {
+            return Ok(false);
+        }
+        self.record(owner, text, kind)?;
+        self.db
+            .execute(
+                "INSERT OR IGNORE INTO imports VALUES(?1,?2,?3)",
+                params![owner, source, now()],
+            )
+            .map_err(db_error)?;
+        self.db.execute("DELETE FROM imports WHERE owner=?1 AND (created<?2 OR rowid NOT IN (SELECT rowid FROM imports WHERE owner=?1 ORDER BY created DESC,rowid DESC LIMIT 2000))",params![owner,now()-7*86400000]).map_err(db_error)?;
+        Ok(true)
+    }
     pub fn prune_all(&mut self) -> Result<(), String> {
         let owners: Vec<String> = {
             let mut stmt = self
@@ -377,5 +410,13 @@ mod tests {
         assert_eq!(s.page("a", 0, "", false).unwrap().len(), 50);
         assert_eq!(s.page("a", 50, "", false).unwrap().len(), 11);
         assert_eq!(s.page("a", 0, "", true).unwrap().len(), 10);
+    }
+    #[test]
+    fn win_v_import_is_idempotent_and_owner_scoped() {
+        let mut s = store();
+        assert!(s.record_import("a", "win-id-1", "日本語", "text").unwrap());
+        assert!(!s.record_import("a", "win-id-1", "日本語", "text").unwrap());
+        assert_eq!(s.page("a", 0, "", false).unwrap()[0].count, 1);
+        assert!(s.record_import("b", "win-id-1", "日本語", "text").unwrap());
     }
 }

@@ -371,10 +371,18 @@ pub fn import_windows(shared: &Shared) -> Result<usize, String> {
     let mut saved = 0;
     // Windows history itself is bounded. Process oldest first, one item at a time.
     for index in (0..items.Size().map_err(|_| "履歴件数を読めません")?.min(1000)).rev() {
-        let view = items
-            .GetAt(index)
-            .and_then(|v| v.Content())
-            .map_err(|_| "履歴内容を読めません")?;
+        let item = items.GetAt(index).map_err(|_| "Windows履歴を読めません")?;
+        let source = item
+            .Id()
+            .map_err(|_| "Windows履歴のIDを読めません")?
+            .to_string();
+        {
+            let s = shared.inner.lock().map_err(|_| "履歴を読めません")?;
+            if s.store.was_imported(&owner, &source)? {
+                continue;
+            }
+        }
+        let view = item.Content().map_err(|_| "履歴内容を読めません")?;
         let kind;
         let text;
         if view
@@ -407,8 +415,9 @@ pub fn import_windows(shared: &Shared) -> Result<usize, String> {
         {
             return Err("アカウントが変わったため取込みを中止しました".into());
         }
-        s.store.record(&owner, &text, kind)?;
-        saved += 1;
+        if s.store.record_import(&owner, &source, &text, kind)? {
+            saved += 1;
+        }
     }
     shared.wake.notify_one();
     shared.changed();

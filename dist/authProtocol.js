@@ -36,3 +36,18 @@ export function authRequestFromUrl(url, now = Date.now()) {
     };
     return validAuthRequest(request, now) ? request : null;
 }
+
+// Desktop callbacks always target loopback, never a caller-supplied host or URL.
+export function desktopAuthRequestFromUrl(url, now = Date.now()) {
+    const parsed = new URL(url);
+    const params = parsed.searchParams;
+    if (parsed.origin !== AUTH_ORIGIN || !['/auth', '/auth.html'].includes(parsed.pathname) || params.has('extension_id')) return null;
+    if (['desktop_port', 'state', 'created_at'].some(key => params.getAll(key).length !== 1)) return null;
+    const port = params.get('desktop_port');
+    const state = params.get('state');
+    const createdAt = Number(params.get('created_at'));
+    if (!/^[1-9]\d{3,4}$/.test(port || '') || Number(port) < 1024 || Number(port) > 65535 ||
+        !/^[a-f0-9]{64}$/.test(state || '') || !Number.isSafeInteger(createdAt) ||
+        now < createdAt || now - createdAt >= AUTH_TTL_MS) return null;
+    return { port: Number(port), state, createdAt };
+}

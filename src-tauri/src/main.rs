@@ -21,6 +21,7 @@ pub struct Inner {
     locked: bool,
     sync_enabled: bool,
     session: Option<history_sync::Session>,
+    session_verified: bool,
     last_error: Option<String>,
     excluded: Vec<String>,
     listener_ready: bool,
@@ -104,7 +105,7 @@ async fn desktop_settings(
     if recording && !s.listener_ready {
         return Err("Windowsの変更通知を利用できません".into());
     }
-    if sync_enabled && s.owner == "guest" {
+    if sync_enabled && (s.owner == "guest" || !s.session_verified) {
         return Err("同期にはGoogleログインが必要です".into());
     }
     let owner = s.owner.clone();
@@ -153,21 +154,27 @@ async fn desktop_session(
         .as_ref()
         .map(|s| s.uid.clone())
         .unwrap_or("guest".into());
-    let enabled = s
-        .store
-        .secret(&format!("sync:{owner}"))?
-        .is_some_and(|v| v == b"true");
     if s.owner != owner {
         s.recording = false;
         s.generation += 1;
     }
     s.owner = owner;
-    s.session = session;
-    s.sync_enabled = enabled && s.session.is_some();
+    // Fail closed before disk IO. A failed preference/token write must not leave
+    // a previous account capturing or sending while the UI shows a new one.
+    s.session_verified = false;
+    s.sync_enabled = false;
+    s.session = None;
+    let enabled = s
+        .store
+        .secret(&format!("sync:{}", s.owner))?
+        .is_some_and(|v| v == b"true");
     s.store.set_secret(
         "session",
-        &serde_json::to_vec(&s.session).map_err(|_| "認証情報を保存できません")?,
+        &serde_json::to_vec(&session).map_err(|_| "認証情報を保存できません")?,
     )?;
+    s.session = session;
+    s.session_verified = true;
+    s.sync_enabled = enabled && s.session.is_some();
     drop(s);
     state.wake.notify_one();
     state.changed();
@@ -400,6 +407,7 @@ fn main() {
                     locked: false,
                     sync_enabled,
                     session,
+                    session_verified: false,
                     last_error: None,
                     excluded,
                     listener_ready: false,
