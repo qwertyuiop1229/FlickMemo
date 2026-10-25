@@ -56,7 +56,7 @@ async function waitForWindows(state) {
             const response = await fetch(`https://api.github.com/repos/${state.repository}/actions/runs?head_sha=${state.commit}&event=push&per_page=20`, { signal: AbortSignal.timeout(15_000) }).catch(() => null);
             if (response?.ok) {
                 const { workflow_runs: runs } = await response.json();
-                const job = runs.find(value => value.name === 'Windows desktop checks' && value.head_sha === state.commit);
+                const job = runs.find(value => (value.name === 'Windows desktop checks' || value.path === '.github/workflows/windows.yml') && value.head_sha === state.commit);
                 if (job) {
                     const status = `${job.status}/${job.conclusion || ''}`;
                     if (status !== lastStatus) { console.log(`Windows: ${status} ${job.html_url}`); lastStatus = status; }

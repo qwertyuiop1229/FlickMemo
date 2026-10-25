@@ -10,7 +10,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   windows:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release: Web and Windows v')
+    if: >-
+      github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release: Web and Windows v')
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -54,7 +55,7 @@ jobs:
       - name: Isolated WebView lifecycle and private memory sample
         run: ./scripts/measure-windows.ps1 -Executable ./src-tauri/target/release/flickmemo-desktop.exe
       - name: Publish verified versioned Windows files
-        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: Web and Windows v')
+        if: github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/publish-windows.mjs

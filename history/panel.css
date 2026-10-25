@@ -19,7 +19,7 @@
 .history-dialog summary{cursor:pointer;font-size:12px;padding:6px 0;color:var(--m3-text-variant,#beb5ac)}
 .history-dialog label{display:block;font-size:12px;margin:9px 0}
 .history-dialog input[type=checkbox]{accent-color:#d9b59b;vertical-align:middle;margin-right:6px}
-.history-dialog textarea,.history-dialog input[type=search]{width:100%;box-sizing:border-box;background:var(--m3-surface,#242323);color:inherit;border:1px solid var(--m3-border,#494441);border-radius:10px;padding:10px 12px;font:inherit;font-size:13px!important}
+.history-dialog textarea,.history-dialog input[type=search]{width:100%;box-sizing:border-box;background:var(--m3-surface,#242323);color:inherit;border:1px solid var(--m3-border,#494441);border-radius:10px;padding:10px 12px;font:inherit;font-size:16px!important}
 .history-dialog textarea{margin-top:8px;resize:vertical;min-height:70px}
 .history-help{font-size:11px;color:var(--m3-text-muted,#a29a93);line-height:1.7;margin:10px 0}
 .history-sources{display:flex;gap:4px;align-self:flex-start;background:var(--m3-surface,#242323);padding:4px;border-radius:12px;flex:none}
