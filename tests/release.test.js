@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { bump, nextVersion } from '../bump.js';
 import { repositoryFromRemote, validateRelease, verifyAsset, releaseUrl } from '../scripts/release.mjs';
 import { acquireDeployLock } from '../scripts/deploy-lock.mjs';
+import { windowsInstallerUrl } from '../platform/windowsRelease.js';
 
 test('one bump synchronizes web, extension, native Cargo and installer versions', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flickmemo-version-'));
@@ -42,4 +43,11 @@ test('concurrent deployment is refused and its lock is released after completion
     const root=fs.mkdtempSync(path.join(os.tmpdir(),'flickmemo-lock-'));const file=path.join(root,'.deploy.lock');
     try{const release=await acquireDeployLock(file);await assert.rejects(acquireDeployLock(file),/実行中/);await release();const second=await acquireDeployLock(file);await second();assert.equal(fs.existsSync(file),false);}
     finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+test('public installer links only accept the official versioned GitHub release',()=>{
+    const release={schemaVersion:1,repository:'qwertyuiop1229/FlickMemo',version:'1.3.88',commit:'a'.repeat(40),files:{'FlickMemo-Setup.exe':{bytes:1024,sha256:'b'.repeat(64)}}};
+    assert.equal(windowsInstallerUrl(release),'https://github.com/qwertyuiop1229/FlickMemo/releases/download/v1.3.88/FlickMemo-Setup.exe');
+    for(const change of [{repository:'attacker/FlickMemo'},{version:'../../evil'},{version:'javascript:alert(1)'},{commit:''},{schemaVersion:2},{files:{}}]) assert.throws(()=>windowsInstallerUrl({...release,...change}));
+    assert.throws(()=>windowsInstallerUrl({...release,files:{'FlickMemo-Setup.exe':{bytes:0,sha256:'b'.repeat(64)}}}));
+    assert.throws(()=>windowsInstallerUrl('<html>SPA fallback</html>'));
 });

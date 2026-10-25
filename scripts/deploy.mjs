@@ -107,10 +107,14 @@ async function main() {
     await npm('build'); await npm('verify-build');
     const directory = path.join(root, 'dist/windows');
     await fs.mkdir(directory, { recursive: true });
+    // Spark Hosting forbids executable distribution. Keep verified binaries local;
+    // the website links to the immutable public GitHub Release assets instead.
+    const binaries = path.join(root, 'releases/windows', state.version);
+    await fs.mkdir(binaries, { recursive: true });
     for (const name of RELEASE_FILES) {
         const bytes = await download(releaseUrl(repository, state.version, name), release.files[name].bytes);
         verifyAsset(bytes, release.files[name]);
-        await fs.writeFile(path.join(directory, name), bytes);
+        await fs.writeFile(path.join(binaries, name), bytes);
     }
     await fs.writeFile(path.join(directory, 'release.json'), JSON.stringify(release, null, 2));
     // The installed app/website now has one atomically published Hosting version.
