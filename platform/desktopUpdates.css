@@ -1,0 +1,5 @@
+.desktop-update-banner[hidden]{display:none}
+.desktop-update-banner{position:fixed;left:20px;bottom:20px;z-index:10000;width:min(360px,calc(100vw - 40px));box-sizing:border-box;padding:18px 20px;border:1px solid #64574c;border-radius:16px;background:#262422;color:#f1e6db;box-shadow:0 8px 32px #0006;font-size:14px;line-height:1.6}
+.desktop-update-banner p{margin:0 0 12px;overflow-wrap:anywhere}.desktop-update-banner div{display:flex;gap:10px;flex-wrap:wrap}
+.desktop-update-banner button{padding:8px 14px;border:1px solid #746457;border-radius:10px;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.desktop-update-banner button:first-child{background:#e4c7ad;color:#302218;border-color:transparent}.desktop-update-banner button:disabled{opacity:.6;cursor:wait}.desktop-update-banner button:focus-visible{outline:2px solid #e4c7ad;outline-offset:3px}

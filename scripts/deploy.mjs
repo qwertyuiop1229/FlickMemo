@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { repositoryFromRemote, releaseUrl, validateRelease, verifyAsset, RELEASE_FILES } from './release.mjs';
 import { acquireDeployLock } from './deploy-lock.mjs';
+import { verifySigningKey, signUpdate } from './updater-signing.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const statePath = path.join(root, '.deploy-state.json');
@@ -73,6 +74,7 @@ async function main() {
     if (!npmCli || !existsSync(npmCli)) throw new Error('npm run deploy から実行してください');
     if (!firebaseCli || !existsSync(firebaseCli)) throw new Error('Firebase CLIが見つかりません。npm install -g firebase-tools で導入してください');
     const repository = repositoryFromRemote(await git('remote', 'get-url', 'origin'));
+    await verifySigningKey(root);
     await run(process.execPath, [firebaseCli, '--version'], true);
     let state = await fs.readFile(statePath, 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
     if (state && (state.repository !== repository || state.commit !== await git('rev-parse', 'HEAD') || await git('status', '--porcelain', '--', '.', ':(exclude)dist'))) {
@@ -117,6 +119,8 @@ async function main() {
         await fs.writeFile(path.join(binaries, name), bytes);
     }
     await fs.writeFile(path.join(directory, 'release.json'), JSON.stringify(release, null, 2));
+    const update = await signUpdate(root,release,path.join(binaries,'FlickMemo-Setup.exe'));
+    await fs.writeFile(path.join(directory,'update.json'),JSON.stringify(update,null,2));
     // The installed app/website now has one atomically published Hosting version.
     await run(process.execPath, [firebaseCli, 'deploy', '--only', 'hosting']);
     await fs.rm(statePath);

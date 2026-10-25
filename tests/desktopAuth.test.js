@@ -41,5 +41,6 @@ test('hosted desktop login posts credentials only to the nonce-bound IPv4 loopba
         assert.equal(dom.window.location.href, url);
         assert.ok(!calls[0].action.includes('token'));
         assert.ok(!dom.window.document.getElementById('msg').textContent.includes('synthetic'));
+        assert.equal(dom.window.document.querySelector('meta[name="referrer"]').content,'origin');
     } finally { dom.window.close(); }
 });

@@ -37,7 +37,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.89";
+const APP_VERSION = "1.3.90";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -3198,12 +3198,5 @@ if (isDesktop) {
                 localStorage.setItem(`desktop-active:${cacheOwner()}`, activeNoteId || '');
             } finally { document.body.inert = false; }
         }});
-        const update = document.getElementById('btn-update-check');
-        if (update) {
-            update.textContent = 'Windows版の最新版をダウンロード';
-            update.onclick = () => desktop.openDownload().catch(error => showToast(String(error)));
-            const description = update.previousElementSibling;
-            if (description?.classList.contains('settings-desc')) description.textContent = '最新版のインストーラーで更新します。記録を停止してトレイから終了した後、インストーラーを実行してください。';
-        }
     }).catch(error => showToast('Windows機能を開始できませんでした: ' + String(error)));
 }

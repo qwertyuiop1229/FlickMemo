@@ -7,6 +7,7 @@ mod history_store;
 mod history_sync;
 mod privacy;
 mod retry;
+mod updates;
 
 use history_store::{Entry, Stats, Store};
 use serde::Serialize;
@@ -273,7 +274,17 @@ async fn desktop_login(state: State<'_, Arc<Shared>>) -> Result<auth::Credential
 }
 #[tauri::command]
 async fn desktop_close(window: WebviewWindow, state: State<'_, Arc<Shared>>) -> Result<(), String> {
+    if state
+        .app
+        .state::<Arc<updates::Updates>>()
+        .mode
+        .load(Ordering::SeqCst)
+        >= 2
+    {
+        return Err("更新処理中です。完了後に閉じてください".into());
+    }
     state.auth_cancel.store(true, Ordering::SeqCst);
+    state.app.state::<Arc<updates::Updates>>().discard();
     if state.quitting.load(Ordering::SeqCst) {
         window.app_handle().exit(0);
         Ok(())
@@ -312,6 +323,7 @@ fn show(app: &tauri::AppHandle) -> tauri::Result<()> {
         window.show()?;
         window.unminimize()?;
         window.set_focus()?;
+        let _ = window.emit("desktop-window-opened", ());
         return Ok(());
     }
     let mut builder =
@@ -416,6 +428,7 @@ fn main() {
         }));
     }
     let built = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             desktop_status,
             desktop_open_download,
@@ -429,7 +442,10 @@ fn main() {
             desktop_close,
             desktop_cancel_close,
             desktop_ready,
-            desktop_smoke_failed
+            desktop_smoke_failed,
+            updates::desktop_update_check,
+            updates::desktop_update_download,
+            updates::desktop_update_install
         ])
         .setup(move |app| {
             let directory = if diagnostic {
@@ -503,6 +519,7 @@ fn main() {
                 }
             }
             app.manage(shared.clone());
+            app.manage(Arc::new(updates::Updates::default()));
             history_sync::start(shared.clone());
             use tauri::{
                 menu::{Menu, MenuItem},

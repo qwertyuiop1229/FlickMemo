@@ -27,10 +27,18 @@ Webの設定→アプリ情報にも、「拡張機能」の上に「Windows版�
 
 Node.js 22.12以降、Git、`npm ci`、Firebase CLIとFirebaseログイン、GitHubへのpush権限が必要。ネイティブのビルドはGitHubで行うため、この配信用PCにRust/C++ビルド環境は不要。GitHub Actionsを有効にし、Release作成に必要な`contents: write`権限を許可する。
 
-配布物はWindows 10/11 x64向けの未署名の試用版。SmartScreenの警告が出る場合がある。署名付き自動更新は未実装で、更新時はトレイから終了して新しいインストーラーを実行する。WebView2が未導入ならインストーラーが導入を試みるため通信が必要。組織のインストール制限まで回避するものではない。
+配布物はWindows 10/11 x64向けの試用版。Windowsのコード署名（Authenticode）は未対応なのでSmartScreenの警告が出る場合がある。更新用の署名は別に導入しており、新しい版では画面を開くたびに更新を確認し、「更新して再起動」から適用できる。自動更新未対応の旧版からは、最初の一度だけ新しいインストーラーを実行する。WebView2が未導入ならインストーラーが導入を試みるため通信が必要。組織のインストール制限まで回避するものではない。
 
 `FlickMemo-Portable.exe`もWebView2を使い、アプリデータはWindowsユーザーのアプリデータ領域に保存する。USB内ですべて完結するポータブルプロファイルではない。
 
 GitHub Releaseは公開ダウンロードに使用し、期限付きActions Artifactsは検証ログと補助的な配布物の保存に使用する。インストーラーはGitへコミットしない。
 
 Firebase Sparkプランは`.exe`のHosting配信を禁止しているため、Hostingには`windows/release.json`だけを置く。インストーラーを拡張子変更などでHostingへ置かず、GitHubの正規の公開Releaseから配布する。課金プラン変更は不要。公式説明: https://firebase.google.com/support/faq#hosting-exe-restrictions
+
+## 自動更新用の署名
+
+インストーラーはGitHubでビルド・検証し、配信PCでサイズとハッシュを確認してからTauri CLIで署名する。秘密鍵は配信PCのユーザー専用フォルダ `~/.flickmemo/updater-v1.key` に保存し、GitHub・Hostingへ送らない。公開鍵だけをアプリへ組み込む。署名とバージョンを含む`windows/update.json`をHostingへ配信し、インストーラー本体はGitHub Releaseから取得する。
+
+秘密鍵と対応する`.pub`を安全にバックアップすること。配信PCを変える場合は同じ鍵を安全に復元する。`npm run deploy`は鍵がない、または公開鍵と一致しない場合に公開を止める。既存利用者へ届く更新を継続できなくなるため、鍵の再生成・上書きはしない。`scripts/setup-updater-key.mjs`はアプリが公開鍵未設定の場合だけ使う初回セットアップである。
+
+更新ファイルの署名はバージョンにも結び付ける。新しいバージョン名を古い正規インストーラーに付けた更新も拒否する。更新がない場合・通信断時はアプリをそのまま使用できる。ダウンロード・検証後にメモを保存し、保存失敗時はインストーラーを起動しない。画面を閉じると未適用の更新データを解放する。

@@ -134,7 +134,7 @@ fn respond(stream: &mut TcpStream, success: bool) {
     let body = if success {
         "<!doctype html><meta charset=utf-8><title>FlickMemo</title><p>FlickMemoにログイン情報を渡しました。このタブを閉じてアプリに戻ってください。</p>"
     } else {
-        "Invalid callback"
+        "<!doctype html><meta charset=utf-8><title>FlickMemo — ログインを確認できません</title><p>ログイン情報を確認できませんでした。このタブを閉じ、FlickMemoアプリからログインをやり直してください。</p>"
     };
     let _=write!(stream,"HTTP/1.1 {}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\nConnection: close\r\n\r\n{}",if success {"200 OK"}else{"403 Forbidden"},body.len(),body);
 }
@@ -186,11 +186,41 @@ pub fn login(shared: Arc<Shared>) -> Result<Credential, String> {
 mod tests {
     use super::*;
     #[test]
+    fn loopback_receives_fragmented_browser_post_and_serializes_expected_fields() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let state = "f".repeat(64);
+        let nonce = state.clone();
+        let writer = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = format!(
+                "state={nonce}&googleIdToken=synthetic-id&googleAccessToken=synthetic-access"
+            );
+            write!(stream,"POST /callback HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {ORIGIN}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n",body.len()).unwrap();
+            for chunk in body.as_bytes().chunks(7) {
+                stream.write_all(chunk).unwrap();
+            }
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        let result = receive(&mut stream, port, &state).unwrap();
+        writer.join().unwrap();
+        let json = serde_json::to_value(result).unwrap();
+        assert_eq!(json["googleIdToken"], "synthetic-id");
+        assert_eq!(json["googleAccessToken"], "synthetic-access");
+    }
+    #[test]
     fn loopback_rejects_cross_origin_bad_state_duplicate_fields_and_oversized_tokens() {
         let state = "a".repeat(64);
         let body = format!("state={state}&googleIdToken=synthetic-token");
         let header=format!("POST /callback HTTP/1.1\r\nHost: 127.0.0.1:49152\r\nOrigin: {ORIGIN}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n",body.len());
         assert!(parse_callback(&header, body.as_bytes(), 49152, &state).is_some());
+        assert!(parse_callback(
+            &header.replace(ORIGIN, "null"),
+            body.as_bytes(),
+            49152,
+            &state
+        )
+        .is_none());
         assert!(parse_callback(
             &header.replace(ORIGIN, "https://evil.example"),
             body.as_bytes(),

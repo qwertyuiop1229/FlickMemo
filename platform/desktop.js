@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { createDesktopUpdates } from './desktopUpdates.js';
+import './desktopUpdates.css';
 
 let expectedOwner = 'guest';
 export const desktop = {
@@ -11,6 +13,9 @@ export const desktop = {
     copy: text => invoke('desktop_copy', { text }),
     importWindows: () => invoke('desktop_import', { expectedOwner }),
     login: () => invoke('desktop_login'),
+    updateCheck: () => invoke('desktop_update_check'),
+    updateDownload: () => invoke('desktop_update_download'),
+    updateInstall: () => invoke('desktop_update_install'),
     openDownload: (section = 'windows') => invoke('desktop_open_download', { section }),
     changed: callback => listen('desktop-history-changed', callback)
 };
@@ -38,6 +43,11 @@ export async function setupDesktop({ prepareClose, notify }) {
         });
     }
     const diagnostic = await invoke('desktop_ready', { verified: false });
+    if(!diagnostic){
+        const updates=createDesktopUpdates({api:desktop,prepareClose,notify});
+        await listen('desktop-window-opened',()=>updates.check());
+        void updates.check();
+    }
     if (diagnostic) {
         // Runs only in a fresh native diagnostic profile. No real notes/account/clipboard.
         try {

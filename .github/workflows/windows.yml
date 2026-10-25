@@ -53,8 +53,8 @@ jobs:
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: Build Windows installer
         run: npm run package:windows -- --ci
-      - name: Isolated WebView lifecycle and private memory sample
-        run: ./scripts/measure-windows.ps1 -Executable ./src-tauri/target/release/flickmemo-desktop.exe
+      - name: Isolated installer, reinstall, WebView lifecycle and uninstall
+        run: ./scripts/verify-windows-installer.ps1
       - name: Publish verified versioned Windows files
         if: github.event_name == 'push'
         env:
@@ -69,6 +69,7 @@ jobs:
             desktop-reports/memory.csv
             desktop-reports/lifecycle.json
             desktop-reports/clipboard.json
+            desktop-reports/installer.json
           if-no-files-found: error
           retention-days: 7
       - uses: actions/cache/save@v4

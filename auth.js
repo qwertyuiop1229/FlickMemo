@@ -21,6 +21,11 @@ async function complete(result) {
         if (!desktopAuthRequestFromUrl(location.href)) throw new Error('認証の有効期限が切れました。Windowsアプリから再試行してください');
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (!credential?.idToken && !credential?.accessToken) throw new Error('認証情報を取得できませんでした');
+        // no-referrer turns the Origin of this HTTPS -> loopback POST into "null"
+        // in Chromium. Send only the public origin, preserving native origin checks.
+        let referrer = document.querySelector('meta[name="referrer"]');
+        if (!referrer) { referrer = document.createElement('meta'); referrer.name = 'referrer'; document.head.append(referrer); }
+        referrer.content = 'origin';
         // Top-level POST navigation: credentials never appear in a callback URL or browser history.
         // Native receiver verifies the exact HTTPS Origin, one-time state, length and deadline.
         const form = document.createElement('form');
