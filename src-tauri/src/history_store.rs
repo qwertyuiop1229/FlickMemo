@@ -154,13 +154,13 @@ impl Store {
     pub fn prune(&mut self, owner: &str) -> Result<(), String> {
         let time = now();
         // Keep tombstones for offline sync. Destroy the encrypted content on deletion.
-        self.db.execute("UPDATE history SET deleted=?2,updated=?2,bytes=0,ciphertext=x'',dirty=1 WHERE owner=?1 AND deleted=0 AND pinned=0 AND expires<?2", params![owner,time]).map_err(db_error)?;
+        self.db.execute("UPDATE history SET deleted=?2,updated=MAX(updated+1,?2),bytes=0,ciphertext=x'',dirty=1 WHERE owner=?1 AND deleted=0 AND pinned=0 AND expires<?2", params![owner,time]).map_err(db_error)?;
         loop {
             let stats = self.stats(owner)?;
             if stats.count <= 1000 && stats.bytes <= MAX_BYTES {
                 break;
             }
-            let n = self.db.execute("UPDATE history SET deleted=?2,updated=?2,bytes=0,ciphertext=x'',dirty=1 WHERE owner=?1 AND id=(SELECT id FROM history WHERE owner=?1 AND deleted=0 AND pinned=0 ORDER BY updated LIMIT 1)", params![owner,time]).map_err(db_error)?;
+            let n = self.db.execute("UPDATE history SET deleted=?2,updated=MAX(updated+1,?2),bytes=0,ciphertext=x'',dirty=1 WHERE owner=?1 AND id=(SELECT id FROM history WHERE owner=?1 AND deleted=0 AND pinned=0 ORDER BY updated LIMIT 1)", params![owner,time]).map_err(db_error)?;
             if n == 0 {
                 return Err("固定した履歴で保存容量がいっぱいです。固定を解除してください".into());
             }
@@ -243,7 +243,7 @@ impl Store {
         }
         match action {
             "delete" => {
-                self.db.execute("UPDATE history SET deleted=?3,updated=?3,bytes=0,ciphertext=x'',dirty=1 WHERE owner=?1 AND id=?2",params![owner,id,now()]).map_err(db_error)?;
+                self.db.execute("UPDATE history SET deleted=?3,updated=MAX(updated+1,?3),bytes=0,ciphertext=x'',dirty=1 WHERE owner=?1 AND id=?2",params![owner,id,now()]).map_err(db_error)?;
             }
             "pin" => {
                 let count: i64 = self
@@ -258,10 +258,10 @@ impl Store {
                 if count >= 100 && !already {
                     return Err("固定できるのは100件までです".into());
                 }
-                self.db.execute("UPDATE history SET pinned=1,updated=?3,dirty=1 WHERE owner=?1 AND id=?2 AND deleted=0",params![owner,id,now()]).map_err(db_error)?;
+                self.db.execute("UPDATE history SET pinned=1,updated=MAX(updated+1,?3),dirty=1 WHERE owner=?1 AND id=?2 AND deleted=0",params![owner,id,now()]).map_err(db_error)?;
             }
             "unpin" => {
-                self.db.execute("UPDATE history SET pinned=0,updated=?3,dirty=1 WHERE owner=?1 AND id=?2 AND deleted=0",params![owner,id,now()]).map_err(db_error)?;
+                self.db.execute("UPDATE history SET pinned=0,updated=MAX(updated+1,?3),dirty=1 WHERE owner=?1 AND id=?2 AND deleted=0",params![owner,id,now()]).map_err(db_error)?;
             }
             _ => return Err("非対応の操作です".into()),
         }
@@ -347,6 +347,31 @@ impl Store {
             )
             .map_err(db_error)?;
         Ok(())
+    }
+    pub fn save_preferences(
+        &mut self,
+        owner: &str,
+        sync: bool,
+        excluded: &[String],
+    ) -> Result<(), String> {
+        let key = format!("sync:{owner}");
+        let flag = privacy::seal(if sync { b"true" } else { b"false" }, &key)?;
+        let exclusions = privacy::seal(
+            &serde_json::to_vec(excluded).map_err(|_| "設定を書き込めません")?,
+            "excluded",
+        )?;
+        let tx = self.db.transaction().map_err(db_error)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings VALUES(?1,?2)",
+            params![key, flag],
+        )
+        .map_err(db_error)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings VALUES('excluded',?1)",
+            [exclusions],
+        )
+        .map_err(db_error)?;
+        tx.commit().map_err(db_error)
     }
 }
 use rusqlite::OptionalExtension;

@@ -7,17 +7,19 @@ const make = (n, kind='text') => ({ id:n.toString(16).padStart(32,'0'),kind,text
 const assert = (value, message) => { if (!value) throw new Error(message); };
 document.querySelector('#run').onclick=async()=>{
     const checks=[]; let rows=[make(1),make(2,'image_placeholder')],copied=[],notes=[],listeners=0,settings={recording:false,syncEnabled:false,owner:'guest',locked:false,listenerReady:true,lastError:null,stats:{count:2,bytes:128},excluded:[]};
-    let nativeChanged=null;
+    let nativeChanged=null,lateCloud=null;
     const desktop={status:async()=>settings,history:async(offset,search)=>rows.filter(row=>row.text.includes(search)).slice(offset,offset+50),changed:async callback=>{listeners++;nativeChanged=callback;return()=>{listeners--;};},
         settings:async value=>{settings={...settings,...value};},importWindows:async()=>2,
         copy:async text=>{copied.push(text);},mutate:async(id,action)=>{if(action==='delete')rows=rows.filter(r=>r.id!==id);else rows.find(r=>r.id===id).pinned=action==='pin';}};
-    const adapter={watchHistory:cb=>{listeners++;cb(rows);return()=>{listeners--;};},watchSelection:()=>{listeners++;return()=>{listeners--;};},shareSelection:async()=>{},stopSelection:async()=>{}};
+    const adapter={watchHistory:cb=>{listeners++;lateCloud=cb;cb(rows);return()=>{listeners--;};},watchSelection:()=>{listeners++;return()=>{listeners--;};},shareSelection:async()=>{},stopSelection:async()=>{}};
     const panel=createHistoryPanel({desktop,adapter,saveNote:async text=>notes.push(text),selectedText:()=>'',notify:()=>{}});
     const settle=()=>new Promise(resolve=>setTimeout(resolve,80));
     const click=async label=>{const button=[...document.querySelectorAll('dialog button')].find(b=>b.textContent===label);assert(button,`Missing button ${label}`);button.click();await settle();};
     try {
         await panel.open();
         assert(listeners===2,'native and selection subscriptions must start after initial load');
+        settings.lastError='synthetic offline';nativeChanged();await new Promise(resolve=>setTimeout(resolve,250));assert(document.querySelector('.history-error').textContent==='synthetic offline','native error visible');
+        settings.lastError=null;nativeChanged();await new Promise(resolve=>setTimeout(resolve,250));assert(document.querySelector('.history-error').textContent==='','recovered error cleared');checks.push('sync recovery clears stale error');
         assert(document.querySelectorAll('.history-card').length===2,'render text and placeholder');
         assert(!document.querySelector('.history-card img'),'clipboard text must never become HTML');checks.push('text XSS prevention');
         const draft=document.querySelector('.history-preferences textarea');draft.closest('details').open=true;
@@ -31,8 +33,12 @@ document.querySelector('#run').onclick=async()=>{
         await click('メモに保存');assert(notes[0]===copied[0],'save exact text');checks.push('memo conversion');
         await click('固定');assert(rows[0].pinned,'pin');checks.push('pin local history');
         await click('削除');assert(rows.length===1,'delete local history');checks.push('delete local history');
+        rows=Array.from({length:51},(_,n)=>make(n+10));nativeChanged();await new Promise(resolve=>setTimeout(resolve,250));
+        await click('次の50件');assert([...document.querySelectorAll('button')].find(b=>b.textContent==='次の50件').disabled,'next must remain disabled on last page');
+        await click('前の50件');assert([...document.querySelectorAll('button')].find(b=>b.textContent==='前の50件').disabled,'previous must remain disabled on first page');checks.push('pagination respects computed disabled state');
         await click('他の端末・クラウド');assert(listeners===2,'local subscription disposed on source switch');checks.push('source subscription disposal');
         panel.accountChanged();await settle();assert(!document.querySelector('dialog').open&&listeners===0,'owner change clears all listeners');checks.push('account privacy cleanup');
+        lateCloud([make(99)]);assert(document.querySelectorAll('.history-card').length===0,'late cloud callback cannot repopulate a closed dialog');checks.push('late callback privacy cleanup');
         for(let n=0;n<20;n++){await panel.open();panel.accountChanged();await settle();assert(listeners===0,'no listener leak on reopen');}checks.push('twenty reopen cycles');
         panel.destroy();
         let release; const slowDesktop={...desktop,status:()=>new Promise(resolve=>{release=()=>resolve(settings);})};

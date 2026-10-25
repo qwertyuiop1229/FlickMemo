@@ -27,6 +27,7 @@ pub struct Inner {
     session: Option<history_sync::Session>,
     session_verified: bool,
     last_error: Option<String>,
+    sync_error: Option<String>,
     excluded: Vec<String>,
     listener_ready: bool,
 }
@@ -41,6 +42,15 @@ pub struct Shared {
     quitting: AtomicBool,
     diagnostic_directory: Option<std::path::PathBuf>,
     ready_count: AtomicUsize,
+}
+impl Inner {
+    pub fn sync_result(&mut self, owner: &str, generation: u64, error: Option<String>) -> bool {
+        if self.owner != owner || self.generation != generation {
+            return false;
+        }
+        self.sync_error = error;
+        true
+    }
 }
 impl Shared {
     pub fn changed(&self) {
@@ -102,7 +112,7 @@ async fn desktop_status(
         owner: s.owner.clone(),
         locked: s.locked,
         listener_ready: s.listener_ready,
-        last_error: s.last_error.clone(),
+        last_error: s.last_error.clone().or_else(|| s.sync_error.clone()),
         stats: s.store.stats(&s.owner)?,
         excluded: s.excluded.clone(),
     })
@@ -137,18 +147,12 @@ async fn desktop_settings(
         return Err("同期にはGoogleログインが必要です".into());
     }
     let owner = s.owner.clone();
-    s.store.set_secret(
-        &format!("sync:{owner}"),
-        if sync_enabled { b"true" } else { b"false" },
-    )?;
-    s.store.set_secret(
-        "excluded",
-        &serde_json::to_vec(&excluded).map_err(|_| "設定を書き込めません")?,
-    )?;
+    s.store.save_preferences(&owner, sync_enabled, &excluded)?;
     s.recording = recording;
     s.sync_enabled = sync_enabled;
     s.excluded = excluded.into_iter().map(|p| p.to_lowercase()).collect();
     s.last_error = None;
+    s.sync_error = None;
     drop(s);
     state.wake.notify_one();
     state.changed();
@@ -185,6 +189,7 @@ async fn desktop_session(
     if s.owner != owner {
         s.recording = false;
         s.generation += 1;
+        s.sync_error = None;
     }
     s.owner = owner;
     // Fail closed before disk IO. A failed preference/token write must not leave
@@ -496,6 +501,7 @@ fn main() {
                     session,
                     session_verified: false,
                     last_error: None,
+                    sync_error: None,
                     excluded,
                     listener_ready: false,
                 }),

@@ -37,7 +37,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.91";
+const APP_VERSION = "1.3.92";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -82,20 +82,24 @@ async function openHistoryPanel() {
             ]);
             return createHistoryPanel({ desktop: native?.desktop, adapter,
                 selectedText: () => historySelection, notify: showToast,
-                saveNote: async text => {
-                    const id = 'note_' + crypto.randomUUID();
-                    const note = { id, title: '', body: text, pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
-                    currentNotes[id] = note;
-                    await saveLocalNote(note);
-                    await localWrites.drain();
-                    renderList(searchInput.value);
-                    syncSaveNote(note);
-                }
+                saveNote: saveHistoryNote
             });
         })().catch(error => { historyLoading = null; throw error; });
         historyPanel = await historyLoading;
     }
     if ((auth.currentUser?.uid || 'guest') === owner) await historyPanel.open();
+}
+
+async function saveHistoryNote(text) {
+    const owner=cacheOwner(),generation=authGeneration;
+    const id='note_'+crypto.randomUUID();
+    const note={id,title:'',body:text,pinned:false,codeCollapsed:{},updatedAt:Date.now()};
+    currentNotes[id]=note;
+    await saveLocalNote(note);
+    await localWrites.drain();
+    if(owner!==cacheOwner() || generation!==authGeneration) return;
+    renderList(searchInput.value);
+    syncSaveNote(note);
 }
 
 // ★ 全デバイス対応 コンソールログ収集・保持（開発者タブ用）

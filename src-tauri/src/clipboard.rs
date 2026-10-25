@@ -315,9 +315,11 @@ fn write_text(text: &str, hwnd: HWND, mark: bool) -> Result<(), String> {
         }
         if mark {
             let marker = RegisterClipboardFormatW(wide("FlickMemo.PrivateClipboard").as_ptr());
-            let flag = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, 4);
-            if marker != 0 && !flag.is_null() && SetClipboardData(marker, flag).is_null() {
-                GlobalFree(flag);
+            if marker != 0 {
+                let flag = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, 4);
+                if !flag.is_null() && SetClipboardData(marker, flag).is_null() {
+                    GlobalFree(flag);
+                }
             }
         }
         Ok(())

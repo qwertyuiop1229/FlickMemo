@@ -46,6 +46,7 @@ pub fn start(shared: Arc<Shared>) {
             if !enabled {
                 token = None;
                 retry.success();
+                inner.sync_error = None;
             }
             if now() - last_prune >= 60000 {
                 if let Err(error) = inner.store.prune_all() {
@@ -128,7 +129,7 @@ pub fn start(shared: Arc<Shared>) {
                         token = Some((owner.clone(), result.id_token, now() + 45 * 60 * 1000));
                     }
                     _ => {
-                        fail(&shared,"同期の認証を更新できません。通信状態を確認し、必要なら再ログインしてください");
+                        fail(&shared,&owner,generation,"同期の認証を更新できません。通信状態を確認し、必要なら再ログインしてください");
                         retry.fail(std::time::Instant::now());
                         continue;
                     }
@@ -159,6 +160,7 @@ pub fn start(shared: Arc<Shared>) {
             match result {
                 Ok(_) => {
                     if let Ok(mut s) = shared.inner.lock() {
+                        s.sync_result(&owner, generation, None);
                         for entry in &entries {
                             if let Err(error) = s.store.ack(&owner, entry) {
                                 s.last_error = Some(error);
@@ -171,6 +173,8 @@ pub fn start(shared: Arc<Shared>) {
                 Err(_) => {
                     fail(
                         &shared,
+                        &owner,
+                        generation,
                         "履歴はこのPCに保存済みです。クラウドへの送信は接続回復後に再試行します",
                     );
                     // Sleep even when work remains; an offline connection never becomes a busy loop.
@@ -181,9 +185,11 @@ pub fn start(shared: Arc<Shared>) {
         }
     });
 }
-fn fail(shared: &Shared, message: &str) {
+fn fail(shared: &Shared, owner: &str, generation: u64, message: &str) {
     if let Ok(mut s) = shared.inner.lock() {
-        s.last_error = Some(message.into());
+        if !s.sync_result(owner, generation, Some(message.into())) {
+            return;
+        }
     }
     shared.changed();
 }

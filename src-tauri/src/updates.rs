@@ -1,6 +1,7 @@
 //! The packaged app accepts only signed, newer installers from its official release.
 use crate::Shared;
 use serde::Serialize;
+use std::io::Read;
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     Arc, Mutex,
@@ -43,6 +44,47 @@ pub struct Info {
 }
 fn allowed_url(version: &str, url: &str) -> bool {
     url == format!("https://github.com/qwertyuiop1229/FlickMemo/releases/download/v{version}/FlickMemo-Setup.exe")
+}
+const MAX_DOWNLOAD: usize = 64 * 1024 * 1024;
+fn read_bounded(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 32 * 1024];
+    loop {
+        let n = reader
+            .read(&mut chunk)
+            .map_err(|_| "更新ファイルの受信に失敗しました")?;
+        if n == 0 {
+            return Ok(bytes);
+        }
+        if n > limit.saturating_sub(bytes.len()) {
+            return Err("更新ファイルが大きすぎます".into());
+        }
+        bytes.extend_from_slice(&chunk[..n]);
+    }
+}
+fn download_verified(update: Update) -> Result<Vec<u8>, String> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(180))
+        .https_only(true)
+        .build()
+        .map_err(|_| "更新の受信を開始できません")?;
+    let response = client
+        .get(update.download_url.clone())
+        .send()
+        .and_then(|r| r.error_for_status())
+        .map_err(|_| "更新ファイルを取得できません")?;
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_DOWNLOAD as u64)
+    {
+        return Err("更新ファイルが大きすぎます".into());
+    }
+    let bytes = read_bounded(response, MAX_DOWNLOAD)?;
+    update
+        .verify(&bytes)
+        .map_err(|_| "更新ファイルの署名・バージョンを検証できません")?;
+    Ok(bytes)
 }
 #[tauri::command]
 pub async fn desktop_update_check(
@@ -112,10 +154,9 @@ pub async fn desktop_update_download(
         .as_ref()
         .map(|p| p.update.clone())
         .ok_or("先に更新を確認してください")?;
-    let bytes=update.download(|_,_|{},||{}).await.map_err(|_|"更新ファイルをダウンロード・検証できませんでした。アプリは変更していません。再試行してください")?;
-    if bytes.len() > 64 * 1024 * 1024 {
-        return Err("更新ファイルが大きすぎます".into());
-    }
+    let bytes = tauri::async_runtime::spawn_blocking(move || download_verified(update))
+        .await
+        .map_err(|_| "更新ファイルの取得を開始できません")??;
     updates
         .pending
         .lock()
@@ -165,6 +206,13 @@ pub async fn desktop_update_install(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn streaming_download_enforces_the_limit_before_retaining_excess_bytes() {
+        assert_eq!(read_bounded(&b"1234"[..], 4).unwrap(), b"1234");
+        assert!(read_bounded(&b"12345"[..], 4).is_err());
+        assert!(read_bounded(std::io::repeat(0), 1024).is_err());
+        assert!(read_bounded(&b"x"[..], 0).is_err());
+    }
     #[test]
     fn real_update_signature_rejects_modified_bytes_and_binds_the_version() {
         use base64::Engine;

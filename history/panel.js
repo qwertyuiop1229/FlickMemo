@@ -38,9 +38,10 @@ export function createHistoryPanel({ desktop, adapter, saveNote, selectedText, n
         if (button) button.disabled = true;
         message.textContent = '';
         try { await fn(); } catch (problem) { if (ticket === lifecycle) error(problem); }
-        finally { if (button?.isConnected) button.disabled = false; }
+        finally { if (button?.isConnected) button.disabled = false; updateControls(); updatePaging(); }
     };
     const copy = async text => { if (desktop) await desktop.copy(text); else await navigator.clipboard.writeText(text); notify('コピーしました'); };
+    function updatePaging() { prev.disabled=offset===0; more.disabled=entries.length<50; }
 
     function renderSelection() {
         const expanded = selectionArea.querySelector('details')?.open;
@@ -87,7 +88,7 @@ export function createHistoryPanel({ desktop, adapter, saveNote, selectedText, n
             empty.append(el('small', search.value ? '別のキーワードで検索してください。' : local ? '「記録を開始」を押してから、文字をコピーしてください。' : '同じアカウントのWindows版でクラウド送信をONにすると表示されます。')); cards.append(empty);
         }
         cards.scrollTop = scroll;
-        paging.hidden = !local; prev.disabled = offset === 0; more.disabled = entries.length < 50;
+        paging.hidden = !local; updatePaging();
         pageLabel.textContent = shown.length ? `${offset + 1}–${offset + shown.length}件` : '0件';
     }
     cards.addEventListener('focusout', () => setTimeout(() => { if (deferredRender && dialog.open && !cards.contains(document.activeElement)) render(); }, 0));
@@ -100,7 +101,7 @@ export function createHistoryPanel({ desktop, adapter, saveNote, selectedText, n
         if (!dialog.open || ticket !== generation || !local) return;
         cards.setAttribute('aria-busy', 'false'); settings = nextSettings; entries = nextEntries;
         status.replaceChildren(el('span', settings.locked ? 'ロック中・記録停止' : settings.recording ? '● 記録中' : '記録停止中', settings.recording && !settings.locked ? 'history-recording' : ''), el('small', `${settings.stats.count}件保存 · ${(settings.stats.bytes / 1024 / 1024).toFixed(2)}MiB`));
-        if (settings.lastError) error(settings.lastError);
+        if (settings.lastError) error(settings.lastError); else message.textContent='';
         updateControls(); render();
     }
     async function saveSettings({ explicit = false, recording } = {}) {
@@ -156,10 +157,10 @@ export function createHistoryPanel({ desktop, adapter, saveNote, selectedText, n
         status.textContent = local ? '読み込み中…' : 'クラウドの新しい50件 · コピーはボタンを押したときだけ'; render(); renderSelection();
         if (local) {
             await load(); if (!dialog.open || lifecycle !== ticket) return;
-            const stop = await desktop.changed(() => { clearTimeout(debounce); debounce = setTimeout(() => load().catch(error), 150); });
+            const stop = await desktop.changed(() => { if(!dialog.open||ticket!==lifecycle)return; clearTimeout(debounce); debounce = setTimeout(() => load().catch(error), 150); });
             if (!dialog.open || lifecycle !== ticket) { stop(); return; } stopNative = stop;
-        } else { stopHistory = adapter.watchHistory(values => { entries = values; render(); }, error); }
-        try { stopSelection = adapter.watchSelection(values => { selections = values; renderSelection(); }, error); } catch { /* Guest: local history is still available. */ }
+        } else { stopHistory = adapter.watchHistory(values => { if(!dialog.open||ticket!==lifecycle||local)return; entries = values; render(); }, problem=>{if(dialog.open&&ticket===lifecycle)error(problem);}); }
+        try { stopSelection = adapter.watchSelection(values => { if(!dialog.open||ticket!==lifecycle)return; selections = values; renderSelection(); }, problem=>{if(dialog.open&&ticket===lifecycle)error(problem);}); } catch { /* Guest: local history is still available. */ }
         timer = setInterval(() => { if (selections.some(value => !validSelection(value))) { selections = selections.filter(value => validSelection(value)); renderSelection(); } }, 1000);
     }
     localButton.onclick = run(() => source(true)); cloudButton.onclick = run(() => source(false));

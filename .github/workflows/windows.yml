@@ -55,12 +55,16 @@ jobs:
         run: npm run package:windows -- --ci
       - name: Isolated installer, reinstall, WebView lifecycle and uninstall
         run: ./scripts/verify-windows-installer.ps1
+      - name: Previous release upgrade with real WebView2 memo preservation
+        timeout-minutes: 7
+        run: node scripts/verify-windows-upgrade.mjs
       - name: Publish verified versioned Windows files
         if: github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/publish-windows.mjs
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: FlickMemo-Windows-unsigned
           path: |
@@ -70,6 +74,8 @@ jobs:
             desktop-reports/lifecycle.json
             desktop-reports/clipboard.json
             desktop-reports/installer.json
+            desktop-reports/upgrade*.json
+            desktop-reports/upgrade*.png
           if-no-files-found: error
           retention-days: 7
       - uses: actions/cache/save@v4

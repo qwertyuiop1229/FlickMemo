@@ -12,7 +12,7 @@ import * as noteData from '../noteData.js';
 import * as protocol from '../authProtocol.js';
 import { WriteBarrier } from '../platform/writeBarrier.js';
 
-async function setup({ edge = false, extension = false } = {}) {
+async function setup({ edge = false, extension = false, saveGate } = {}) {
     const extensionId = 'a'.repeat(32);
     const dom = new JSDOM(await fs.readFile(new URL('../index.html', import.meta.url), 'utf8'), {
         url: extension ? `chrome-extension://${extensionId}/index.html` : 'https://flickmemo-qwe.web.app/',
@@ -23,7 +23,7 @@ async function setup({ edge = false, extension = false } = {}) {
     window.open = url => { calls.opened.push(url); return calls.popup; };
     Object.defineProperty(window, 'crypto', { value: webcrypto });
     Object.defineProperty(window.navigator, 'userAgent', { value: edge ? 'Windows Edg/130.0' : 'Windows Chrome/130.0' });
-    const calls = { opened: [], credentials: [], tokens: 0, popup: { closed: false }, signedOut: 0 };
+    const calls = { opened: [], credentials: [], tokens: 0, popup: { closed: false }, signedOut: 0, writes:[] };
     const session = {};
     let authCallback;
     const auth = { currentUser: null };
@@ -40,7 +40,7 @@ async function setup({ edge = false, extension = false } = {}) {
         }
     };
     const dbApi = { getDatabase: () => ({}), ref: (_, path) => path,
-        set: async () => {}, remove: async () => {}, get: async () => ({ val: () => null }),
+        set: async (path,value) => {calls.writes.push({path,value});}, remove: async () => {}, get: async () => ({ val: () => null }),
         update: async () => {}, onValue: () => () => {}, off() {} };
     let messageListener;
     const chrome = {
@@ -56,7 +56,7 @@ async function setup({ edge = false, extension = false } = {}) {
     const dependencies = {
         'firebase/app': { initializeApp: () => ({}) }, 'firebase/auth': authApi, 'firebase/database': dbApi,
         './archiveNames.js': archiveNames, './clipboardFiles.js': clipboardFiles, './authProtocol.js': protocol, './noteData.js': noteData,
-        './noteStore.js': { NoteStore: class extends NoteStore { constructor() { super(factory); } } },
+        './noteStore.js': { NoteStore: class extends NoteStore { constructor() { super(factory); } async put(...args){await super.put(...args);await saveGate?.();} } },
         './platform/writeBarrier.js': { WriteBarrier },
         './fileTransfer.js': { FileTransferManager: class { stopDevicePresence() {} } }
     };
@@ -71,7 +71,8 @@ async function setup({ edge = false, extension = false } = {}) {
     const context = vm.createContext(sandbox);
     const source = await fs.readFile(new URL('../app.js', import.meta.url), 'utf8');
     const module = new vm.SourceTextModule(source + `
-        export { loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData };
+        export { loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote };
+        export function changeTestOwner(uid){currentUserId=uid;auth.currentUser=uid?{uid}:null;isGuestMode=!uid;++authGeneration;currentNotes={};}
         export function setNotes(notes) { currentNotes = notes; }
         export function historySize() { return textHistory.reduce((sum, text) => sum + text.length, 0); }
     `, { context, importModuleDynamically: async () => { throw new Error('Unexpected eager dynamic import'); } });
@@ -101,6 +102,11 @@ test('website initializes and pinned titles and code attributes cannot inject HT
         assert.equal(parsed.window.document.querySelectorAll('[onclick]').length, 0);
         parsed.window.close();
     } finally { app.close(); }
+});
+test('history memo completion cannot upload the previous account text to a new account',async()=>{
+    let release,started;const waiting=new Promise(resolve=>{started=resolve;});
+    const app=await setup({saveGate:()=>{started();return new Promise(resolve=>release=resolve);}});
+    try{app.api.changeTestOwner('owner-a');const saving=app.api.saveHistoryNote('Private A history');await waiting;app.api.changeTestOwner('owner-b');release();await saving;assert.deepEqual(app.calls.writes,[]);}finally{app.close();}
 });
 test('large note lists are paginated while search still finds notes outside the first page', async () => {
     const app = await setup();

@@ -1,6 +1,56 @@
 use crate::history_store::Store;
 use std::path::Path;
 #[test]
+fn sync_recovery_preserves_disk_errors_and_old_accounts_cannot_set_new_errors() {
+    let mut s = crate::Inner {
+        store: Store::open(Path::new(":memory:")).unwrap(),
+        owner: "a".into(),
+        generation: 7,
+        recording: false,
+        locked: false,
+        sync_enabled: true,
+        session: None,
+        session_verified: false,
+        last_error: Some("disk error".into()),
+        sync_error: Some("offline".into()),
+        excluded: vec![],
+        listener_ready: true,
+    };
+    assert!(!s.sync_result("b", 7, Some("wrong account".into())));
+    assert!(!s.sync_result("a", 6, None));
+    assert_eq!(s.sync_error.as_deref(), Some("offline"));
+    assert!(s.sync_result("a", 7, None));
+    assert!(s.sync_error.is_none());
+    assert_eq!(s.last_error.as_deref(), Some("disk error"));
+}
+#[test]
+fn settings_failure_rolls_back_sync_consent_and_exclusions_together() {
+    let mut s = Store::open(Path::new(":memory:")).unwrap();
+    s.save_preferences("a", false, &["old.exe".into()]).unwrap();
+    s.db.execute_batch("CREATE TRIGGER fail_preference BEFORE INSERT ON settings WHEN NEW.key='excluded' BEGIN SELECT RAISE(ABORT,'synthetic disk failure'); END;").unwrap();
+    assert!(s.save_preferences("a", true, &["new.exe".into()]).is_err());
+    assert_eq!(s.secret("sync:a").unwrap().unwrap(), b"false");
+    assert_eq!(
+        serde_json::from_slice::<Vec<String>>(&s.secret("excluded").unwrap().unwrap()).unwrap(),
+        vec!["old.exe"]
+    );
+}
+#[test]
+fn pin_unpin_and_delete_keep_monotonic_revisions_after_burst_copies() {
+    let mut s = Store::open(Path::new(":memory:")).unwrap();
+    s.record("a", "text", "text").unwrap();
+    let mut entry = s.page("a", 0, "", false).unwrap().remove(0);
+    let future = entry.updated_at + 5000;
+    s.db.execute("UPDATE history SET updated=?1", [future])
+        .unwrap();
+    for action in ["pin", "unpin", "delete"] {
+        s.mutate("a", &entry.id, action).unwrap();
+        let updated = s.page("a", 0, "", true).unwrap().remove(0);
+        assert!(updated.updated_at > entry.updated_at.max(future));
+        entry = updated;
+    }
+}
+#[test]
 fn japanese_search_counts_characters_and_pins_are_idempotent_at_the_limit() {
     let mut store = Store::open(Path::new(":memory:")).unwrap();
     let text = "日".repeat(260);
