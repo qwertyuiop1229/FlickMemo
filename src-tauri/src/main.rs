@@ -252,12 +252,23 @@ async fn desktop_cancel_close(state: State<'_, Arc<Shared>>) -> Result<(), Strin
 }
 
 #[tauri::command]
-async fn desktop_ready(state: State<'_, Arc<Shared>>) -> Result<bool, String> {
+async fn desktop_ready(state: State<'_, Arc<Shared>>, verified: bool) -> Result<bool, String> {
     if state.diagnostic_directory.is_some() {
-        state.ready_count.fetch_add(1, Ordering::SeqCst);
+        if verified {
+            state.ready_count.fetch_add(1, Ordering::SeqCst);
+        }
         return Ok(true);
     }
     Ok(false)
+}
+#[tauri::command]
+async fn desktop_smoke_failed(state: State<'_, Arc<Shared>>, error: String) -> Result<(), String> {
+    if let Some(root) = state.diagnostic_directory.as_ref() {
+        let report = serde_json::json!({"stage":"failed","error":error.chars().take(256).collect::<String>()});
+        let _ = std::fs::write(root.join("result.json"), report.to_string());
+        state.app.exit(1);
+    }
+    Ok(())
 }
 
 fn show(app: &tauri::AppHandle) -> tauri::Result<()> {
@@ -358,7 +369,8 @@ fn main() {
             desktop_login,
             desktop_close,
             desktop_cancel_close,
-            desktop_ready
+            desktop_ready,
+            desktop_smoke_failed
         ])
         .setup(move |app| {
             let directory = if diagnostic {

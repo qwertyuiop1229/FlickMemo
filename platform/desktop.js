@@ -29,5 +29,33 @@ export async function setupDesktop({ prepareClose, notify }) {
     // A destroyed WebView will recreate this module and its listeners on next open.
     document.documentElement.dataset.platform = 'windows';
     document.querySelector('link[rel="manifest"]')?.remove();
-    await invoke('desktop_ready');
+    const diagnostic = await invoke('desktop_ready', { verified: false });
+    if (diagnostic) {
+        // Runs only in a fresh native diagnostic profile. No real notes/account/clipboard.
+        try {
+            const waitFor = async predicate => {
+                const deadline = Date.now() + 10_000;
+                while (!predicate()) {
+                    if (Date.now() > deadline) throw new Error('Diagnostic UI did not become ready');
+                    await new Promise(resolve => setTimeout(resolve, 20));
+                }
+            };
+            await waitFor(() => document.getElementById('splash-screen').classList.contains('hidden'));
+            document.getElementById('btn-guest-login').click();
+            const editor = document.getElementById('note-body');
+            await waitFor(() => !editor.disabled);
+            const expected = 'FlickMemo diagnostic 日本語😀\nlocal persistence';
+            if (localStorage.getItem('diagnostic-note-written')) {
+                if (editor.value !== expected) throw new Error('Diagnostic memo did not survive WebView destruction');
+            } else {
+                editor.value = expected;
+                editor.dispatchEvent(new Event('input', { bubbles: true }));
+                localStorage.setItem('diagnostic-note-written', 'true');
+            }
+            await invoke('desktop_ready', { verified: true });
+        } catch (error) {
+            await invoke('desktop_smoke_failed', { error: String(error?.message || error) });
+            throw error;
+        }
+    }
 }
