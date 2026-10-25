@@ -33,7 +33,7 @@ Node.js 22.12以降、Git、`npm ci`、Firebase CLIとFirebaseログイン、Git
 
 GitHub Releaseは公開ダウンロードに使用し、期限付きActions Artifactsは検証ログと補助的な配布物の保存に使用する。インストーラーはGitへコミットしない。
 
-Firebase Sparkプランは`.exe`のHosting配信を禁止しているため、Hostingには`windows/release.json`だけを置く。インストーラーを拡張子変更などでHostingへ置かず、GitHubの正規の公開Releaseから配布する。課金プラン変更は不要。公式説明: https://firebase.google.com/support/faq#hosting-exe-restrictions
+Firebase Sparkプランは`.exe`のHosting配信を禁止しているため、Hostingには配布情報`windows/release.json`と署名付き更新情報`windows/update.json`を置く。インストーラーを拡張子変更などでHostingへ置かず、GitHubの正規の公開Releaseから配布する。課金プラン変更は不要。公式説明: https://firebase.google.com/support/faq#hosting-exe-restrictions
 
 ## 自動更新用の署名
 
