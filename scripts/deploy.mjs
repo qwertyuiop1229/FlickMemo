@@ -92,12 +92,11 @@ async function main() {
         await save(state);
     }
     if (state.phase === 'push') {
-        await run('git', ['push', '--set-upstream', 'origin', 'HEAD']);
         const tag = `v${state.version}`;
         const existing = await git('tag', '--list', tag);
         if (!existing) await git('tag', tag, state.commit);
         if (await git('rev-list', '-n', '1', tag) !== state.commit) throw new Error('同じバージョンのタグが別コミットを指しています');
-        await run('git', ['push', 'origin', `refs/tags/${tag}`]);
+        await run('git', ['push', '--atomic', '--set-upstream', 'origin', 'HEAD', `refs/tags/${tag}`]);
         state.phase = 'windows'; await save(state);
     }
     const release = await waitForWindows(state);

@@ -2,10 +2,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { validateRelease, RELEASE_FILES } from './release.mjs';
-const { GITHUB_TOKEN: token, GITHUB_REPOSITORY: repository, GITHUB_SHA: commit, GITHUB_REF_NAME: tag } = process.env;
-if (!token || !repository || !/^v\d+\.\d+\.\d+$/.test(tag || '') || !/^[a-f0-9]{40}$/.test(commit || '')) throw new Error('タグのリリースジョブでのみ実行できます');
+const { GITHUB_TOKEN: token, GITHUB_REPOSITORY: repository, GITHUB_SHA: commit } = process.env;
+if (!token || !repository || !/^[a-f0-9]{40}$/.test(commit || '')) throw new Error('リリースジョブでのみ実行できます');
 const { version } = JSON.parse(await fs.readFile('package.json', 'utf8'));
-if (tag !== `v${version}`) throw new Error('タグとアプリのバージョンが一致しません');
+if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('バージョンが不正です');
+const tag=`v${version}`;
+const tagResponse=await fetch(`https://api.github.com/repos/${repository}/git/ref/tags/${tag}`,{headers:{Authorization:`Bearer ${token}`}});
+if(!tagResponse.ok || (await tagResponse.json()).object?.sha!==commit) throw new Error('同じコミットの配信タグを確認できません');
 const files = new Map();
 const { productName } = JSON.parse(await fs.readFile('src-tauri/tauri.conf.json', 'utf8'));
 // Build caches can contain installers from older versions; never publish one of those.
