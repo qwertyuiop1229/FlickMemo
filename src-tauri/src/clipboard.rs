@@ -452,7 +452,7 @@ pub fn diagnostic_capture(shared: &Shared, hwnd: HWND) -> Result<(), String> {
     Ok(())
 }
 
-pub fn import_windows(shared: &Shared) -> Result<usize, String> {
+pub fn import_windows(shared: &Shared, expected_owner: &str) -> Result<usize, String> {
     use std::sync::atomic::Ordering;
     if shared.import_busy.swap(true, Ordering::SeqCst) {
         return Err("既存履歴の取込みは既に実行中です".into());
@@ -485,6 +485,7 @@ pub fn import_windows(shared: &Shared) -> Result<usize, String> {
     };
     let (owner, generation) = {
         let s = shared.inner.lock().map_err(|_| "履歴を開けません")?;
+        crate::check_owner(&s, expected_owner)?;
         if s.locked {
             return Err("画面ロック中は取得できません".into());
         }

@@ -32,7 +32,8 @@ pub fn start(shared: Arc<Shared>) {
         };
         let mut token: Option<(String, String, i64)> = None;
         let mut last_prune = 0;
-        let mut wait = std::time::Duration::from_secs(60);
+        let wait = std::time::Duration::from_secs(60);
+        let mut retry = crate::retry::RetryGate::new();
         loop {
             let mut inner = match shared.inner.lock() {
                 Ok(s) => s,
@@ -41,14 +42,22 @@ pub fn start(shared: Arc<Shared>) {
             let enabled = inner.session_verified
                 && inner.sync_enabled
                 && inner.session.as_ref().is_some_and(|s| s.uid == inner.owner);
+            retry.owner(&inner.owner);
             if !enabled {
                 token = None;
+                retry.success();
             }
             if now() - last_prune >= 60000 {
                 if let Err(error) = inner.store.prune_all() {
                     inner.last_error = Some(error);
                 }
                 last_prune = now();
+            }
+            if enabled {
+                if let Some(remaining) = retry.remaining(std::time::Instant::now()) {
+                    let _ = shared.wake.wait_timeout(inner, remaining);
+                    continue;
+                }
             }
             let batch = if enabled {
                 inner.store.page(&inner.owner, 0, "", true)
@@ -73,7 +82,7 @@ pub fn start(shared: Arc<Shared>) {
             let generation = inner.generation;
             if let Err(error) = inner.store.mark_uploading(&owner, &entries) {
                 inner.last_error = Some(error);
-                let _ = shared.wake.wait_timeout(inner, wait);
+                retry.fail(std::time::Instant::now());
                 continue;
             }
             let session = inner.session.clone().unwrap();
@@ -111,7 +120,7 @@ pub fn start(shared: Arc<Shared>) {
                                 Ok(()) => s.session = Some(replacement),
                                 Err(error) => {
                                     s.last_error = Some(error);
-                                    let _ = shared.wake.wait_timeout(s, wait);
+                                    retry.fail(std::time::Instant::now());
                                     continue;
                                 }
                             }
@@ -120,10 +129,7 @@ pub fn start(shared: Arc<Shared>) {
                     }
                     _ => {
                         fail(&shared,"同期の認証を更新できません。通信状態を確認し、必要なら再ログインしてください");
-                        wait = std::time::Duration::from_secs(60);
-                        if let Ok(s) = shared.inner.lock() {
-                            let _ = shared.wake.wait_timeout(s, wait);
-                        }
+                        retry.fail(std::time::Instant::now());
                         continue;
                     }
                 }
@@ -141,11 +147,11 @@ pub fn start(shared: Arc<Shared>) {
             }
             let payload: serde_json::Map<String, serde_json::Value> = entries
                 .iter()
-                .map(|entry| (format!("{}_{}", shared.device, entry.id), wire(entry)))
+                .flat_map(|entry| updates(&shared.device, entry))
                 .collect();
             let auth = &token.as_ref().unwrap().1;
             let result = client
-                .patch(format!("{BASE}/users/{owner}/clipboardHistory.json"))
+                .patch(format!("{BASE}/users/{owner}.json"))
                 .query(&[("auth", auth)])
                 .json(&payload)
                 .send()
@@ -159,7 +165,7 @@ pub fn start(shared: Arc<Shared>) {
                             }
                         }
                     }
-                    wait = std::time::Duration::from_secs(60);
+                    retry.success();
                     shared.changed();
                 }
                 Err(_) => {
@@ -168,10 +174,7 @@ pub fn start(shared: Arc<Shared>) {
                         "履歴はこのPCに保存済みです。クラウドへの送信は接続回復後に再試行します",
                     );
                     // Sleep even when work remains; an offline connection never becomes a busy loop.
-                    if let Ok(s) = shared.inner.lock() {
-                        let _ = shared.wake.wait_timeout(s, wait);
-                    }
-                    wait = (wait * 2).min(std::time::Duration::from_secs(15 * 60));
+                    retry.fail(std::time::Instant::now());
                     token = None;
                 }
             }
@@ -189,4 +192,43 @@ fn wire(entry: &Entry) -> serde_json::Value {
         "createdAt":entry.created_at,"updatedAt":entry.updated_at,"expiresAt":entry.expires_at,
         "pinned":entry.pinned,"count":entry.count,"deletedAt":entry.deleted_at,
         "originDeviceId":entry.origin_device_id})
+}
+fn updates(device: &str, entry: &Entry) -> Vec<(String, serde_json::Value)> {
+    let id = format!("{device}_{}", entry.id);
+    if entry.deleted_at > 0 {
+        vec![
+            (format!("clipboardHistory/{id}"), serde_json::Value::Null),
+            (
+                format!("clipboardHistoryTombstones/{id}"),
+                serde_json::json!({"deletedAt":entry.deleted_at,"revision":entry.updated_at,"originDeviceId":device}),
+            ),
+        ]
+    } else {
+        vec![(format!("clipboardHistory/{id}"), wire(entry))]
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn deletion_removes_the_live_record_and_preserves_a_separate_tombstone() {
+        let entry = Entry {
+            id: "a".repeat(32),
+            kind: "text".into(),
+            text: String::new(),
+            created_at: 1,
+            updated_at: 10,
+            expires_at: 100,
+            pinned: false,
+            count: 1,
+            deleted_at: 10,
+            origin_device_id: "b".repeat(32),
+            sync_state: "pending".into(),
+        };
+        let paths = updates(&entry.origin_device_id, &entry);
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].0.starts_with("clipboardHistory/"));
+        assert!(paths[0].1.is_null());
+        assert_eq!(paths[1].1["deletedAt"], 10);
+    }
 }

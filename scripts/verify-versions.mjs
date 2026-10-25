@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const json = name => JSON.parse(fs.readFileSync(name, 'utf8'));
+const version = json('version.json').version;
+for (const name of ['package.json', 'package-lock.json', 'manifest.json', 'src-tauri/tauri.conf.json']) assert.equal(json(name).version, version, name);
+assert.equal(json('package-lock.json').packages[''].version, version);
+assert.ok(fs.readFileSync('app.js', 'utf8').includes(`const APP_VERSION = "${version}";`));
+assert.equal(/\[package\][\s\S]*?\nversion = "([^"]+)"/.exec(fs.readFileSync('src-tauri/Cargo.toml', 'utf8'))?.[1], version);
+assert.equal(/name = "flickmemo-desktop"\r?\nversion = "([^"]+)"/.exec(fs.readFileSync('src-tauri/Cargo.lock', 'utf8'))?.[1], version);
+console.log(`Web / 拡張 / Windows: ${version} (一致)`);

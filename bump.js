@@ -1,47 +1,34 @@
-import fs from 'fs';
-
-try {
-    // マスターファイル version.json を読み込んで無条件で +1 カウントアップ
-    const versionData = JSON.parse(fs.readFileSync('version.json', 'utf8'));
-    const parts = versionData.version.split('.');
-    parts[2] = parseInt(parts[2], 10) + 1; // パッチバージョンを +1
-    const newVersion = parts.join('.');
-    versionData.version = newVersion;
-    fs.writeFileSync('version.json', JSON.stringify(versionData, null, 2));
-
-    // app.js 内の APP_VERSION を同期書き換え
-    if (fs.existsSync('app.js')) {
-        let appJsContent = fs.readFileSync('app.js', 'utf8');
-        appJsContent = appJsContent.replace(
-            /const APP_VERSION = "[^"]+";/,
-            `const APP_VERSION = "${newVersion}";`
-        );
-        fs.writeFileSync('app.js', appJsContent);
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+// Validate every version target before writing any of them.
+export function nextVersion(version) {
+    if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('version.jsonの版が不正です');
+    const [major, minor, patch] = version.split('.').map(Number);
+    if (![major, minor, patch].every(Number.isSafeInteger) || patch >= 65534) throw new Error('バージョンの数値が範囲外です');
+    return `${major}.${minor}.${patch + 1}`;
+}
+export function bump(root = '.') {
+    const read = name => fs.readFileSync(`${root}/${name}`, 'utf8');
+    const version = nextVersion(JSON.parse(read('version.json')).version);
+    const files = new Map();
+    for (const name of ['version.json', 'package.json', 'package-lock.json', 'manifest.json', 'src-tauri/tauri.conf.json']) {
+        const value = JSON.parse(read(name)); value.version = version;
+        if (name === 'package-lock.json') value.packages[''].version = version;
+        files.set(name, JSON.stringify(value, null, name.startsWith('src-tauri') || name === 'version.json' ? 2 : 4) + '\n');
     }
-
-    // package.json 内の version を同期書き換え
-    if (fs.existsSync('package.json')) {
-        const pkgData = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-        pkgData.version = newVersion;
-        fs.writeFileSync('package.json', JSON.stringify(pkgData, null, 4));
+    const app = read('app.js');
+    if (!/const APP_VERSION = "[^"]+";/.test(app)) throw new Error('APP_VERSIONが見つかりません');
+    files.set('app.js', app.replace(/const APP_VERSION = "[^"]+";/, `const APP_VERSION = "${version}";`));
+    for (const name of ['src-tauri/Cargo.toml', 'src-tauri/Cargo.lock']) {
+        const source = read(name);
+        const pattern = name.endsWith('.toml') ? /(\[package\][\s\S]*?\nversion = ")[^"]+(")/ : /(name = "flickmemo-desktop"\r?\nversion = ")[^"]+(")/;
+        if (!pattern.test(source)) throw new Error(`${name}のWindows版バージョンが見つかりません`);
+        files.set(name, source.replace(pattern, `$1${version}$2`));
     }
-
-    if (fs.existsSync('package-lock.json')) {
-        const lockData = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
-        lockData.version = newVersion;
-        if (lockData.packages?.['']) lockData.packages[''].version = newVersion;
-        fs.writeFileSync('package-lock.json', JSON.stringify(lockData, null, 4) + '\n');
-    }
-
-    // manifest.json 内の version を同期書き換え
-    if (fs.existsSync('manifest.json')) {
-        const manifestData = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
-        manifestData.version = newVersion;
-        fs.writeFileSync('manifest.json', JSON.stringify(manifestData, null, 4));
-    }
-
-    console.log(`🚀 自動バージョンアップ＆全構成ファイル同期完了: v${newVersion}`);
-} catch (err) {
-    console.error("バージョン更新エラー:", err);
-    process.exitCode = 1;
+    for (const [name, contents] of files) fs.writeFileSync(`${root}/${name}`, contents);
+    return version;
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    try { console.log(`Web・拡張・Windowsのバージョンを同期しました: v${bump()}`); }
+    catch (error) { console.error(error.message); process.exitCode = 1; }
 }

@@ -20,6 +20,12 @@ document.querySelector('#run').onclick=async()=>{
         assert(listeners===2,'native and selection subscriptions must start after initial load');
         assert(document.querySelectorAll('.history-card').length===2,'render text and placeholder');
         assert(!document.querySelector('.history-card img'),'clipboard text must never become HTML');checks.push('text XSS prevention');
+        const draft=document.querySelector('.history-preferences textarea');draft.closest('details').open=true;
+        draft.value='unsaved-example.exe';draft.dispatchEvent(new Event('input',{bubbles:true}));draft.focus();nativeChanged();await new Promise(resolve=>setTimeout(resolve,250));
+        assert(document.querySelector('.history-preferences textarea')===draft&&draft.value==='unsaved-example.exe'&&document.activeElement===draft,'clipboard refresh must preserve preference draft and focus');checks.push('preference draft preserved during capture');
+        let globalKeys=0;const globalKey=()=>globalKeys++;window.addEventListener('keydown',globalKey);
+        draft.dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true}));
+        assert(document.activeElement===document.querySelector('dialog input[type=search]')&&globalKeys===0,'Ctrl+F must target dialog search only');window.removeEventListener('keydown',globalKey);checks.push('dialog keyboard shortcuts isolated');
         assert(document.querySelectorAll('.history-card button').length===6,'image has only pin/delete controls');checks.push('image placeholder without false copy');
         await click('コピー');assert(copied.length===1&&copied[0].includes('<img'),'exact text copy through injected bridge');checks.push('copy exact Unicode text');
         await click('メモに保存');assert(notes[0]===copied[0],'save exact text');checks.push('memo conversion');

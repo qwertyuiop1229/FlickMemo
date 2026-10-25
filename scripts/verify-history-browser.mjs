@@ -11,6 +11,6 @@ try {
     const result = await page.locator('#result').textContent();
     assert.equal(await page.locator('body').getAttribute('data-result'), 'passed', result);
     assert.deepEqual(errors, []);
-    assert.equal(JSON.parse(result).length, 10);
+    assert.equal(JSON.parse(result).length, 12);
     console.log(`${await browser.version()}: ${result}`);
 } finally { await browser.close(); }

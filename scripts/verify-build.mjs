@@ -24,4 +24,5 @@ for (const entry of ['index.html', 'auth.html', 'download.html']) {
     assert.ok(html.includes('/icons/favicon.ico'));
 }
 assert.ok(!Object.keys(zip.files).some(path => /(^|\/)(node_modules|tests|\.env|\.git)(\/|$)/.test(path)));
+assert.ok(!Object.keys(zip.files).some(path => path.startsWith('windows/') || path.endsWith('.exe')), 'Windows installers must never be embedded in the extension ZIP');
 console.log(`Build verified: ${manifest.version}, ${Object.keys(zip.files).length} ZIP entries; PWA icons, extension icons and module references present.`);

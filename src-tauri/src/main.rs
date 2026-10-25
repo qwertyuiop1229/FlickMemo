@@ -1,9 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#[cfg(test)]
+mod audit_tests;
 mod auth;
 mod clipboard;
 mod history_store;
 mod history_sync;
 mod privacy;
+mod retry;
 
 use history_store::{Entry, Stats, Store};
 use serde::Serialize;
@@ -55,6 +58,7 @@ impl Shared {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Status {
+    version: &'static str,
     recording: bool,
     sync_enabled: bool,
     owner: String,
@@ -64,13 +68,34 @@ struct Status {
     stats: Stats,
     excluded: Vec<String>,
 }
+fn check_owner(state: &Inner, expected: &str) -> Result<(), String> {
+    if state.owner != expected {
+        return Err("アカウントが変わったため操作を中止しました。履歴を開き直してください".into());
+    }
+    Ok(())
+}
 
 #[tauri::command]
-async fn desktop_status(state: State<'_, Arc<Shared>>) -> Result<Status, String> {
+async fn desktop_open_download(section: Option<String>) -> Result<(), String> {
+    let url = match section.as_deref() {
+        Some("extensions") => "https://flickmemo-qwe.web.app/download#browser-extensions",
+        None | Some("windows") => "https://flickmemo-qwe.web.app/download#http-windows",
+        _ => return Err("ダウンロード先が不正です".into()),
+    };
+    open::that(url).map_err(|_| "標準ブラウザでダウンロードページを開けません".into())
+}
+
+#[tauri::command]
+async fn desktop_status(
+    state: State<'_, Arc<Shared>>,
+    expected_owner: String,
+) -> Result<Status, String> {
     let mut s = state.inner.lock().map_err(|_| "履歴を開けません")?;
+    check_owner(&s, &expected_owner)?;
     let owner = s.owner.clone();
     s.store.prune(&owner)?;
     Ok(Status {
+        version: env!("CARGO_PKG_VERSION"),
         recording: s.recording,
         sync_enabled: s.sync_enabled,
         owner: s.owner.clone(),
@@ -87,6 +112,7 @@ async fn desktop_settings(
     recording: bool,
     sync_enabled: bool,
     excluded: Vec<String>,
+    expected_owner: String,
 ) -> Result<(), String> {
     if recording && state.diagnostic_directory.is_some() {
         return Err("診断中は実際のクリップボードを記録しません".into());
@@ -102,6 +128,7 @@ async fn desktop_settings(
         return Err("除外には実行ファイル名を50件まで指定してください（例: example.exe）".into());
     }
     let mut s = state.inner.lock().map_err(|_| "設定を開けません")?;
+    check_owner(&s, &expected_owner)?;
     if recording && !s.listener_ready {
         return Err("Windowsの変更通知を利用できません".into());
     }
@@ -185,8 +212,10 @@ async fn desktop_history(
     state: State<'_, Arc<Shared>>,
     offset: u32,
     search: String,
+    expected_owner: String,
 ) -> Result<Vec<Entry>, String> {
     let s = state.inner.lock().map_err(|_| "履歴を開けません")?;
+    check_owner(&s, &expected_owner)?;
     s.store.page(&s.owner, offset, &search, false)
 }
 #[tauri::command]
@@ -194,8 +223,10 @@ async fn desktop_mutate(
     state: State<'_, Arc<Shared>>,
     id: String,
     action: String,
+    expected_owner: String,
 ) -> Result<(), String> {
     let mut s = state.inner.lock().map_err(|_| "履歴を更新できません")?;
+    check_owner(&s, &expected_owner)?;
     let owner = s.owner.clone();
     s.store.mutate(&owner, &id, &action)?;
     drop(s);
@@ -216,14 +247,19 @@ async fn desktop_copy(
     clipboard::copy_text(&text, hwnd.0)
 }
 #[tauri::command]
-async fn desktop_import(state: State<'_, Arc<Shared>>) -> Result<usize, String> {
+async fn desktop_import(
+    state: State<'_, Arc<Shared>>,
+    expected_owner: String,
+) -> Result<usize, String> {
     if state.diagnostic_directory.is_some() {
         return Err("診断中はOSの履歴を読みません".into());
     }
     let shared = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || clipboard::import_windows(&shared))
-        .await
-        .map_err(|_| "取込み処理が終了しました")?
+    tauri::async_runtime::spawn_blocking(move || {
+        clipboard::import_windows(&shared, &expected_owner)
+    })
+    .await
+    .map_err(|_| "取込み処理が終了しました")?
 }
 #[tauri::command]
 async fn desktop_login(state: State<'_, Arc<Shared>>) -> Result<auth::Credential, String> {
@@ -379,9 +415,10 @@ fn main() {
             let _ = show(app);
         }));
     }
-    builder
+    let built = builder
         .invoke_handler(tauri::generate_handler![
             desktop_status,
+            desktop_open_download,
             desktop_settings,
             desktop_session,
             desktop_history,
@@ -519,13 +556,35 @@ fn main() {
                 let _ = window.emit("desktop-close-requested", ());
             }
         })
-        .build(tauri::generate_context!())
-        .expect("FlickMemoを起動できませんでした")
-        .run(|_, event| {
-            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
-                if code.is_none() {
-                    api.prevent_exit();
+        .build(tauri::generate_context!());
+    let runtime = match built {
+        Ok(app) => app,
+        Err(error) => {
+            if !diagnostic {
+                let text=format!("FlickMemoを起動できませんでした。\n空き容量、WebView2、Windowsアカウントを確認してください。データを削除せずに再試行してください。\n\n{error}");
+                let message: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+                let title: Vec<u16> = "FlickMemo — 起動エラー"
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
+                unsafe {
+                    windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW(
+                        std::ptr::null_mut(),
+                        message.as_ptr(),
+                        title.as_ptr(),
+                        windows_sys::Win32::UI::WindowsAndMessaging::MB_OK
+                            | windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONERROR,
+                    );
                 }
             }
-        });
+            std::process::exit(1);
+        }
+    };
+    runtime.run(|_, event| {
+        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+            if code.is_none() {
+                api.prevent_exit();
+            }
+        }
+    });
 }

@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><title>FlickMemo UI synthetic preview</title>
+<script type="module">
+import {createHistoryPanel} from '/history/panel.js';
+const now=Date.now();
+const entries=[{id:'a'.repeat(32),kind:'text',text:'明日のミーティング\n・進捗の共有\n・次のリリースで確認すること',createdAt:now-10000,updatedAt:now-10000,expiresAt:now+86400000,pinned:true,count:2,originDeviceId:'b'.repeat(32),syncState:'synced'},
+{id:'c'.repeat(32),kind:'text',text:'コピーした文章を、あとから検索。\n履歴はこのPCに暗号化して保存します。',createdAt:now-60000,updatedAt:now-60000,expiresAt:now+86400000,pinned:false,count:1,originDeviceId:'b'.repeat(32),syncState:'pending'},
+{id:'d'.repeat(32),kind:'image_placeholder',text:'',createdAt:now-120000,updatedAt:now-120000,expiresAt:now+86400000,pinned:false,count:1,originDeviceId:'b'.repeat(32),syncState:'pending'}];
+const settings={recording:false,syncEnabled:false,owner:'guest',locked:false,listenerReady:true,lastError:null,stats:{count:3,bytes:420},excluded:['1password.exe','bitwarden.exe','keepass.exe','keepassxc.exe']};
+const native={status:async()=>settings,history:async()=>entries,changed:async()=>()=>{},settings:async v=>Object.assign(settings,v),copy:async()=>{},mutate:async()=>{},importWindows:async()=>0};
+const adapter={watchSelection:()=>()=>{},watchHistory:()=>()=>{},shareSelection:async()=>{},stopSelection:async()=>{}};
+await createHistoryPanel({desktop:native,adapter,saveNote:async()=>{},selectedText:()=>'',notify:()=>{}}).open();document.body.dataset.ready='true';
+</script>

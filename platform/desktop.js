@@ -1,15 +1,17 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+let expectedOwner = 'guest';
 export const desktop = {
-    status: () => invoke('desktop_status'),
-    settings: value => invoke('desktop_settings', value),
-    session: session => invoke('desktop_session', { session }),
-    history: (offset = 0, search = '') => invoke('desktop_history', { offset, search }),
-    mutate: (id, action) => invoke('desktop_mutate', { id, action }),
+    status: () => invoke('desktop_status', { expectedOwner }),
+    settings: value => invoke('desktop_settings', { ...value, expectedOwner }),
+    session: session => { expectedOwner = session?.uid || 'guest'; return invoke('desktop_session', { session }); },
+    history: (offset = 0, search = '') => invoke('desktop_history', { offset, search, expectedOwner }),
+    mutate: (id, action) => invoke('desktop_mutate', { id, action, expectedOwner }),
     copy: text => invoke('desktop_copy', { text }),
-    importWindows: () => invoke('desktop_import'),
+    importWindows: () => invoke('desktop_import', { expectedOwner }),
     login: () => invoke('desktop_login'),
+    openDownload: (section = 'windows') => invoke('desktop_open_download', { section }),
     changed: callback => listen('desktop-history-changed', callback)
 };
 
@@ -29,6 +31,12 @@ export async function setupDesktop({ prepareClose, notify }) {
     // A destroyed WebView will recreate this module and its listeners on next open.
     document.documentElement.dataset.platform = 'windows';
     document.querySelector('link[rel="manifest"]')?.remove();
+    for (const link of document.querySelectorAll('a[data-download-section]')) {
+        link.addEventListener('click', event => {
+            event.preventDefault();
+            desktop.openDownload(link.dataset.downloadSection).catch(error => notify(String(error)));
+        });
+    }
     const diagnostic = await invoke('desktop_ready', { verified: false });
     if (diagnostic) {
         // Runs only in a fresh native diagnostic profile. No real notes/account/clipboard.

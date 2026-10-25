@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FlickMemo - Chrome / Edge 拡張機能のインストール</title>
+    <title>FlickMemo - Windows版・拡張機能のダウンロード</title>
     <link rel="icon" href="/icons/favicon.ico" sizes="any">
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/icons/icon-16.png">
@@ -20,8 +20,8 @@
             --m3-surface-container: #28292a;
             --m3-surface-hover: #333537;
             --m3-border: #333537;
-            --m3-primary: #a8c7fa;
-            --m3-on-primary: #042f66;
+            --m3-primary: #e4c7ad;
+            --m3-on-primary: #302218;
             --m3-text: #e3e2e6;
             --m3-text-variant: #c4c6d0;
             --m3-text-muted: #8e918f;
@@ -368,6 +368,11 @@
                 padding: 0.55rem 1rem;
             }
         }
+        .windows-download{margin:24px 0;padding:28px;border:1px solid var(--m3-border);border-radius:20px;background:var(--m3-surface);scroll-margin-top:24px}
+        .windows-download h2{font-size:22px;margin:6px 0 12px}.windows-download p{color:var(--m3-text-variant);line-height:1.8;font-size:14px;margin-bottom:16px}
+        .windows-download small{display:block;color:var(--m3-text-muted);margin-top:14px;line-height:1.7}
+        .windows-download a{display:inline-flex;align-items:center;gap:10px;border-radius:12px;padding:13px 20px;background:var(--m3-primary);color:var(--m3-on-primary);text-decoration:none;font-weight:600}
+        .windows-download a[aria-disabled=true]{opacity:.45;pointer-events:none}
     </style>
 </head>
 
@@ -377,8 +382,8 @@
             <div class="brand-icon-wrap">
                 <img src="/icons/icon-128.png" alt="FlickMemo Icon" width="80" height="80">
             </div>
-            <h1 id="header-title">FlickMemo for Chrome / Edge</h1>
-            <p id="header-desc">ブラウザ（Chrome / Edge）のサイドパネルでどこからでも開ける超軽量メモ帳＆最速ファイル転送</p>
+            <h1 id="header-title">FlickMemoをダウンロード</h1>
+            <p id="header-desc">Windowsでも、Chrome / Edgeのサイドパネルでも。いつものメモとファイル共有を。</p>
 
             <div class="download-action-box">
                 <a href="/flickmemo-extension.zip" download="flickmemo-extension.zip" class="btn-download-hero" id="btn-download-main">
@@ -388,7 +393,14 @@
             </div>
         </div>
 
-        <div class="steps-section">
+        <section id="http-windows" class="windows-download" aria-labelledby="windows-title">
+            <span class="version-tag" id="windows-version">Windows x64</span>
+            <h2 id="windows-title">軽く待機する、Windows版。</h2>
+            <p>普段のメモに、クリップボード履歴を。画面を閉じるとWebViewを解放し、必要な常駐処理だけを残します。記録とクラウド送信は、自分でONにしたときだけ。</p>
+            <a id="windows-download-link" aria-disabled="true">Windows版の配信を確認中…</a>
+            <small>Windows 10 / 11・64bit向けの未署名の試用版です。更新時はトレイからFlickMemoを終了し、新しいインストーラーを実行してください。画像履歴の保存はまだ未対応です。</small>
+        </section>
+        <div class="steps-section" id="browser-extensions">
             <div class="step-card">
                 <div class="step-number">↻</div>
                 <div class="step-content">
@@ -563,5 +575,6 @@
         };
     </script>
 </body>
+<script type="module" src="/downloadWindows.js"></script>
 
 </html>

@@ -37,7 +37,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.82";
+const APP_VERSION = "1.3.83";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -74,6 +74,7 @@ async function getClipboardAdapter() {
 }
 async function openHistoryPanel() {
     const owner = auth.currentUser?.uid || 'guest';
+    if (isDesktop) await desktopSessionChain;
     if (!historyPanel) {
         historyLoading ||= (async () => {
             const [{ createHistoryPanel }, native, adapter] = await Promise.all([
@@ -3183,7 +3184,7 @@ historyButton.onpointerdown = () => {
 historyButton.onclick = () => openHistoryPanel().catch(error => showToast(String(error?.message || error)));
 
 if (isDesktop) {
-    desktopReady.then(async ({ setupDesktop }) => {
+    desktopReady.then(async ({ setupDesktop, desktop }) => {
         await setupDesktop({ notify: showToast, prepareClose: async () => {
             if ((transferManager?.isSending || transferManager?.incomingFileInfo) &&
                 !window.confirm('ファイル転送中です。転送を中止して画面を閉じますか？')) {
@@ -3198,6 +3199,11 @@ if (isDesktop) {
             } finally { document.body.inert = false; }
         }});
         const update = document.getElementById('btn-update-check');
-        if (update) update.onclick = () => showToast('Windows版の更新は新しいインストーラーから行ってください');
+        if (update) {
+            update.textContent = 'Windows版の最新版をダウンロード';
+            update.onclick = () => desktop.openDownload().catch(error => showToast(String(error)));
+            const description = update.previousElementSibling;
+            if (description?.classList.contains('settings-desc')) description.textContent = '最新版のインストーラーで更新します。記録を停止してトレイから終了した後、インストーラーを実行してください。';
+        }
     }).catch(error => showToast('Windows機能を開始できませんでした: ' + String(error)));
 }

@@ -74,3 +74,6 @@ src-tauri/gen/
 dist-desktop/
 desktop-reports/
 releases/windows/
+.deploy-state.json
+.deploy.lock
+dist/windows/

@@ -56,6 +56,23 @@ impl Store {
             CREATE INDEX IF NOT EXISTS history_page ON history(owner,deleted,updated DESC);
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS imports(owner TEXT NOT NULL,source TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(owner,source));").map_err(db_error)?;
+        // Move previously uploaded deletions out of the live newest-50 query.
+        let tx = db.unchecked_transaction().map_err(db_error)?;
+        if tx
+            .execute(
+                "INSERT OR IGNORE INTO settings VALUES('history-wire-v2','1')",
+                [],
+            )
+            .map_err(db_error)?
+            == 1
+        {
+            tx.execute(
+                "UPDATE history SET dirty=1 WHERE deleted>0 AND uploaded=1",
+                [],
+            )
+            .map_err(db_error)?;
+        }
+        tx.commit().map_err(db_error)?;
         let device = match db.query_row("SELECT value FROM settings WHERE key='device'", [], |r| {
             r.get::<_, String>(0)
         }) {
@@ -158,7 +175,7 @@ impl Store {
         search: &str,
         dirty: bool,
     ) -> Result<Vec<Entry>, String> {
-        if offset > 1000 || search.len() > 256 {
+        if offset > 1000 || search.chars().count() > 256 {
             return Err("検索範囲が大きすぎます".into());
         }
         let mut stmt = self.db.prepare(if dirty {
@@ -237,7 +254,8 @@ impl Store {
                         |r| r.get(0),
                     )
                     .map_err(db_error)?;
-                if count >= 100 {
+                let already:bool=self.db.query_row("SELECT EXISTS(SELECT 1 FROM history WHERE owner=?1 AND id=?2 AND pinned=1 AND deleted=0)",params![owner,id],|r|r.get(0)).map_err(db_error)?;
+                if count >= 100 && !already {
                     return Err("固定できるのは100件までです".into());
                 }
                 self.db.execute("UPDATE history SET pinned=1,updated=?3,dirty=1 WHERE owner=?1 AND id=?2 AND deleted=0",params![owner,id,now()]).map_err(db_error)?;
