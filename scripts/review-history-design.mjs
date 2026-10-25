@@ -17,5 +17,11 @@ try{
         await page.screenshot({path:`desktop-reports/history-${name}-settings.png`});
         await page.close();
     }
+    const app=await browser.newPage({viewport:{width:1100,height:900}});
+    await app.goto('http://127.0.0.1:5175/');
+    await app.locator('#btn-guest-login').click();await app.locator('#btn-settings-trigger').click();await app.locator('[data-tab=about]').click();
+    assert.equal(await app.locator('#setting-windows-guide-box').evaluate(box=>box.nextElementSibling.id),'setting-extension-guide-box');
+    assert.equal(await app.locator('#setting-windows-guide-box a').getAttribute('href'),'https://flickmemo-qwe.web.app/download#http-windows');
+    await app.screenshot({path:'desktop-reports/settings-downloads.png'});await app.close();
     console.log('Desktop/mobile modal layout and expanded controls PASS; synthetic screenshots in desktop-reports/.');
 }finally{await browser.close();}

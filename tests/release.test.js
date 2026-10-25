@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { bump, nextVersion } from '../bump.js';
 import { repositoryFromRemote, validateRelease, verifyAsset, releaseUrl } from '../scripts/release.mjs';
+import { acquireDeployLock } from '../scripts/deploy-lock.mjs';
 
 test('one bump synchronizes web, extension, native Cargo and installer versions', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flickmemo-version-'));
@@ -36,4 +37,9 @@ test('release downloads must match the exact requested commit, version, sizes an
     assert.equal(repositoryFromRemote('git@github.com:owner/repo.git'),'owner/repo');
     assert.throws(()=>repositoryFromRemote('https://evil.example/owner/repo.git'));
     assert.throws(()=>releaseUrl('owner/repo','1.3.83','../secret'));
+});
+test('concurrent deployment is refused and its lock is released after completion',async()=>{
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'flickmemo-lock-'));const file=path.join(root,'.deploy.lock');
+    try{const release=await acquireDeployLock(file);await assert.rejects(acquireDeployLock(file),/実行中/);await release();const second=await acquireDeployLock(file);await second();assert.equal(fs.existsSync(file),false);}
+    finally{fs.rmSync(root,{recursive:true,force:true});}
 });

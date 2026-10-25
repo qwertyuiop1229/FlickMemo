@@ -44,7 +44,7 @@ jobs:
       - name: Database rules and history deletion in isolated emulators
         run: |
           npm install --global firebase-tools@15.9.1
-          firebase emulators:exec --project demo-flickmemo --only auth,database --config tests/firebase-emulator.json "node scripts/verify-database-emulator.mjs"
+          firebase emulators:exec --project demo-flickmemo --only "auth,database" --config tests/firebase-emulator.json "node scripts/verify-database-emulator.mjs"
       - name: Native tests (synthetic history only, no OS clipboard writes)
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: Build Windows installer

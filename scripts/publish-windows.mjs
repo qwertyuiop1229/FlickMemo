@@ -7,9 +7,10 @@ if (!token || !repository || !/^v\d+\.\d+\.\d+$/.test(tag || '') || !/^[a-f0-9]{
 const { version } = JSON.parse(await fs.readFile('package.json', 'utf8'));
 if (tag !== `v${version}`) throw new Error('タグとアプリのバージョンが一致しません');
 const files = new Map();
-const installers = (await fs.readdir('src-tauri/target/release/bundle/nsis')).filter(name => name.endsWith('-setup.exe'));
-if (installers.length !== 1) throw new Error('Windowsインストーラーを一意に選べません');
-files.set(RELEASE_FILES[0], await fs.readFile(path.join('src-tauri/target/release/bundle/nsis', installers[0])));
+const { productName } = JSON.parse(await fs.readFile('src-tauri/tauri.conf.json', 'utf8'));
+// Build caches can contain installers from older versions; never publish one of those.
+const installerName = `${productName}_${version}_x64-setup.exe`;
+files.set(RELEASE_FILES[0], await fs.readFile(path.join('src-tauri/target/release/bundle/nsis', installerName)));
 files.set(RELEASE_FILES[1], await fs.readFile('src-tauri/target/release/flickmemo-desktop.exe'));
 const manifest = validateRelease({ schemaVersion: 1, version, commit, repository, unsigned: true,
     files: Object.fromEntries([...files].map(([name, bytes]) => [name, { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }])) }, { version, commit, repository });
