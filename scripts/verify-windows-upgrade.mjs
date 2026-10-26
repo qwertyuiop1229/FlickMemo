@@ -28,11 +28,21 @@ function installer(file,args){return new Promise((resolve,reject)=>{
  child.on('error',error=>{clearTimeout(timer);reject(error);});child.on('exit',code=>{clearTimeout(timer);code===0?resolve():reject(new Error(`Installer failed: ${code}`));});
 });}
 let application,browser;
+// Hosted runners are elevated. WebView2 >=150 intentionally ignores WEBVIEW2_*
+// environment overrides in elevated hosts. Scope HKLM test policies to this EXE
+// only, and remove the values in finally. Never run this on a user's PC.
+const policy='HKLM\\Software\\Policies\\Microsoft\\Edge\\WebView2';
+const policyNames=['AdditionalBrowserArguments','UserDataFolder'];
+async function configureWebview(){
+ for(const [name,value] of [[policyNames[0],'--remote-debugging-port=9222'],[policyNames[1],path.join(root,'webview')]])
+  await exec('reg.exe',['add',`${policy}\\${name}`,'/v','flickmemo-desktop.exe','/t','REG_SZ','/d',value,'/f'],{windowsHide:true});
+}
 async function open(){
+ await fs.access(executable);
  application=spawn(executable,[],{windowsHide:true,stdio:'ignore',env:{...process.env,WEBVIEW2_USER_DATA_FOLDER:path.join(root,'webview'),WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9222'}});
  const deadline=Date.now()+45_000;let connected=false;
  while(Date.now()<deadline){try{const r=await fetch('http://127.0.0.1:9222/json/version',{signal:AbortSignal.timeout(1000)});if(r.ok){connected=true;break;}}catch{}await delay(250);}
- assert.ok(connected,'WebView2 debugger did not start');
+ assert.ok(connected,`WebView2 debugger did not start (application exit: ${application.exitCode})`);
  browser=await chromium.connectOverCDP('http://127.0.0.1:9222');
  let page;
  for(let n=0;n<100;n++){page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().includes('tauri.localhost'));if(page)break;await delay(100);}
@@ -42,7 +52,7 @@ async function open(){
 }
 async function close(page){
  const closed=page.waitForEvent('close',{timeout:25_000});
- await exec('powershell.exe',['-NoProfile','-Command',`(Get-Process -Id ${application.pid}).CloseMainWindow() | Out-Null`],{windowsHide:true});
+ await exec('powershell.exe',['-NoProfile','-File','scripts/close-upgrade-window.ps1','-ApplicationProcessId',String(application.pid),'-Executable',executable],{windowsHide:true});
  await closed; // exercises the app's actual save/drain/desktop_close handshake
  await browser.close().catch(()=>{});browser=null;
  application.kill();application=null;
@@ -50,6 +60,7 @@ async function close(page){
 }
 const sentinel='Upgrade regression 日本語😀\nPreserve committed notes and active selection.';
 try{
+ await configureWebview();
  await installer(oldInstaller,['/S',`/D=${installRoot}`]);
  let page=await open();await page.locator('#btn-new').click();await page.locator('#note-title-input').fill('Upgrade regression');await page.locator('#note-body').fill(sentinel);
  await close(page);
@@ -66,4 +77,7 @@ try{
  console.log(`Actual installed WebView2 ${baseline} -> ${version}: Japanese/emoji note, title, active note and save-on-close preserved PASS`);
 }catch(error){
  const page=browser?.contexts().flatMap(c=>c.pages())[0];await page?.screenshot({path:'desktop-reports/upgrade-failure.png'}).catch(()=>{});throw error;
-}finally{await browser?.close().catch(()=>{});application?.kill();}
+}finally{
+ await browser?.close().catch(()=>{});application?.kill();
+ for(const name of policyNames)await exec('reg.exe',['delete',`${policy}\\${name}`,'/v','flickmemo-desktop.exe','/f'],{windowsHide:true}).catch(()=>{});
+}
