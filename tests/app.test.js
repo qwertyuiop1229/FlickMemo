@@ -11,6 +11,7 @@ import * as clipboardFiles from '../clipboardFiles.js';
 import * as noteData from '../noteData.js';
 import * as protocol from '../authProtocol.js';
 import { WriteBarrier } from '../platform/writeBarrier.js';
+import { setupColorPicker } from '../platform/colorPicker.js';
 
 async function setup({ edge = false, extension = false, saveGate } = {}) {
     const extensionId = 'a'.repeat(32);
@@ -58,6 +59,7 @@ async function setup({ edge = false, extension = false, saveGate } = {}) {
         './archiveNames.js': archiveNames, './clipboardFiles.js': clipboardFiles, './authProtocol.js': protocol, './noteData.js': noteData,
         './noteStore.js': { NoteStore: class extends NoteStore { constructor() { super(factory); } async put(...args){await super.put(...args);await saveGate?.();} } },
         './platform/writeBarrier.js': { WriteBarrier },
+        './platform/colorPicker.js': { setupColorPicker },
         './fileTransfer.js': { FileTransferManager: class { stopDevicePresence() {} } }
     };
     const sandbox = { window, document: window.document, navigator: window.navigator, location: window.location,

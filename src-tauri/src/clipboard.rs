@@ -11,7 +11,7 @@ thread_local! { static STATE: RefCell<Option<Arc<Shared>>> = const { RefCell::ne
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
-fn input_desktop_is_unlocked() -> bool {
+pub(crate) fn input_desktop_is_unlocked() -> bool {
     use windows_sys::Win32::System::StationsAndDesktops::*;
     unsafe {
         let desktop = OpenInputDesktop(0, 0, DESKTOP_READOBJECTS);

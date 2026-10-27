@@ -17,7 +17,12 @@ export const desktop = {
     updateDownload: () => invoke('desktop_update_download'),
     updateInstall: () => invoke('desktop_update_install'),
     openDownload: (section = 'windows') => invoke('desktop_open_download', { section }),
-    changed: callback => listen('desktop-history-changed', callback)
+    changed: callback => listen('desktop-history-changed', callback),
+    colorPick: () => invoke('desktop_color_pick'),
+    colorStatus: () => invoke('desktop_color_status'),
+    colorSettings: preferences => invoke('desktop_color_settings', { preferences }),
+    colorClear: () => invoke('desktop_color_clear'),
+    colorChanged: callback => listen('desktop-color-picked', event => callback(event.payload))
 };
 
 export async function setupDesktop({ prepareClose, notify }) {

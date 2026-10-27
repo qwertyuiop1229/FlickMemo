@@ -3,6 +3,7 @@
 mod audit_tests;
 mod auth;
 mod clipboard;
+mod color_picker;
 mod history_store;
 mod history_sync;
 mod privacy;
@@ -450,7 +451,11 @@ fn main() {
             desktop_smoke_failed,
             updates::desktop_update_check,
             updates::desktop_update_download,
-            updates::desktop_update_install
+            updates::desktop_update_install,
+            color_picker::desktop_color_status,
+            color_picker::desktop_color_settings,
+            color_picker::desktop_color_pick,
+            color_picker::desktop_color_clear
         ])
         .setup(move |app| {
             let directory = if diagnostic {
@@ -525,6 +530,7 @@ fn main() {
                 }
             }
             app.manage(shared.clone());
+            app.manage(color_picker::start(shared.clone()));
             app.manage(Arc::new(updates::Updates::default()));
             history_sync::start(shared.clone());
             use tauri::{

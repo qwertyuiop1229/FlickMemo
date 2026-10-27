@@ -3,6 +3,7 @@ import { copyClipboardFile } from './clipboardFiles.js';
 import { validNote } from './noteData.js';
 import { NoteStore } from './noteStore.js';
 import { WriteBarrier } from './platform/writeBarrier.js';
+import { setupColorPicker } from './platform/colorPicker.js';
 import { initializeApp } from "firebase/app";
 import { AUTH_ORIGIN, AUTH_TTL_MS, validAuthResponse } from './authProtocol.js';
 import {
@@ -37,7 +38,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.94";
+const APP_VERSION = "1.3.95";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -3187,6 +3188,7 @@ historyButton.onpointerdown = () => {
 };
 historyButton.onclick = () => openHistoryPanel().catch(error => showToast(String(error?.message || error)));
 
+setupColorPicker({ win: window, doc: document, isDesktop, native: desktopReady.then(module => module?.desktop), notify: showToast });
 if (isDesktop) {
     desktopReady.then(async ({ setupDesktop, desktop }) => {
         await setupDesktop({ notify: showToast, prepareClose: async () => {

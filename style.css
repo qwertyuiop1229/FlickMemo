@@ -1,3 +1,4 @@
+@import './platform/colorPicker.css';
 :root {
     --m3-bg: #131314;
     --m3-surface: #1e1f20;

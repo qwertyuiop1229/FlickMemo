@@ -28,3 +28,11 @@ test('all web entry points use the same favicon and Apple touch icon', async () 
         dom.window.close();
     }
 });
+
+test('rounded production icons preserve alpha and Windows uses the same generated master export', async () => {
+    for (const file of ['icon.png', 'src-tauri/icons/icon.png', 'public/icons/icon-512.png', 'public/icons/icon-16.png']) {
+        const bytes = await fs.readFile(new URL(file, root)); assert.equal(bytes[25], 6, `${file} must preserve RGBA transparency`);
+    }
+    assert.deepEqual(await fs.readFile(new URL('src-tauri/icons/icon.png', root)), await fs.readFile(new URL('icon.png', root)));
+    assert.deepEqual(await fs.readFile(new URL('src-tauri/icons/icon.ico', root)), await fs.readFile(new URL('public/icons/favicon.ico', root)));
+});

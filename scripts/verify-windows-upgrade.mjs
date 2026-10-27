@@ -7,6 +7,7 @@ import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {chromium} from 'playwright-core';
 import {verifyAsset} from './release.mjs';
+import {verifyWindowsColors} from './verify-windows-colors.mjs';
 if(process.env.GITHUB_ACTIONS!=='true'||process.platform!=='win32')throw new Error('Disposable GitHub Windows runner required');
 const exec=promisify(execFile),delay=ms=>new Promise(r=>setTimeout(r,ms));
 const baseline='1.3.91';
@@ -71,7 +72,7 @@ try{
  await page.locator('#btn-settings-trigger').click();await page.locator('[data-tab=about]').click();
  assert.equal((await page.locator('#app-version-display').innerText()).trim(),`v${version}`);
  await page.screenshot({path:'desktop-reports/upgrade-verified.png'});
- await page.locator('#btn-settings-close').click();await close(page);
+ await page.locator('#btn-settings-close').click();await verifyWindowsColors(page,application.pid);await close(page);
  await installer(path.join(installRoot,'uninstall.exe'),['/S',`_?=${installRoot}`]);
  await fs.writeFile('desktop-reports/upgrade.json',JSON.stringify({baseline,version,notePreserved:true,titlePreserved:true,activeNotePreserved:true,actualWindowClose:true,isolatedProfile:true},null,2));
  console.log(`Actual installed WebView2 ${baseline} -> ${version}: Japanese/emoji note, title, active note and save-on-close preserved PASS`);

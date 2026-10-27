@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+const exec=promisify(execFile);
+export async function verifyWindowsColors(page,pid){
+ if(process.env.GITHUB_ACTIONS!=='true'||process.platform!=='win32')throw new Error('Disposable GitHub Windows runner required');
+ const input=action=>exec('powershell.exe',['-STA','-NoProfile','-File','scripts/color-picker-ci-input.ps1','-Action',action,'-ApplicationProcessId',String(pid)],{windowsHide:true});
+ const invoke=(command,args)=>page.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args});
+ const prefs={enabled:true,shortcut:'Ctrl+Alt+C',format:'hex',uppercase:true,remember:true};
+ await invoke('desktop_color_settings',{preferences:prefs});await invoke('desktop_color_clear');
+ await page.evaluate(()=>{const target=document.createElement('div');target.id='ci-color-patch';target.style.cssText='position:fixed;left:0;top:0;width:220px;height:220px;background:#2a79b4;z-index:2147483647;pointer-events:none';document.body.append(target);});
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ await input('hotkey');
+ await page.waitForFunction(async()=>(await window.__TAURI_INTERNALS__.invoke('desktop_color_status')).active,null,{timeout:10_000});
+ await input('choose');
+ await page.waitForFunction(async()=>{const s=await window.__TAURI_INTERNALS__.invoke('desktop_color_status');return !s.active&&s.recent[0]==='#2A79B4';},null,{timeout:10_000});
+ assert.equal(JSON.parse((await input('clipboard')).stdout).clipboard,'#2A79B4');
+ await invoke('desktop_color_pick');await input('cancel');
+ await page.waitForFunction(async()=>!(await window.__TAURI_INTERNALS__.invoke('desktop_color_status')).active);
+ assert.equal(JSON.parse((await input('clipboard')).stdout).clipboard,'#2A79B4','Esc must not change clipboard');
+ await invoke('desktop_color_settings',{preferences:{...prefs,enabled:false,format:'rgb',remember:false}});
+ await invoke('desktop_color_pick');await input('choose');
+ await page.waitForFunction(async()=>!(await window.__TAURI_INTERNALS__.invoke('desktop_color_status')).active);
+ assert.equal(JSON.parse((await input('clipboard')).stdout).clipboard,'rgb(42, 121, 180)');
+ assert.deepEqual((await invoke('desktop_color_status')).recent,[]);
+ await input('hotkey');await new Promise(resolve=>setTimeout(resolve,250));assert.equal((await invoke('desktop_color_status')).active,false);
+ await assert.rejects(invoke('desktop_color_settings',{preferences:{...prefs,shortcut:'Ctrl+C'}}));
+ await page.evaluate(()=>document.getElementById('ci-color-patch').remove());
+ console.log('Native color picker: real global hotkey, synthetic screen pixel, exact clipboard, Esc cancellation, RGB, no-history and shortcut disable PASS');
+}
