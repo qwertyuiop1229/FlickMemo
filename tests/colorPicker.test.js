@@ -81,3 +81,43 @@ test('storage rejection cannot report settings or history deletion as saved', as
         assert.equal(f.doc.querySelectorAll('.color-recent-swatch').length, 1); assert.match(f.doc.querySelector('.color-message').textContent, /消去できませんでした/);
     } finally { f.close(); }
 });
+
+test('Windows initialization cannot overwrite disabled native preferences or fall back to unmarked browser copies', async () => {
+    let release, callback; const writes = [], copies = [];
+    const initial = { preferences: { enabled: false, shortcut: 'Ctrl+Shift+Z', format: 'hsl', uppercase: false, remember: false }, recent: [] };
+    const f = fixture({ stored: { preferences: pickerPreferences(), recent: ['#ABCDEF'] }, native: {
+        colorStatus: () => new Promise(resolve => { release = resolve; }),
+        colorChanged: async cb => { callback = cb; },
+        colorSettings: async preferences => { writes.push(preferences); return { preferences, recent: [] }; },
+        copy: async value => copies.push(value), colorPick: async () => { throw new Error('unexpected early pick'); }
+    } });
+    try {
+        await tick(); f.ui.open();
+        f.doc.querySelector('[data-format=rgb]').click(); f.doc.querySelector('[data-copy]').click(); await tick();
+        assert.deepEqual(writes, []); assert.deepEqual(copies, []); assert.deepEqual(f.copies, []);
+        assert.equal(typeof callback, 'function', 'subscribe before obtaining the initial native snapshot');
+        callback({ hex: '#2A79B4', copied: true }); release(initial); await tick();
+        assert.equal(f.doc.querySelector('[data-value]').value, 'hsl(206, 62%, 44%)');
+        assert.equal(f.doc.querySelectorAll('.color-recent-swatch').length, 0);
+        f.doc.querySelector('[data-format=rgb]').click(); await tick();
+        assert.equal(writes.length, 1); assert.equal(writes[0].enabled, false); assert.equal(writes[0].remember, false); assert.equal(writes[0].shortcut, 'Ctrl+Shift+Z');
+    } finally { release?.(initial); await tick(); f.close(); }
+});
+
+
+test('native startup restores the latest color and failed initialization keeps every write disabled', async () => {
+    for (const fail of [false, true]) {
+        const f = fixture({ native: {
+            colorChanged: async () => {},
+            colorStatus: async () => { if (fail) throw Error('native unavailable'); return { preferences: pickerPreferences({ format: 'rgb' }), recent: ['#2A79B4'] }; }
+        } });
+        try {
+            await tick(); f.ui.open();
+            if (fail) {
+                for (const button of f.doc.querySelectorAll('[data-copy], [data-format], [data-pick], .color-preferences button')) assert.equal(button.disabled, true);
+                assert.match(f.doc.querySelector('.color-message').textContent, /native unavailable/);
+                f.doc.querySelector('[data-copy]').click(); await tick(); assert.deepEqual(f.copies, []);
+            } else assert.equal(f.doc.querySelector('[data-value]').value, 'rgb(42, 121, 180)');
+        } finally { f.close(); }
+    }
+});

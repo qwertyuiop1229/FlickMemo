@@ -20,9 +20,10 @@ export function formatColor(hex, format = 'hex', uppercase = true) {
 }
 export function setupColorPicker({ win = window, doc = document, native = null, isDesktop = false, notify = () => {} } = {}) {
     const storageKey = 'flickmemo-color-picker-v1';
-    let saved = {}; try { saved = JSON.parse(win.localStorage.getItem(storageKey) || '{}') || {}; } catch {}
+    let saved = {}; try { if (!isDesktop) saved = JSON.parse(win.localStorage.getItem(storageKey) || '{}') || {}; } catch {}
     let prefs = pickerPreferences(saved.preferences), recent = Array.isArray(saved.recent) ? saved.recent.filter(x => typeof x === 'string' && /^#[\da-f]{6}$/i.test(x)).slice(0, 12) : [];
     if (!prefs.remember) recent = [];
+    let ready = !isDesktop, pendingResult;
     let api, busy = false, hex = recent[0] || '#CB5733', status = null;
     const supported = isDesktop || typeof win.EyeDropper === 'function';
     const panel = doc.createElement('dialog'); panel.className = 'color-dialog'; panel.id = 'color-picker-dialog';
@@ -56,7 +57,9 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
         $('[data-preview]').style.backgroundColor = hex;
         $('[data-value]').value = formatColor(hex, prefs.format, prefs.uppercase);
         for (const button of panel.querySelectorAll('[data-format]')) button.setAttribute('aria-pressed', String(button.dataset.format === prefs.format));
-        $('[data-pick]').disabled = busy || !supported || (isDesktop && !api);
+        $('[data-pick]').disabled = busy || !supported || !ready;
+        for (const button of panel.querySelectorAll('[data-format], [data-copy]')) button.disabled = !ready;
+        if (form) for (const control of form.elements) control.disabled = !ready;
         $('[data-hint]').textContent = !supported ? 'このブラウザは未対応です。PCのChrome・EdgeまたはWindows版をご利用ください。' : `クリックで選択・Escで中止${prefs.enabled ? ` · ${prefs.shortcut}` : ''}${isDesktop ? ' · 矢印キーで1px移動' : ''}`;
         const list = $('.color-recent'); list.replaceChildren();
         for (const color of recent) {
@@ -65,11 +68,12 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
             button.onclick = () => { hex = color; render(); void copy(); }; list.append(button);
         }
         if (!recent.length) { const empty = doc.createElement('span'); empty.className = 'color-empty'; empty.textContent = prefs.remember ? '選んだ色がここに並びます' : '最近の色の保存はオフです'; list.append(empty); }
-        $('[data-clear]').disabled = !recent.length;
+        $('[data-clear]').disabled = !ready || !recent.length;
     }
     function remember(color) { if (prefs.remember) recent = [color, ...recent.filter(c => c.toLowerCase() !== color.toLowerCase())].slice(0, 12); }
     async function copy() {
-        try { const value = formatColor(hex, prefs.format, prefs.uppercase); if (api) await api.copy(value); else await win.navigator.clipboard.writeText(value); message(`${value} をコピーしました`); }
+        if (!ready) return;
+        try { const value = formatColor(hex, prefs.format, prefs.uppercase); if (isDesktop) await api.copy(value); else await win.navigator.clipboard.writeText(value); message(`${value} をコピーしました`); }
         catch { message('自動コピーできませんでした。コピーボタンを押すか、値を選択してコピーしてください。'); $('[data-value]').select(); }
     }
     function received(result) {
@@ -80,7 +84,7 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
     }
     function open() { if (!panel.open) panel.showModal(); render(); }
     async function pick() {
-        if (busy || !supported) return;
+        if (!ready || busy || !supported) return;
         busy = true; message(''); render();
         try {
             if (isDesktop) { if (!api) throw new Error('Windows機能の準備中です'); await api.colorPick(); }
@@ -95,12 +99,13 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
     $('[data-value]').onclick = event => event.target.select();
     panel.addEventListener('click', event => { if (event.target === panel) { const r = panel.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) panel.close(); } });
     async function save(next) {
-        if (api) { status = await api.colorSettings(next); prefs = pickerPreferences(status.preferences); recent = status.recent; }
+        if (!ready) return;
+        if (isDesktop) { status = await api.colorSettings(next); prefs = pickerPreferences(status.preferences); recent = status.recent; }
         else { if (!persist(next, next.remember ? recent : [])) throw new Error('端末の保存領域を利用できないため、設定を保存できませんでした'); prefs = next; if (!prefs.remember) recent = []; }
         render(); populateSettings();
     }
     for (const button of panel.querySelectorAll('[data-format]')) button.onclick = async () => { try { await save({ ...prefs, format: button.dataset.format }); } catch (error) { message(String(error?.message || error)); } };
-    $('[data-clear]').onclick = async () => { try { if (api) { status = await api.colorClear(); recent = status.recent; } else { if (!persist(prefs, [])) throw new Error('端末の保存領域を利用できないため、最近の色を消去できませんでした'); recent = []; } render(); } catch (error) { message(String(error)); } };
+    $('[data-clear]').onclick = async () => { if (!ready) return; try { if (isDesktop) { status = await api.colorClear(); recent = status.recent; } else { if (!persist(prefs, [])) throw new Error('端末の保存領域を利用できないため、最近の色を消去できませんでした'); recent = []; } render(); } catch (error) { message(String(error)); } };
     if (form) {
         settings.querySelector('[data-open]').onclick = open;
         form.onsubmit = async event => {
@@ -121,7 +126,15 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
     }, true);
     if (isDesktop) {
         if (form) form.querySelector('[type=submit]').disabled = true;
-        Promise.resolve(native).then(async value => { api = value; status = await api.colorStatus(); prefs = pickerPreferences(status.preferences); recent = status.recent; await api.colorChanged(received); render(); populateSettings(); if (form) form.querySelector('[type=submit]').disabled = false; }).catch(error => { message(String(error)); if (formStatus) formStatus.textContent = String(error); notify('カラーピッカーの準備に失敗しました'); });
+        Promise.resolve(native).then(async value => {
+            api = value;
+            // Subscribe before reading the snapshot so a pick during startup is not lost.
+            await api.colorChanged(result => { if (ready) received(result); else pendingResult = result; });
+            status = await api.colorStatus(); prefs = pickerPreferences(status.preferences); recent = prefs.remember ? status.recent : [];
+            hex = recent[0] || hex; ready = true;
+            if (pendingResult) received(pendingResult);
+            render(); populateSettings();
+        }).catch(error => { message(String(error)); if (formStatus) formStatus.textContent = String(error); notify('カラーピッカーの準備に失敗しました'); });
     }
     render(); populateSettings();
     return { open, pick, panel };

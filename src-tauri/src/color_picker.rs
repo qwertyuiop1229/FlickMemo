@@ -843,11 +843,13 @@ pub fn start(shared: Arc<Shared>) -> Service {
                 }
             }
             WORKER.with(|cell| *cell.borrow_mut() = Some(worker));
-            let _ = ready_tx.send(Ok(hwnd as usize));
-            let mut message: MSG = std::mem::zeroed();
-            while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
+            // A timed-out caller no longer owns this worker. Clean up its hotkey/window.
+            if ready_tx.send(Ok(hwnd as usize)).is_ok() {
+                let mut message: MSG = std::mem::zeroed();
+                while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
             }
             WORKER.with(|cell| {
                 if let Some(mut worker) = cell.borrow_mut().take() {

@@ -72,10 +72,22 @@ fn excluded() -> bool {
     }
     false
 }
+fn own_copy(owner: u32, current: u32, diagnostic: bool) -> bool {
+    owner != 0 && owner == current && !diagnostic
+}
 fn excluded_process(shared: &Shared) -> bool {
     unsafe {
         let mut pid = 0;
         GetWindowThreadProcessId(GetClipboardOwner(), &mut pid);
+        // Defense in depth if adding the private clipboard marker failed.
+        // Only isolated CI diagnostics simulate external copies from this process.
+        if own_copy(
+            pid,
+            GetCurrentProcessId(),
+            shared.diagnostic_directory.is_some(),
+        ) {
+            return true;
+        }
         if pid == 0 {
             return false;
         }
@@ -263,11 +275,12 @@ pub fn start(shared: Arc<Shared>) -> Result<(), String> {
                 ));
                 return;
             }
-            let _ = tx.send(Ok(()));
-            let mut message = std::mem::zeroed();
-            while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
+            if tx.send(Ok(())).is_ok() {
+                let mut message = std::mem::zeroed();
+                while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
             }
             RemoveClipboardFormatListener(hwnd);
             WTSUnRegisterSessionNotification(hwnd);
@@ -558,4 +571,16 @@ pub fn import_windows(shared: &Shared, expected_owner: &str) -> Result<usize, St
     shared.wake.notify_one();
     shared.changed();
     Ok(saved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::own_copy;
+    #[test]
+    fn self_generated_copies_are_excluded_even_without_the_private_marker() {
+        assert!(own_copy(42, 42, false));
+        assert!(!own_copy(43, 42, false));
+        assert!(!own_copy(0, 42, false));
+        assert!(!own_copy(42, 42, true));
+    }
 }
