@@ -413,6 +413,11 @@ impl Worker {
                     .shared
                     .app
                     .emit_to("main", "desktop-color-error", &self.error);
+                self.confirmation = Some("この画面の色を取得できません".into());
+                self.sample = 0x00201f1e;
+                ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+                InvalidateRect(self.hwnd, std::ptr::null(), 0);
+                SetTimer(self.hwnd, 2, 1800, None);
                 return;
             }
             self.sample = color;

@@ -1,7 +1,8 @@
 // Screen samples and recent colors stay on this device. No Firebase dependency.
 export const defaultPickerPreferences = Object.freeze({ enabled: true, shortcut: 'Ctrl+Alt+C', format: 'hex', uppercase: true, remember: true });
-export function validShortcut(value) { return /^(Ctrl\+Alt|Ctrl\+Shift|Alt\+Shift)\+[A-Z0-9]$/.test(value); }
+export function validShortcut(value) { return typeof value === 'string' && /^(Ctrl\+Alt|Ctrl\+Shift|Alt\+Shift)\+[A-Z0-9]$/.test(value); }
 export function pickerPreferences(value = {}) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) value = {};
     return { enabled: value.enabled !== false, shortcut: validShortcut(value.shortcut) ? value.shortcut : 'Ctrl+Alt+C',
         format: ['hex', 'rgb', 'hsl'].includes(value.format) ? value.format : 'hex', uppercase: value.uppercase !== false, remember: value.remember !== false };
 }
@@ -20,7 +21,7 @@ export function formatColor(hex, format = 'hex', uppercase = true) {
 export function setupColorPicker({ win = window, doc = document, native = null, isDesktop = false, notify = () => {} } = {}) {
     const storageKey = 'flickmemo-color-picker-v1';
     let saved = {}; try { saved = JSON.parse(win.localStorage.getItem(storageKey) || '{}') || {}; } catch {}
-    let prefs = pickerPreferences(saved.preferences), recent = Array.isArray(saved.recent) ? saved.recent.filter(x => /^#[\da-f]{6}$/i.test(x)).slice(0, 12) : [];
+    let prefs = pickerPreferences(saved.preferences), recent = Array.isArray(saved.recent) ? saved.recent.filter(x => typeof x === 'string' && /^#[\da-f]{6}$/i.test(x)).slice(0, 12) : [];
     if (!prefs.remember) recent = [];
     let api, busy = false, hex = recent[0] || '#CB5733', status = null;
     const supported = isDesktop || typeof win.EyeDropper === 'function';
@@ -72,7 +73,8 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
         catch { message('自動コピーできませんでした。コピーボタンを押すか、値を選択してコピーしてください。'); $('[data-value]').select(); }
     }
     function received(result) {
-        if (!result || !/^#[\da-f]{6}$/i.test(result.hex)) return;
+        if (result?.error && !result.hex) { message(String(result.error)); if (!panel.open) notify(String(result.error)); return; }
+        if (!result || typeof result.hex !== 'string' || !/^#[\da-f]{6}$/i.test(result.hex)) return;
         hex = result.hex.toUpperCase(); remember(hex); if (!isDesktop) persist(); render();
         message(result.copied ? `${formatColor(hex, prefs.format, prefs.uppercase)} をコピーしました` : result.error || '色を取得しました。コピーボタンからコピーできます。');
     }

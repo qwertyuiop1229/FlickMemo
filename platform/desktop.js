@@ -22,7 +22,13 @@ export const desktop = {
     colorStatus: () => invoke('desktop_color_status'),
     colorSettings: preferences => invoke('desktop_color_settings', { preferences }),
     colorClear: () => invoke('desktop_color_clear'),
-    colorChanged: callback => listen('desktop-color-picked', event => callback(event.payload))
+    colorChanged: async callback => {
+        const listeners = await Promise.all([
+            listen('desktop-color-picked', event => callback(event.payload)),
+            listen('desktop-color-error', event => callback({ error: event.payload }))
+        ]);
+        return () => listeners.forEach(remove => remove());
+    }
 };
 
 export async function setupDesktop({ prepareClose, notify }) {

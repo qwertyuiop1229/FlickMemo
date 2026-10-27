@@ -61,3 +61,10 @@ test('clipboard rejection leaves a selectable value and offers an explicit retry
         f.win.navigator.clipboard.writeText = async value => f.copies.push(value); f.doc.querySelector('[data-copy]').click(); await tick(); assert.deepEqual(f.copies, ['#ABCDEF']);
     } finally { f.close(); }
 });
+
+test('corrupted saved preference shapes cannot break app initialization', () => {
+    for (const preferences of [null, [], 7, { shortcut: { toString: null } }]) {
+        const f = fixture({ stored: { preferences, recent: [{ toString: null }, null, '#123456'] } });
+        try { assert.equal(f.doc.querySelectorAll('.color-recent-swatch').length, 1); } finally { f.close(); }
+    }
+});

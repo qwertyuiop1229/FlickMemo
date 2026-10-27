@@ -73,6 +73,10 @@ try{
  assert.equal((await page.locator('#app-version-display').innerText()).trim(),`v${version}`);
  await page.screenshot({path:'desktop-reports/upgrade-verified.png'});
  await page.locator('#btn-settings-close').click();await verifyWindowsColors(page,application.pid);await close(page);
+ page=await open();
+ const pickerSettings=await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('desktop_color_status'));
+ assert.equal(pickerSettings.preferences.format,'rgb');assert.equal(pickerSettings.preferences.enabled,false);assert.equal(pickerSettings.preferences.remember,false);assert.deepEqual(pickerSettings.recent,[]);
+ await close(page);
  await installer(path.join(installRoot,'uninstall.exe'),['/S',`_?=${installRoot}`]);
  await fs.writeFile('desktop-reports/upgrade.json',JSON.stringify({baseline,version,notePreserved:true,titlePreserved:true,activeNotePreserved:true,actualWindowClose:true,isolatedProfile:true},null,2));
  console.log(`Actual installed WebView2 ${baseline} -> ${version}: Japanese/emoji note, title, active note and save-on-close preserved PASS`);
