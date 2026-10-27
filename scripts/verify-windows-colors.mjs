@@ -13,11 +13,12 @@ export async function verifyWindowsColors(page,pid){
  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  await input('hotkey');
  await page.waitForFunction(async()=>(await window.__TAURI_INTERNALS__.invoke('desktop_color_status')).active,null,{timeout:10_000});
- await input('preview');
  await input('choose');
  await page.waitForFunction(async()=>{const s=await window.__TAURI_INTERNALS__.invoke('desktop_color_status');return !s.active&&s.recent[0]==='#2A79B4';},null,{timeout:10_000});
- assert.equal(JSON.parse((await input('clipboard')).stdout).clipboard,'#2A79B4');
- await invoke('desktop_color_pick');await input('cancel');
+ const pickedStatus=await invoke('desktop_color_status');
+ assert.equal(pickedStatus.error,null,JSON.stringify(pickedStatus));
+ assert.equal(JSON.parse((await input('clipboard')).stdout).clipboard,'#2A79B4',JSON.stringify(pickedStatus));
+ await invoke('desktop_color_pick');await input('preview');await input('cancel');
  await page.waitForFunction(async()=>!(await window.__TAURI_INTERNALS__.invoke('desktop_color_status')).active);
  assert.equal(JSON.parse((await input('clipboard')).stdout).clipboard,'#2A79B4','Esc must not change clipboard');
  await invoke('desktop_color_pick');await input('close');

@@ -44,7 +44,7 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
         <label class="color-setting-row"><span>最近の色を保存する<small>この端末に最大12色。アカウント間でも共通です。</small></span><input name="remember" type="checkbox"></label>
         <p class="color-settings-status" role="status" aria-live="polite"></p><button class="btn-primary-sm" type="submit">設定を保存</button></form>`;
     const form = settings?.querySelector('form'), formStatus = settings?.querySelector('.color-settings-status');
-    const persist = () => { try { win.localStorage.setItem(storageKey, JSON.stringify({ preferences: prefs, recent: prefs.remember ? recent : [] })); } catch { message('端末の保存領域を利用できません。色はコピーできます。'); } };
+    const persist = (preferences = prefs, colors = recent) => { try { win.localStorage.setItem(storageKey, JSON.stringify({ preferences, recent: preferences.remember ? colors : [] })); return true; } catch { message('端末の保存領域を利用できません。色はコピーできます。'); return false; } };
     function populateSettings() {
         if (!form) return;
         for (const name of ['enabled', 'uppercase', 'remember']) form.elements[name].checked = prefs[name];
@@ -96,11 +96,11 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
     panel.addEventListener('click', event => { if (event.target === panel) { const r = panel.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) panel.close(); } });
     async function save(next) {
         if (api) { status = await api.colorSettings(next); prefs = pickerPreferences(status.preferences); recent = status.recent; }
-        else { prefs = next; if (!prefs.remember) recent = []; persist(); }
+        else { if (!persist(next, next.remember ? recent : [])) throw new Error('端末の保存領域を利用できないため、設定を保存できませんでした'); prefs = next; if (!prefs.remember) recent = []; }
         render(); populateSettings();
     }
     for (const button of panel.querySelectorAll('[data-format]')) button.onclick = async () => { try { await save({ ...prefs, format: button.dataset.format }); } catch (error) { message(String(error?.message || error)); } };
-    $('[data-clear]').onclick = async () => { try { if (api) { status = await api.colorClear(); recent = status.recent; } else { recent = []; persist(); } render(); } catch (error) { message(String(error)); } };
+    $('[data-clear]').onclick = async () => { try { if (api) { status = await api.colorClear(); recent = status.recent; } else { if (!persist(prefs, [])) throw new Error('端末の保存領域を利用できないため、最近の色を消去できませんでした'); recent = []; } render(); } catch (error) { message(String(error)); } };
     if (form) {
         settings.querySelector('[data-open]').onclick = open;
         form.onsubmit = async event => {

@@ -424,12 +424,12 @@ impl Worker {
             let hex = hex(color);
             let value = format(color, &self.prefs);
             let mut copied = Err("クリップボードを開けません".to_string());
-            for _ in 0..4 {
+            for _ in 0..12 {
                 copied = clipboard::copy_text(&value, self.hwnd);
                 if copied.is_ok() {
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(20));
+                std::thread::sleep(Duration::from_millis(30));
             }
             if self.prefs.remember {
                 self.recent.retain(|x| !x.eq_ignore_ascii_case(&hex));

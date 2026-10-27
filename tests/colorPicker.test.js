@@ -68,3 +68,16 @@ test('corrupted saved preference shapes cannot break app initialization', () => 
         try { assert.equal(f.doc.querySelectorAll('.color-recent-swatch').length, 1); } finally { f.close(); }
     }
 });
+
+test('storage rejection cannot report settings or history deletion as saved', async () => {
+    const f = fixture({ stored: { recent: ['#123456'] } });
+    try {
+        Object.getPrototypeOf(f.win.localStorage).setItem = () => { throw new Error('quota'); };
+        const form = f.doc.querySelector('.color-preferences'); form.elements.enabled.checked = false;
+        form.dispatchEvent(new f.win.Event('submit', { cancelable: true })); await tick();
+        assert.match(f.doc.querySelector('.color-settings-status').textContent, /保存できませんでした/);
+        assert.match(f.doc.querySelector('[data-hint]').textContent, /このブラウザは未対応/);
+        f.doc.querySelector('[data-clear]').click(); await tick();
+        assert.equal(f.doc.querySelectorAll('.color-recent-swatch').length, 1); assert.match(f.doc.querySelector('.color-message').textContent, /消去できませんでした/);
+    } finally { f.close(); }
+});
