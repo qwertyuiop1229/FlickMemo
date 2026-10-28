@@ -15,6 +15,7 @@ export async function verifyWindowsColors(page,pid){
  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  await input('hotkey');
  await wait(s=>s.active,'グローバルキーによる採色開始');
+ const performance=JSON.parse((await input('performance')).stdout);console.log('Color picker movement performance:',performance);
  await input('choose');
  const pickedStatus=await wait(s=>!s.active&&s.recent[0]==='#2A79B4','採色とコピーの完了');
  assert.equal(pickedStatus.error,null,JSON.stringify(pickedStatus));

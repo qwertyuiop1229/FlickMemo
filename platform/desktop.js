@@ -44,7 +44,7 @@ export async function setupDesktop({ prepareClose, notify }) {
             notify(String(error?.message || error));
         } finally { closing = false; }
     });
-    // A destroyed WebView will recreate this module and its listeners on next open.
+    // The retained WebView keeps its DOM and listeners when hidden.
     document.documentElement.dataset.platform = 'windows';
     document.querySelector('link[rel="manifest"]')?.remove();
     for (const link of document.querySelectorAll('a[data-download-section]')) {
@@ -81,6 +81,10 @@ export async function setupDesktop({ prepareClose, notify }) {
                 editor.dispatchEvent(new Event('input', { bubbles: true }));
                 localStorage.setItem('diagnostic-note-written', 'true');
             }
+            await listen('desktop-window-opened', async () => {
+                if (editor.value !== expected) { await invoke('desktop_smoke_failed', { error: 'Retained editor state changed' }); return; }
+                await invoke('desktop_ready', { verified: true });
+            });
             await invoke('desktop_ready', { verified: true });
         } catch (error) {
             await invoke('desktop_smoke_failed', { error: String(error?.message || error) });

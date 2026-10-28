@@ -3,7 +3,10 @@ use crate::{clipboard, Shared};
 use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
-    sync::{mpsc, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
     time::{Duration, Instant},
 };
 use tauri::{Emitter, State};
@@ -202,7 +205,9 @@ struct Worker {
     error: Option<String>,
     registered: Option<i32>,
     active: bool,
-    hook: HHOOK,
+    hook: Option<InputHook>,
+    capture: Option<SampleBuffer>,
+    last_sample: Instant,
     previous: HWND,
     began: Instant,
     sample: u32,
@@ -293,22 +298,22 @@ impl Worker {
             self.previous = GetForegroundWindow();
             self.confirmation = None;
             KillTimer(self.hwnd, 2);
-            self.hook = SetWindowsHookExW(
-                WH_MOUSE_LL,
-                Some(mouse_hook),
-                GetModuleHandleW(std::ptr::null()),
-                0,
-            );
-            if self.hook.is_null() {
-                return Err("画面の選択操作を開始できません".into());
-            }
+            self.capture = Some(SampleBuffer::new()?);
+            self.hook = match InputHook::start(self.hwnd) {
+                Ok(hook) => Some(hook),
+                Err(error) => {
+                    self.capture = None;
+                    return Err(error);
+                }
+            };
+            self.last_sample = Instant::now() - Duration::from_secs(1);
             self.active = true;
             self.began = Instant::now();
             self.update();
             ShowWindow(self.hwnd, SW_SHOWNORMAL);
             SetForegroundWindow(self.hwnd);
             SetFocus(self.hwnd);
-            if SetTimer(self.hwnd, 1, 40, None) == 0 {
+            if SetTimer(self.hwnd, 1, 66, None) == 0 {
                 self.finish(None);
                 return Err("色の取得を開始できません".into());
             }
@@ -320,6 +325,13 @@ impl Worker {
         if GetCursorPos(&mut point) == 0 {
             return;
         }
+        if point.x == self.point.x
+            && point.y == self.point.y
+            && self.last_sample.elapsed() < Duration::from_millis(200)
+        {
+            return;
+        }
+        self.last_sample = Instant::now();
         let mut monitor: MONITORINFO = std::mem::zeroed();
         monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
         let handle = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
@@ -339,53 +351,50 @@ impl Worker {
         } else {
             point.y - height - 22
         };
-        SetWindowPos(
-            self.hwnd,
-            HWND_TOPMOST,
-            x.max(monitor.rcWork.left),
-            y.max(monitor.rcWork.top),
-            width,
-            height,
-            SWP_NOACTIVATE,
-        );
-        let mut area: RECT = std::mem::zeroed();
-        GetClientRect(self.hwnd, &mut area);
-        // A window owns the region after successful SetWindowRgn.
-        let region = CreateRoundRectRgn(
-            0,
-            0,
-            width,
-            height,
-            (24. * scale) as i32,
-            (24. * scale) as i32,
-        );
-        if SetWindowRgn(self.hwnd, region, 0) == 0 {
-            DeleteObject(region);
+        let mut bounds: RECT = std::mem::zeroed();
+        GetWindowRect(self.hwnd, &mut bounds);
+        let resized = bounds.right - bounds.left != width || bounds.bottom - bounds.top != height;
+        let x = x.max(monitor.rcWork.left);
+        let y = y.max(monitor.rcWork.top);
+        if resized || bounds.left != x || bounds.top != y {
+            SetWindowPos(
+                self.hwnd,
+                HWND_TOPMOST,
+                x,
+                y,
+                width,
+                height,
+                SWP_NOACTIVATE | SWP_NOREDRAW,
+            );
         }
-        // The panel never overlaps the sampled point; flush a previous position first.
-        DwmFlush();
-        let dc = GetDC(std::ptr::null_mut());
-        if dc.is_null() {
-            return;
-        }
-        self.sample = GetPixel(dc, point.x, point.y);
-        self.point = point;
-        for row in 0..7 {
-            for col in 0..7 {
-                self.pixels[row * 7 + col] =
-                    GetPixel(dc, point.x + col as i32 - 3, point.y + row as i32 - 3);
+        if resized {
+            let region = CreateRoundRectRgn(
+                0,
+                0,
+                width,
+                height,
+                (24. * scale) as i32,
+                (24. * scale) as i32,
+            );
+            if SetWindowRgn(self.hwnd, region, 0) == 0 {
+                DeleteObject(region);
             }
         }
-        ReleaseDC(std::ptr::null_mut(), dc);
+        // One 7x7 readback instead of 50 synchronous screen GetPixel calls.
+        if let Some(capture) = self.capture.as_mut() {
+            if let Some(pixels) = capture.read(point) {
+                self.pixels = pixels;
+                self.sample = pixels[24];
+                self.point = point;
+            }
+        }
         InvalidateRect(self.hwnd, std::ptr::null(), 0);
     }
     unsafe fn finish(&mut self, point: Option<POINT>) {
         self.active = false;
         KillTimer(self.hwnd, 1);
-        if !self.hook.is_null() {
-            UnhookWindowsHookEx(self.hook);
-            self.hook = std::ptr::null_mut();
-        }
+        self.hook.take();
+        self.capture.take();
         let restore = GetForegroundWindow() == self.hwnd;
         ShowWindow(self.hwnd, SW_HIDE);
         DwmFlush();
@@ -473,37 +482,169 @@ impl Worker {
         Ok(self.status())
     }
 }
+// Dedicated input pump: screen readback/painting must never block a global input hook.
+thread_local! { static INPUT_TARGET: std::cell::Cell<HWND> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+static INPUT_ENABLED: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) }; }
+struct InputHook {
+    thread: u32,
+    enabled: Arc<AtomicBool>,
+}
+impl InputHook {
+    unsafe fn start(hwnd: HWND) -> Result<Self, String> {
+        let target = hwnd as usize;
+        let enabled = Arc::new(AtomicBool::new(true));
+        let hook_enabled = enabled.clone();
+        let (tx, rx) = mpsc::sync_channel(0);
+        std::thread::Builder::new()
+            .name("color-input".into())
+            .spawn(move || unsafe {
+                let mut message: MSG = std::mem::zeroed();
+                PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
+                INPUT_TARGET.with(|v| v.set(target as HWND));
+                INPUT_ENABLED.with(|v| *v.borrow_mut() = Some(hook_enabled));
+                let hook = SetWindowsHookExW(
+                    WH_MOUSE_LL,
+                    Some(mouse_hook),
+                    GetModuleHandleW(std::ptr::null()),
+                    0,
+                );
+                if hook.is_null() {
+                    let _ = tx.send(Err("画面の選択操作を開始できません".to_string()));
+                    return;
+                }
+                if tx
+                    .send(Ok(
+                        windows_sys::Win32::System::Threading::GetCurrentThreadId(),
+                    ))
+                    .is_ok()
+                {
+                    while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
+                        TranslateMessage(&message);
+                        DispatchMessageW(&message);
+                    }
+                }
+                UnhookWindowsHookEx(hook);
+            })
+            .map_err(|_| "画面の選択操作を開始できません")?;
+        rx.recv_timeout(Duration::from_secs(2))
+            .map_err(|_| "選択操作の準備がタイムアウトしました".to_string())?
+            .map(|thread| Self { thread, enabled })
+    }
+}
+impl Drop for InputHook {
+    fn drop(&mut self) {
+        unsafe {
+            self.enabled.store(false, Ordering::SeqCst);
+            PostThreadMessageW(self.thread, WM_QUIT, 0, 0);
+        }
+    }
+}
 unsafe extern "system" fn mouse_hook(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code >= 0 {
-        let consumed = WORKER.with(|state| {
-            let Ok(state) = state.try_borrow() else {
-                return false;
-            };
-            let Some(worker) = state.as_ref() else {
-                return false;
-            };
-            if !worker.active {
-                return false;
-            }
+        let target = INPUT_TARGET.with(|v| v.get());
+        let enabled = INPUT_ENABLED.with(|v| {
+            v.borrow()
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::SeqCst))
+        });
+        if !target.is_null() && enabled {
             match w as u32 {
-                WM_LBUTTONDOWN | WM_RBUTTONDOWN => true,
+                WM_LBUTTONDOWN | WM_RBUTTONDOWN => return 1,
                 WM_LBUTTONUP => {
                     let data = &*(l as *const MSLLHOOKSTRUCT);
-                    PostMessageW(worker.hwnd, PICK, data.pt.x as usize, data.pt.y as isize);
-                    true
+                    PostMessageW(target, PICK, data.pt.x as usize, data.pt.y as isize);
+                    return 1;
                 }
                 WM_RBUTTONUP => {
-                    PostMessageW(worker.hwnd, CANCEL, 0, 0);
-                    true
+                    PostMessageW(target, CANCEL, 0, 0);
+                    return 1;
                 }
-                _ => false,
+                _ => {}
             }
-        });
-        if consumed {
-            return 1;
         }
     }
     CallNextHookEx(std::ptr::null_mut(), code, w, l)
+}
+struct SampleBuffer {
+    dc: HDC,
+    bitmap: HBITMAP,
+    previous: HGDIOBJ,
+    bits: *mut u32,
+}
+impl SampleBuffer {
+    unsafe fn new() -> Result<Self, String> {
+        let dc = CreateCompatibleDC(std::ptr::null_mut());
+        if dc.is_null() {
+            return Err("採色用メモリを作成できません".into());
+        }
+        let mut info: BITMAPINFO = std::mem::zeroed();
+        info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        info.bmiHeader.biWidth = 7;
+        info.bmiHeader.biHeight = -7;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        let mut bits = std::ptr::null_mut();
+        let bitmap = CreateDIBSection(
+            dc,
+            &info,
+            DIB_RGB_COLORS,
+            &mut bits,
+            std::ptr::null_mut(),
+            0,
+        );
+        if bitmap.is_null() || bits.is_null() {
+            if !bitmap.is_null() {
+                DeleteObject(bitmap);
+            }
+            DeleteDC(dc);
+            return Err("採色用メモリを作成できません".into());
+        }
+        let previous = SelectObject(dc, bitmap);
+        Ok(Self {
+            dc,
+            bitmap,
+            previous,
+            bits: bits.cast(),
+        })
+    }
+    unsafe fn read(&mut self, point: POINT) -> Option<[u32; 49]> {
+        let screen = GetDC(std::ptr::null_mut());
+        if screen.is_null() {
+            return None;
+        }
+        let ok = BitBlt(
+            self.dc,
+            0,
+            0,
+            7,
+            7,
+            screen,
+            point.x - 3,
+            point.y - 3,
+            SRCCOPY | CAPTUREBLT,
+        );
+        ReleaseDC(std::ptr::null_mut(), screen);
+        if ok == 0 {
+            return None;
+        }
+        GdiFlush();
+        let mut pixels = [0; 49];
+        for (i, value) in pixels.iter_mut().enumerate() {
+            let rgb = *self.bits.add(i);
+            *value = ((rgb >> 16) & 255) | (rgb & 0x00ff00) | ((rgb & 255) << 16);
+        }
+        Some(pixels)
+    }
+}
+impl Drop for SampleBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            SelectObject(self.dc, self.previous);
+            DeleteObject(self.bitmap);
+            DeleteDC(self.dc);
+        }
+    }
 }
 unsafe fn rect(dc: HDC, area: RECT, color: u32) {
     let brush = CreateSolidBrush(color);
@@ -824,7 +965,9 @@ pub fn start(shared: Arc<Shared>) -> Service {
                 error: None,
                 registered: None,
                 active: false,
-                hook: std::ptr::null_mut(),
+                hook: None,
+                capture: None,
+                last_sample: Instant::now(),
                 previous: std::ptr::null_mut(),
                 began: Instant::now(),
                 sample: 0,

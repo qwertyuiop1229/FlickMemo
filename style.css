@@ -1077,7 +1077,6 @@ select {
 
 @media (min-width: 769px) {
 
-    #btn-back,
     .mobile-only {
         display: none !important;
     }
@@ -2772,3 +2771,6 @@ body.is-extension-popup {
 /* One shared identity for web, installed PWA and the browser side panel. */
 .app-brand-image { display: inline-block; border-radius: 22%; flex-shrink: 0; object-fit: contain; }
 .brand-icon .app-brand-image { margin-bottom: 0.65rem; }
+
+.app-navigation { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.app-navigation button:disabled { opacity: .3; cursor: default; pointer-events: none; }

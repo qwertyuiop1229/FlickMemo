@@ -11,6 +11,7 @@ import * as clipboardFiles from '../clipboardFiles.js';
 import * as noteData from '../noteData.js';
 import * as protocol from '../authProtocol.js';
 import { WriteBarrier } from '../platform/writeBarrier.js';
+import { createNavigation } from '../platform/navigation.js';
 import { setupColorPicker } from '../platform/colorPicker.js';
 
 async function setup({ edge = false, extension = false, saveGate } = {}) {
@@ -60,6 +61,7 @@ async function setup({ edge = false, extension = false, saveGate } = {}) {
         './noteStore.js': { NoteStore: class extends NoteStore { constructor() { super(factory); } async put(...args){await super.put(...args);await saveGate?.();} } },
         './platform/writeBarrier.js': { WriteBarrier },
         './platform/colorPicker.js': { setupColorPicker },
+        './platform/navigation.js': { createNavigation },
         './fileTransfer.js': { FileTransferManager: class { stopDevicePresence() {} } }
     };
     const sandbox = { window, document: window.document, navigator: window.navigator, location: window.location,
@@ -73,7 +75,7 @@ async function setup({ edge = false, extension = false, saveGate } = {}) {
     const context = vm.createContext(sandbox);
     const source = await fs.readFile(new URL('../app.js', import.meta.url), 'utf8');
     const module = new vm.SourceTextModule(source + `
-        export { loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote };
+        export { loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
         export function changeTestOwner(uid){currentUserId=uid;auth.currentUser=uid?{uid}:null;isGuestMode=!uid;++authGeneration;currentNotes={};}
         export function setNotes(notes) { currentNotes = notes; }
         export function historySize() { return textHistory.reduce((sum, text) => sum + text.length, 0); }
@@ -156,5 +158,24 @@ test('Chrome normal login still uses native identity credentials', async () => {
         assert.equal(app.calls.tokens, 2);
         assert.equal(app.calls.opened.length, 0);
         assert.equal(app.calls.credentials.length, 1);
+    } finally { app.close(); }
+});
+
+
+test('permanent navigation buttons restore note and transfer locations, skip deleted notes and reset on account cleanup', async () => {
+    const app = await setup();
+    try {
+        const doc = app.document, back = doc.getElementById('btn-back'), forward = doc.getElementById('btn-forward');
+        assert.equal(doc.querySelector('.header-left .brand-logo'), null);
+        assert.equal(back.disabled, true); assert.equal(forward.disabled, true);
+        const notes = { a: { id: 'a', body: 'First memo', title: 'A' }, b: { id: 'b', body: 'Second memo', title: 'B' } };
+        app.api.setNotes(notes); app.api.selectNote('a', false); app.api.selectNote('b', false); app.api.openTransferView();
+        back.click(); assert.equal(doc.getElementById('note-body').value, 'Second memo');
+        assert.equal(doc.getElementById('main-layout').classList.contains('view-transfer'), false);
+        back.click(); assert.equal(doc.getElementById('note-body').value, 'First memo');
+        forward.click(); assert.equal(doc.getElementById('note-body').value, 'Second memo');
+        delete notes.a; back.click(); assert.equal(doc.getElementById('note-body').value, ''); assert.equal(back.disabled, true);
+        forward.click(); assert.equal(doc.getElementById('note-body').value, 'Second memo');
+        await app.api.clearLocalData(); assert.equal(back.disabled, true); assert.equal(forward.disabled, true);
     } finally { app.close(); }
 });

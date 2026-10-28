@@ -64,7 +64,13 @@ impl Shared {
                 }));
             }
         }
-        let _ = self.app.emit_to("main", "desktop-history-changed", ());
+        if self
+            .app
+            .get_webview_window("main")
+            .is_some_and(|w| w.is_visible().unwrap_or(false))
+        {
+            let _ = self.app.emit_to("main", "desktop-history-changed", ());
+        }
     }
 }
 #[derive(Serialize)]
@@ -295,7 +301,11 @@ async fn desktop_close(window: WebviewWindow, state: State<'_, Arc<Shared>>) -> 
         window.app_handle().exit(0);
         Ok(())
     } else {
-        window.destroy().map_err(|_| "画面を閉じられません".into())
+        window
+            .hide()
+            .map_err(|_| "画面を閉じられません".to_string())?;
+        set_webview_sleep(&window, true);
+        Ok(())
     }
 }
 #[tauri::command]
@@ -324,12 +334,48 @@ async fn desktop_smoke_failed(state: State<'_, Arc<Shared>>, error: String) -> R
     Ok(())
 }
 
+// Keep the DOM, editing state and navigation; ask WebView2 to release idle resources.
+fn set_webview_sleep(window: &WebviewWindow, sleeping: bool) {
+    let _ = window.with_webview(move |webview| unsafe {
+        use webview2_com::{
+            Microsoft::Web::WebView2::Win32::{
+                ICoreWebView2_19, ICoreWebView2_3, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+            },
+            TrySuspendCompletedHandler,
+        };
+        use windows_core::Interface;
+        let controller = webview.controller();
+        if let Ok(core) = controller
+            .CoreWebView2()
+            .and_then(|view| view.cast::<ICoreWebView2_3>())
+        {
+            if let Ok(memory) = core.cast::<ICoreWebView2_19>() {
+                let _ = memory.SetMemoryUsageTargetLevel(if sleeping {
+                    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+                } else {
+                    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+                });
+            }
+            if sleeping {
+                let _ = controller.SetIsVisible(false);
+                let _ =
+                    core.TrySuspend(&TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(()))));
+            } else {
+                let _ = core.Resume();
+                let _ = controller.SetIsVisible(true);
+            }
+        }
+    });
+}
 fn show(app: &tauri::AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
+        set_webview_sleep(&window, false);
         window.show()?;
         window.unminimize()?;
         window.set_focus()?;
         let _ = window.emit("desktop-window-opened", ());
+        let _ = window.emit("desktop-history-changed", ());
         return Ok(());
     }
     let mut builder =
@@ -411,8 +457,13 @@ fn diagnostic_smoke(shared: Arc<Shared>) {
                 if cycle == 1 || cycle == 20 { 2000 } else { 100 },
             ));
             let _ = shared.app.emit_to("main", "desktop-close-requested", ());
-            if !wait(&|| shared.app.get_webview_window("main").is_none()) {
-                report(cycle, "failed", Some("WebView destroy timed out"));
+            if !wait(&|| {
+                shared
+                    .app
+                    .get_webview_window("main")
+                    .is_some_and(|w| !w.is_visible().unwrap_or(true))
+            }) {
+                report(cycle, "failed", Some("WebView hide timed out"));
                 shared.app.exit(1);
                 return;
             }

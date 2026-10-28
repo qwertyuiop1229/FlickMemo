@@ -1,5 +1,5 @@
 # Only synthetic input/clipboard in a disposable GitHub Windows runner.
-param([ValidateSet('focus','hotkey','choose','preview','cancel','close','clipboard')][string]$Action,[int]$ApplicationProcessId)
+param([ValidateSet('focus','hotkey','choose','preview','cancel','close','clipboard','performance')][string]$Action,[int]$ApplicationProcessId)
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Disposable GitHub Windows runner required'}
 $flickProcess=Get-Process -Id $ApplicationProcessId
@@ -63,6 +63,24 @@ switch($Action){
   if($flickPicker -eq [IntPtr]::Zero){throw 'Picker missing'}
   if($Action -eq 'close'){$flickMessage=0x10;$flickKey=0}else{$flickMessage=0x100;$flickKey=0x1B}
   if(![FlickPickerInput]::PostMessage($flickPicker,$flickMessage,[IntPtr]$flickKey,[IntPtr]::Zero)){throw 'Cancel failed'}
+ }
+ 'performance'{
+  $flickMain=[FlickPickerInput]::Find([uint32]$ApplicationProcessId,'FlickMemo')
+  if($flickMain -eq [IntPtr]::Zero){throw 'Main window missing'}
+  $flickPoint=New-Object FlickPickerInput+Point;$flickPoint.X=80;$flickPoint.Y=80
+  if(![FlickPickerInput]::ClientToScreen($flickMain,[ref]$flickPoint)){throw 'Coordinate conversion failed'}
+  $flickProcess.Refresh();$flickCpuBefore=$flickProcess.TotalProcessorTime.TotalMilliseconds;$flickMemoryBefore=$flickProcess.PrivateMemorySize64
+  $flickClock=[Diagnostics.Stopwatch]::StartNew()
+  for($flickStep=0;$flickStep -lt 60;$flickStep++){
+   [void][FlickPickerInput]::SetCursorPos($flickPoint.X+($flickStep%80),$flickPoint.Y+($flickStep%60))
+   Start-Sleep -Milliseconds 66
+  }
+  $flickProcess.Refresh();$flickClock.Stop()
+  $flickPercent=100*($flickProcess.TotalProcessorTime.TotalMilliseconds-$flickCpuBefore)/$flickClock.Elapsed.TotalMilliseconds
+  $flickMetrics=@{singleCoreCpuPercent=[Math]::Round($flickPercent,2);nativePrivateMiB=[Math]::Round($flickProcess.PrivateMemorySize64/1MB,2);privateGrowthMiB=[Math]::Round(($flickProcess.PrivateMemorySize64-$flickMemoryBefore)/1MB,2);durationMs=$flickClock.ElapsedMilliseconds}
+  $flickMetrics|ConvertTo-Json|Set-Content -LiteralPath desktop-reports/color-picker-performance.json -Encoding utf8
+  $flickMetrics|ConvertTo-Json -Compress
+  if($flickPercent -ge 50){throw 'Color picker consumed at least half of one CPU core'}
  }
  'clipboard'{@{clipboard=(Get-Clipboard -Raw)} | ConvertTo-Json -Compress}
 }

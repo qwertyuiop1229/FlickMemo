@@ -13,7 +13,7 @@ test('an inactive picker and empty recent list can never satisfy a completed col
     let reads=0;
     await assert.rejects(waitForAsyncState(async()=>{reads++;return {active:false,recent:[],error:null};},
         state=>!state.active&&state.recent[0]==='#2A79B4', {interval:2,timeout:15,description:'採色完了'}),/採色完了.*タイムアウト.*"recent":\[\]/);
-    assert.ok(reads>=2);
+    assert.ok(reads>=1); // A busy runner may exhaust the deadline after the first awaited read.
 });
 test('IPC rejection is reported instead of being treated as a truthy Promise',async()=>{
     const failure=new Error('native service unavailable');

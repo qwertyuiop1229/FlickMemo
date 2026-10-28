@@ -39,7 +39,7 @@ try {
     $flickResult | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $flickOutput 'lifecycle.json') -Encoding utf8
     if(Test-Path -LiteralPath (Join-Path $flickFolder.FullName 'clipboard.json')) {Copy-Item -LiteralPath (Join-Path $flickFolder.FullName 'clipboard.json') -Destination (Join-Path $flickOutput 'clipboard.json')}
     $flickSamples | Select-Object -Last 10 | Format-Table -AutoSize
-    Write-Output '20回のWebView生成・保存待機・破棄を検証しました。診断専用DB/profileを使用し、実アカウントやクリップボード本文は使用していません。'
+    Write-Output '20回の同じWebViewの表示・保存待機・休止・再表示を検証しました。診断専用DB/profileを使用し、実アカウントやクリップボード本文は使用していません。'
 } finally {
     $flickProcess.Refresh()
     if(!$flickProcess.HasExited) {Stop-Process -Id $flickProcess.Id -ErrorAction SilentlyContinue}

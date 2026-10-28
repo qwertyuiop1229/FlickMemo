@@ -3,6 +3,7 @@ import { copyClipboardFile } from './clipboardFiles.js';
 import { validNote } from './noteData.js';
 import { NoteStore } from './noteStore.js';
 import { WriteBarrier } from './platform/writeBarrier.js';
+import { createNavigation } from './platform/navigation.js';
 import { setupColorPicker } from './platform/colorPicker.js';
 import { initializeApp } from "firebase/app";
 import { AUTH_ORIGIN, AUTH_TTL_MS, validAuthResponse } from './authProtocol.js';
@@ -38,7 +39,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.100";
+const APP_VERSION = "1.3.102";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -360,6 +361,31 @@ let activeNoteId = null;
 let pendingDeleteId = null;
 let lastMovedToTrashNote = null;
 let currentTab = 'notes';
+const initialLocation = { tab: 'notes', noteId: null, editor: false };
+const navigation = createNavigation({
+    initial: initialLocation,
+    valid: location => !location.noteId || (!!currentNotes[location.noteId] && !!currentNotes[location.noteId].deletedAt === (location.tab === 'trash')),
+    changed: state => { btnBack.disabled = !state.back; document.getElementById('btn-forward').disabled = !state.forward; },
+    apply: location => {
+        if (syncDebounceTimer && activeNoteId) flushPendingSave(activeNoteId);
+        if (location.tab === 'transfer') openTransferView();
+        else {
+            if (location.tab === 'trash') tabTrash.onclick(); else openNotesView();
+            if (location.noteId) selectNote(location.noteId, false, true);
+            else {
+                activeNoteId = null; noteBody.value = ''; noteTitleInput.value = '';
+                noteBody.disabled = true; noteTitleInput.disabled = true;
+                editorToolbar.classList.add('hidden'); noteCodeView.classList.add('hidden');
+                noteTitleInput.classList.add('hidden'); charCount.classList.add('hidden'); dateDisplay.classList.add('hidden');
+                renderList(searchInput.value);
+            }
+            mainLayout.classList.toggle('view-editor', location.editor);
+        }
+    }
+});
+function recordLocation() {
+    navigation.record({ tab: currentTab, noteId: currentTab === 'transfer' ? null : (activeNoteId && currentNotes[activeNoteId] && !!currentNotes[activeNoteId].deletedAt === (currentTab === 'trash') ? activeNoteId : null), editor: mainLayout.classList.contains('view-editor') });
+}
 let toastTimer = null;
 let currentUserId = null;
 let isGuestMode = false;
@@ -1018,6 +1044,7 @@ async function clearLocalData() {
     resetTextHistory();
     currentNotes = Object.create(null);
     activeNoteId = null;
+    navigation.reset();
     pendingDeleteId = null;
     lastMovedToTrashNote = null;
     noteBody.value = '';
@@ -1061,7 +1088,6 @@ function initAutoNote() {
     if (isMobile) {
         // スマホ閲覧時（幅768px以下）は勝手に新しいメモを作成せず、メモ一覧を表示
         mainLayout.classList.remove('view-editor');
-        btnBack.classList.add('hidden');
         return;
     }
 
@@ -1087,6 +1113,7 @@ function cleanExpiredTrash() {
 let listVisibleLimit = 150;
 let lastListScope = '';
 function renderList(filter = '') {
+    navigation.refresh();
     const scope = currentTab + ':' + filter;
     if (scope !== lastListScope) { lastListScope = scope; listVisibleLimit = 150; }
     noteList.innerHTML = '';
@@ -1191,6 +1218,7 @@ function renderList(filter = '') {
 }
 
 function selectNote(id, autoFocus = true, isRemoteSync = false) {
+    if (!currentNotes[id]) return;
     if (syncDebounceTimer && activeNoteId && activeNoteId !== id) {
         flushPendingSave(activeNoteId);
     }
@@ -1275,9 +1303,9 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
 
     if (window.innerWidth <= 768) {
         mainLayout.classList.add('view-editor');
-        btnBack.classList.remove('hidden');
     }
 
+    if (!isRemoteSync) recordLocation();
     if (autoFocus && !isTrashNote && !isSameNote) {
         setTimeout(() => {
             noteBody.focus();
@@ -2085,8 +2113,6 @@ if (btnStartSend) {
     };
 }
 
-const btnBackTransfer = document.getElementById('btn-back-transfer');
-
 function openTransferView() {
     currentTab = 'transfer';
     if (auth.currentUser && !isGuestMode) ensureTransferManager().startDevicePresence();
@@ -2094,29 +2120,16 @@ function openTransferView() {
     if (mainLayout) mainLayout.classList.add('view-transfer');
     if (transferPanel) transferPanel.classList.remove('hidden');
 
-    // 矢印が二重表示（2つ）にならないよう、一覧に戻る矢印を隠して送信画面用の矢印のみ1つ表示
-    if (btnBack) btnBack.classList.add('hidden');
-    if (btnBackTransfer) btnBackTransfer.classList.remove('hidden');
-
     tabNotes?.classList.remove('active');
     tabTrash?.classList.remove('active');
     if (dateDisplay) dateDisplay.classList.add('hidden');
     if (charCount) charCount.classList.add('hidden');
+    recordLocation();
 }
 
 function openNotesView() {
     currentTab = 'notes';
     if (mainLayout) mainLayout.classList.remove('view-transfer');
-
-    // ファイル送信用の戻る矢印を非表示
-    if (btnBackTransfer) btnBackTransfer.classList.add('hidden');
-
-    // モバイル画面かつエディタ閲覧中の場合のみ「一覧に戻る」矢印を復元
-    if (window.innerWidth <= 768 && mainLayout?.classList.contains('view-editor')) {
-        if (btnBack) btnBack.classList.remove('hidden');
-    } else {
-        if (btnBack) btnBack.classList.add('hidden');
-    }
 
     tabNotes?.classList.add('active');
     tabTrash?.classList.remove('active');
@@ -2133,6 +2146,7 @@ function openNotesView() {
         if (charCount) charCount.classList.remove('hidden');
         updateAutoCodeRender(true);
     }
+    recordLocation();
 }
 
 if (btnHeaderTransfer) {
@@ -2141,11 +2155,6 @@ if (btnHeaderTransfer) {
     };
 }
 
-if (btnBackTransfer) {
-    btnBackTransfer.onclick = () => {
-        openNotesView();
-    };
-}
 
 // 100% 独自デザイン Material 3 カスタムドロップダウンロジック
 const customDropdown = document.getElementById('custom-mode-dropdown');
@@ -2381,6 +2390,7 @@ tabTrash.onclick = () => {
         if (charCount) charCount.classList.remove('hidden');
         updateAutoCodeRender(true);
     }
+    recordLocation();
 };
 
 btnPin.onclick = () => {
@@ -2410,14 +2420,8 @@ function updateEditorFooter() {
     }
 }
 
-btnBack.onclick = () => {
-    if (syncDebounceTimer && activeNoteId) {
-        flushPendingSave(activeNoteId);
-    }
-    cleanupEmptyNotes();
-    mainLayout.classList.remove('view-editor');
-    btnBack.classList.add('hidden');
-};
+btnBack.onclick = () => navigation.move(-1);
+document.getElementById('btn-forward').onclick = () => navigation.move(1);
 
 // クイック検索ショートカットキー (Ctrl+F / /)
 window.addEventListener('keydown', e => {
@@ -3192,9 +3196,9 @@ setupColorPicker({ win: window, doc: document, isDesktop, native: desktopReady.t
 if (isDesktop) {
     desktopReady.then(async ({ setupDesktop, desktop }) => {
         await setupDesktop({ notify: showToast, prepareClose: async () => {
-            if ((transferManager?.isSending || transferManager?.incomingFileInfo) &&
-                !window.confirm('ファイル転送中です。転送を中止して画面を閉じますか？')) {
-                throw new Error('画面を開いたまま転送を続けます');
+            if (transferManager?.isSending || transferManager?.incomingFileInfo) {
+                if (!window.confirm('ファイル転送中です。転送を中止して画面を閉じますか？')) throw new Error('画面を開いたまま転送を続けます');
+                transferManager.stopDevicePresence();
             }
             document.body.inert = true;
             try {

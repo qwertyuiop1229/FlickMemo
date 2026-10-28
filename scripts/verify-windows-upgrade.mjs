@@ -52,9 +52,21 @@ async function open(){
  return page;
 }
 async function close(page){
- const closed=page.waitForEvent('close',{timeout:25_000});
- await exec('powershell.exe',['-NoProfile','-File','scripts/close-upgrade-window.ps1','-ApplicationProcessId',String(application.pid),'-Executable',executable],{windowsHide:true});
- await closed; // exercises the app's actual save/drain/desktop_close handshake
+ const old=await page.locator('#btn-forward').count()===0;
+ const requestClose=()=>exec('powershell.exe',['-NoProfile','-File','scripts/close-upgrade-window.ps1','-ApplicationProcessId',String(application.pid),'-Executable',executable],{windowsHide:true});
+ if(old){const closed=page.waitForEvent('close',{timeout:25_000});await requestClose();await closed;}
+ else {
+  const marker=await page.evaluate(()=>{window.__retainedMarker=crypto.randomUUID();return window.__retainedMarker;});
+  const memo=await page.locator('#note-body').inputValue();
+  await requestClose();await page.waitForFunction(()=>document.visibilityState==='hidden');
+  assert.equal(page.isClosed(),false,'Close must retain the WebView');
+  // A second instance must reopen the existing window without document navigation.
+  await exec(executable,[],{windowsHide:true,timeout:15_000});
+  await page.waitForFunction(()=>document.visibilityState==='visible');
+  assert.equal(await page.evaluate(()=>window.__retainedMarker),marker,'Reopen must keep the same JavaScript document');
+  assert.equal(await page.locator('#note-body').inputValue(),memo);
+  await requestClose();await page.waitForFunction(()=>document.visibilityState==='hidden');
+ }
  await browser.close().catch(()=>{});browser=null;
  application.kill();application=null;
  await delay(1500);
@@ -78,7 +90,7 @@ try{
  assert.equal(pickerSettings.preferences.format,'rgb');assert.equal(pickerSettings.preferences.enabled,false);assert.equal(pickerSettings.preferences.remember,false);assert.deepEqual(pickerSettings.recent,[]);
  await close(page);
  await installer(path.join(installRoot,'uninstall.exe'),['/S',`_?=${installRoot}`]);
- await fs.writeFile('desktop-reports/upgrade.json',JSON.stringify({baseline,version,notePreserved:true,titlePreserved:true,activeNotePreserved:true,actualWindowClose:true,isolatedProfile:true},null,2));
+ await fs.writeFile('desktop-reports/upgrade.json',JSON.stringify({baseline,version,notePreserved:true,titlePreserved:true,activeNotePreserved:true,actualWindowClose:true,retainedWebView:true,isolatedProfile:true},null,2));
  console.log(`Actual installed WebView2 ${baseline} -> ${version}: Japanese/emoji note, title, active note and save-on-close preserved PASS`);
 }catch(error){
  const page=browser?.contexts().flatMap(c=>c.pages())[0];await page?.screenshot({path:'desktop-reports/upgrade-failure.png'}).catch(()=>{});throw error;
