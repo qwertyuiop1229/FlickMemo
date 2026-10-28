@@ -7,7 +7,7 @@ $flickProcess=Start-Process -FilePath $flickExe -ArgumentList '--diagnostic-smok
 $flickSamples=[System.Collections.Generic.List[object]]::new()
 $flickResult=$null
 try {
-    $flickDeadline=(Get-Date).AddMinutes(12)
+    $flickDeadline=(Get-Date).AddMinutes(3)
     while ((Get-Date) -lt $flickDeadline) {
         $flickFolder=Get-ChildItem -LiteralPath $env:TEMP -Directory -Filter "FlickMemo-diagnostic-$($flickProcess.Id)-*" | Where-Object CreationTime -GE $flickStarted.AddSeconds(-1) | Select-Object -First 1
         if ($flickFolder -and (Test-Path -LiteralPath (Join-Path $flickFolder.FullName 'result.json'))) {

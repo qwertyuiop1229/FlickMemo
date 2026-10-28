@@ -41,6 +41,7 @@ pub struct Shared {
     auth_cancel: AtomicBool,
     import_busy: AtomicBool,
     quitting: AtomicBool,
+    saved_hidden: AtomicBool,
     diagnostic_directory: Option<std::path::PathBuf>,
     ready_count: AtomicUsize,
 }
@@ -298,17 +299,12 @@ async fn desktop_close(window: WebviewWindow, state: State<'_, Arc<Shared>>) -> 
     state.auth_cancel.store(true, Ordering::SeqCst);
     state.app.state::<Arc<updates::Updates>>().discard();
     if state.quitting.load(Ordering::SeqCst) {
-        if let Some(root) = state.diagnostic_directory.as_ref() {
-            let data = serde_json::json!({"pid":std::process::id(),"cycle":20,"stage":"passed","error":null,"readyCount":state.ready_count.load(Ordering::SeqCst),"retainedWebView":true,"quitFromSuspended":true});
-            std::fs::write(root.join("result.json"), data.to_string())
-                .map_err(|_| "診断結果を保存できません")?;
-        }
-        window.app_handle().exit(0);
-        Ok(())
+        quit_after_save(window.app_handle())
     } else {
         window
             .hide()
             .map_err(|_| "画面を閉じられません".to_string())?;
+        state.saved_hidden.store(true, Ordering::SeqCst);
         set_webview_sleep(&window, true);
         Ok(())
     }
@@ -373,9 +369,27 @@ fn set_webview_sleep(window: &WebviewWindow, sleeping: bool) {
         }
     });
 }
+fn quit_after_save(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<Arc<Shared>>();
+    if let Some(root) = state.diagnostic_directory.as_ref() {
+        let data = serde_json::json!({"pid":std::process::id(),"cycle":20,"stage":"passed","error":null,"readyCount":state.ready_count.load(Ordering::SeqCst),"retainedWebView":true,"quitFromSuspended":true});
+        std::fs::write(root.join("result.json"), data.to_string())
+            .map_err(|_| "診断結果を保存できません")?;
+    }
+    app.exit(0);
+    Ok(())
+}
 fn request_quit(app: &tauri::AppHandle) {
     let state = app.state::<Arc<Shared>>();
     if let Some(window) = app.get_webview_window("main") {
+        // Hiding was allowed only after the UI committed all edits. No user can
+        // edit a hidden window, so quit without depending on a sleeping renderer.
+        if state.saved_hidden.load(Ordering::SeqCst) && !window.is_visible().unwrap_or(true) {
+            if quit_after_save(app).is_err() {
+                app.exit(1);
+            }
+            return;
+        }
         state.quitting.store(true, Ordering::SeqCst);
         // A hidden, suspended renderer cannot service the save/close handshake.
         set_webview_sleep(&window, false);
@@ -386,6 +400,9 @@ fn request_quit(app: &tauri::AppHandle) {
 }
 fn show(app: &tauri::AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
+        app.state::<Arc<Shared>>()
+            .saved_hidden
+            .store(false, Ordering::SeqCst);
         set_webview_sleep(&window, false);
         window.show()?;
         window.unminimize()?;
@@ -584,6 +601,7 @@ fn main() {
                 auth_cancel: AtomicBool::new(false),
                 import_busy: AtomicBool::new(false),
                 quitting: AtomicBool::new(false),
+                saved_hidden: AtomicBool::new(false),
                 diagnostic_directory: if diagnostic {
                     Some(directory.clone())
                 } else {
