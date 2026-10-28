@@ -298,6 +298,11 @@ async fn desktop_close(window: WebviewWindow, state: State<'_, Arc<Shared>>) -> 
     state.auth_cancel.store(true, Ordering::SeqCst);
     state.app.state::<Arc<updates::Updates>>().discard();
     if state.quitting.load(Ordering::SeqCst) {
+        if let Some(root) = state.diagnostic_directory.as_ref() {
+            let data = serde_json::json!({"pid":std::process::id(),"cycle":20,"stage":"passed","error":null,"readyCount":state.ready_count.load(Ordering::SeqCst),"retainedWebView":true,"quitFromSuspended":true});
+            std::fs::write(root.join("result.json"), data.to_string())
+                .map_err(|_| "診断結果を保存できません")?;
+        }
         window.app_handle().exit(0);
         Ok(())
     } else {
@@ -367,6 +372,17 @@ fn set_webview_sleep(window: &WebviewWindow, sleeping: bool) {
             }
         }
     });
+}
+fn request_quit(app: &tauri::AppHandle) {
+    let state = app.state::<Arc<Shared>>();
+    if let Some(window) = app.get_webview_window("main") {
+        state.quitting.store(true, Ordering::SeqCst);
+        // A hidden, suspended renderer cannot service the save/close handshake.
+        set_webview_sleep(&window, false);
+        let _ = window.emit("desktop-close-requested", ());
+    } else {
+        app.exit(0);
+    }
 }
 fn show(app: &tauri::AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
@@ -472,8 +488,9 @@ fn diagnostic_smoke(shared: Arc<Shared>) {
                 if cycle == 1 || cycle == 20 { 5000 } else { 100 },
             ));
         }
-        report(20, "passed", None);
-        shared.app.exit(0);
+        let app = shared.app.clone();
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || request_quit(&handle));
     });
 }
 fn main() {
@@ -613,13 +630,7 @@ fn main() {
                         state.changed();
                     }
                     "quit" => {
-                        let state = app.state::<Arc<Shared>>();
-                        if app.get_webview_window("main").is_some() {
-                            state.quitting.store(true, Ordering::SeqCst);
-                            let _ = app.emit_to("main", "desktop-close-requested", ());
-                        } else {
-                            app.exit(0);
-                        }
+                        request_quit(app);
                     }
                     _ => {}
                 })

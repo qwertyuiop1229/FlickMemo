@@ -357,15 +357,7 @@ impl Worker {
         let x = x.max(monitor.rcWork.left);
         let y = y.max(monitor.rcWork.top);
         if resized || bounds.left != x || bounds.top != y {
-            SetWindowPos(
-                self.hwnd,
-                HWND_TOPMOST,
-                x,
-                y,
-                width,
-                height,
-                SWP_NOACTIVATE,
-            );
+            SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
         }
         if resized {
             let region = CreateRoundRectRgn(

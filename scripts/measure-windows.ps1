@@ -32,6 +32,12 @@ try {
         if($flickResult.stage -in @('passed','failed')) {break}
         Start-Sleep -Milliseconds 500
     }
+    if($flickFolder){$flickResult=Get-Content -LiteralPath (Join-Path $flickFolder.FullName 'result.json') -Raw | ConvertFrom-Json}
+    if($flickResult.stage -eq 'passed'){
+        if(!$flickResult.retainedWebView -or !$flickResult.quitFromSuspended){throw 'Retained/suspended lifecycle missing'}
+        if(!$flickProcess.WaitForExit(5000)){throw 'Quit from suspended window did not exit'}
+        if($flickProcess.ExitCode -ne 0){throw 'Application exit was not clean'}
+    }
     if(!$flickResult -or $flickResult.stage -ne 'passed'){throw "Windows開閉診断に失敗しました: $($flickResult | ConvertTo-Json -Compress)"}
     $flickOutput=Join-Path $PSScriptRoot '..\desktop-reports'
     New-Item -ItemType Directory -Path $flickOutput -Force | Out-Null
