@@ -39,7 +39,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.102";
+const APP_VERSION = "1.3.103";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1301,9 +1301,8 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
         restoreEditorScrollState(prevScroll);
     }
 
-    if (window.innerWidth <= 768) {
-        mainLayout.classList.add('view-editor');
-    }
+    // Keep the selected-note state across desktop/mobile width changes.
+    mainLayout.classList.add('view-editor');
 
     if (!isRemoteSync) recordLocation();
     if (autoFocus && !isTrashNote && !isSameNote) {

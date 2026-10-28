@@ -12,6 +12,12 @@ for (const channel of ['chrome', 'msedge']) {
   await page.locator('#btn-header-transfer').click(); await page.locator('#btn-back').click(); assert.equal(await page.locator('#note-body').inputValue(), 'Navigation B');
   for (const width of [1100, 390]) {
    await page.setViewportSize({ width, height: 850 });
+   if (width === 390) {
+    await page.locator('#btn-back').click(); assert.equal(await page.locator('#note-body').inputValue(), 'Navigation A');
+    assert.equal(await page.locator('#note-body').isVisible(), true);
+    await page.locator('#btn-forward').click(); assert.equal(await page.locator('#note-body').inputValue(), 'Navigation B');
+    assert.equal(await page.locator('#note-body').isVisible(), true);
+   }
    assert.equal(await page.locator('#btn-back').isVisible(), true); assert.equal(await page.locator('#btn-forward').isVisible(), true);
    assert.equal(await page.locator('.header-left .brand-logo').count(), 0);
    assert.equal(await page.locator('.m3-top-app-bar').evaluate(e => e.scrollWidth > e.clientWidth), false);

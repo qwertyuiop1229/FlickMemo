@@ -364,7 +364,7 @@ impl Worker {
                 y,
                 width,
                 height,
-                SWP_NOACTIVATE | SWP_NOREDRAW,
+                SWP_NOACTIVATE,
             );
         }
         if resized {
