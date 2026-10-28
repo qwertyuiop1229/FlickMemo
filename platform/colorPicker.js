@@ -23,7 +23,7 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
     let saved = {}; try { if (!isDesktop) saved = JSON.parse(win.localStorage.getItem(storageKey) || '{}') || {}; } catch {}
     let prefs = pickerPreferences(saved.preferences), recent = Array.isArray(saved.recent) ? saved.recent.filter(x => typeof x === 'string' && /^#[\da-f]{6}$/i.test(x)).slice(0, 12) : [];
     if (!prefs.remember) recent = [];
-    let ready = !isDesktop, pendingResult;
+    let ready = !isDesktop, pendingResult, waitingNative = false, restoreAfterPick = false;
     let api, busy = false, hex = recent[0] || '#CB5733', status = null;
     const supported = isDesktop || typeof win.EyeDropper === 'function';
     const panel = doc.createElement('dialog'); panel.className = 'color-dialog'; panel.id = 'color-picker-dialog';
@@ -76,7 +76,18 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
         try { const value = formatColor(hex, prefs.format, prefs.uppercase); if (isDesktop) await api.copy(value); else await win.navigator.clipboard.writeText(value); message(`${value} をコピーしました`); }
         catch { message('自動コピーできませんでした。コピーボタンを押すか、値を選択してコピーしてください。'); $('[data-value]').select(); }
     }
+    function finishDialog() {
+        waitingNative = false; busy = false;
+        if (restoreAfterPick) { restoreAfterPick = false; open(); }
+    }
     function received(result) {
+        if (result?.active) {
+            restoreAfterPick = restoreAfterPick || panel.open;
+            if (panel.open) panel.close();
+            waitingNative = true; busy = true; render(); return;
+        }
+        if (result?.cancelled) { finishDialog(); render(); return; }
+        if (waitingNative) finishDialog();
         if (result?.error && !result.hex) { message(String(result.error)); if (!panel.open) notify(String(result.error)); return; }
         if (!result || typeof result.hex !== 'string' || !/^#[\da-f]{6}$/i.test(result.hex)) return;
         hex = result.hex.toUpperCase(); remember(hex); if (!isDesktop) persist(); render();
@@ -85,15 +96,17 @@ export function setupColorPicker({ win = window, doc = document, native = null, 
     function open() { if (!panel.open) panel.showModal(); render(); }
     async function pick() {
         if (!ready || busy || !supported) return;
-        busy = true; message(''); render();
+        busy = true; restoreAfterPick = panel.open; waitingNative = isDesktop;
+        if (panel.open) panel.close();
+        message(''); render();
         try {
             if (isDesktop) { if (!api) throw new Error('Windows機能の準備中です'); await api.colorPick(); }
             else {
                 // Must call open synchronously in the click/keyboard activation, before any await.
                 const result = await new win.EyeDropper().open(); received({ hex: result.sRGBHex }); await copy();
             }
-        } catch (error) { if (error?.name !== 'AbortError') message(String(error?.message || error)); }
-        finally { busy = false; render(); }
+        } catch (error) { waitingNative = false; if (error?.name !== 'AbortError') message(String(error?.message || error)); }
+        finally { if (!waitingNative) finishDialog(); render(); }
     }
     $('[data-pick]').onclick = pick; $('[data-copy]').onclick = copy; $('[data-close]').onclick = () => panel.close();
     $('[data-value]').onclick = event => event.target.select();

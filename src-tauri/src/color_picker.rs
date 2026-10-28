@@ -9,7 +9,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::{Dwm::DwmFlush, Gdi::*},
@@ -308,6 +308,14 @@ impl Worker {
             };
             self.last_sample = Instant::now() - Duration::from_secs(1);
             self.active = true;
+            if self
+                .shared
+                .app
+                .get_webview_window("main")
+                .is_some_and(|window| window.is_visible().unwrap_or(false))
+            {
+                let _ = self.shared.app.emit_to("main", "desktop-color-started", ());
+            }
             self.began = Instant::now();
             self.update();
             ShowWindow(self.hwnd, SW_SHOWNORMAL);
@@ -392,6 +400,12 @@ impl Worker {
         DwmFlush();
         if point.is_none() && restore && !self.previous.is_null() {
             SetForegroundWindow(self.previous);
+        }
+        if point.is_none() {
+            let _ = self
+                .shared
+                .app
+                .emit_to("main", "desktop-color-cancelled", ());
         }
         if let Some(point) = point {
             if !clipboard::input_desktop_is_unlocked() {

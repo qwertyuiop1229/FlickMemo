@@ -121,3 +121,23 @@ test('native startup restores the latest color and failed initialization keeps e
         } finally { f.close(); }
     }
 });
+
+
+test('native picking removes the dialog overlay until pick or cancellation and restores controls afterward', async () => {
+    let callback;
+    const f = fixture({ native: { colorChanged: async cb => { callback = cb; }, colorStatus: async () => ({ preferences: pickerPreferences(), recent: [] }), colorPick: async () => ({ active: true }) } });
+    try {
+        await tick(); f.ui.open(); await f.ui.pick(); assert.equal(f.ui.panel.open, false);
+        callback({ cancelled: true }); assert.equal(f.ui.panel.open, true); assert.equal(f.doc.querySelector('[data-pick]').disabled, false);
+        callback({ active: true }); assert.equal(f.ui.panel.open, false);
+        callback({ cancelled: true }); assert.equal(f.ui.panel.open, true);
+        await f.ui.pick(); assert.equal(f.ui.panel.open, false);
+        callback({ hex: '#2A79B4', copied: true }); assert.equal(f.ui.panel.open, true);
+        assert.equal(f.doc.querySelector('[data-value]').value, '#2A79B4'); assert.deepEqual(f.copies, []);
+    } finally { f.close(); }
+});
+test('web EyeDropper starts with an unobscured page and restores the dialog after cancellation', async () => {
+    let f;
+    f = fixture({ eyedropper: () => { assert.equal(f.ui.panel.open, false); return Promise.reject(Object.assign(Error('cancel'), { name: 'AbortError' })); } });
+    try { f.ui.open(); await f.ui.pick(); assert.equal(f.ui.panel.open, true); assert.deepEqual(f.copies, []); } finally { f.close(); }
+});

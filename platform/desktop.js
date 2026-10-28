@@ -25,6 +25,8 @@ export const desktop = {
     colorChanged: async callback => {
         const listeners = await Promise.all([
             listen('desktop-color-picked', event => callback(event.payload)),
+            listen('desktop-color-cancelled', () => callback({ cancelled: true })),
+            listen('desktop-color-started', () => callback({ active: true })),
             listen('desktop-color-error', event => callback({ error: event.payload }))
         ]);
         return () => listeners.forEach(remove => remove());
