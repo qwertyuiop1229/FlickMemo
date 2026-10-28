@@ -14,12 +14,14 @@ public static class FlickUpgradeClose {
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint processId);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr hwnd,StringBuilder text,int max);
  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hwnd,uint msg,IntPtr wparam,IntPtr lparam);
+ [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+ public static IntPtr LastWindow;
  public static bool Close(uint processId) {
   bool sent=false;
   EnumWindows((hwnd,param)=>{
    uint owner;GetWindowThreadProcessId(hwnd,out owner);
    if(owner==processId){var text=new StringBuilder(256);GetWindowText(hwnd,text,text.Capacity);
-    if(text.ToString()=="FlickMemo"){sent=PostMessage(hwnd,0x0010,IntPtr.Zero,IntPtr.Zero);return false;}}
+    if(text.ToString()=="FlickMemo"){LastWindow=hwnd;sent=PostMessage(hwnd,0x0010,IntPtr.Zero,IntPtr.Zero);return false;}}
    return true;
   },IntPtr.Zero);
   return sent;
@@ -27,3 +29,10 @@ public static class FlickUpgradeClose {
 }
 '@
 if(![FlickUpgradeClose]::Close([uint32]$ApplicationProcessId)){throw 'Test application window missing'}
+
+# Never wait for JavaScript inside a suspended renderer. Check the native window.
+$flickHiddenDeadline=[DateTime]::UtcNow.AddSeconds(20)
+while([FlickUpgradeClose]::IsWindowVisible([FlickUpgradeClose]::LastWindow)){
+ if([DateTime]::UtcNow -ge $flickHiddenDeadline){throw 'Test application did not save and hide'}
+ Start-Sleep -Milliseconds 25
+}

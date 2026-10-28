@@ -58,14 +58,14 @@ async function close(page){
  else {
   const marker=await page.evaluate(()=>{window.__retainedMarker=crypto.randomUUID();return window.__retainedMarker;});
   const memo=await page.locator('#note-body').inputValue();
-  await requestClose();await page.waitForFunction(()=>document.visibilityState==='hidden');
+  await requestClose();
   assert.equal(page.isClosed(),false,'Close must retain the WebView');
   // A second instance must reopen the existing window without document navigation.
   await exec(executable,[],{windowsHide:true,timeout:15_000});
   await page.waitForFunction(()=>document.visibilityState==='visible');
   assert.equal(await page.evaluate(()=>window.__retainedMarker),marker,'Reopen must keep the same JavaScript document');
   assert.equal(await page.locator('#note-body').inputValue(),memo);
-  await requestClose();await page.waitForFunction(()=>document.visibilityState==='hidden');
+  await requestClose();
  }
  await browser.close().catch(()=>{});browser=null;
  application.kill();application=null;
