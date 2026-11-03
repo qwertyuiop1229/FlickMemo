@@ -82,7 +82,7 @@ async function setup({ edge = false, extension = false, saveGate, cachedRows = [
     const context = vm.createContext(sandbox);
     const source = await fs.readFile(new URL('../app.js', import.meta.url), 'utf8');
     const module = new vm.SourceTextModule(source + `
-        export { scheduleSaveNote, flushPendingSave, loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
+        export { safeCloudWrite, scheduleSaveNote, flushPendingSave, loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
         export function changeTestOwner(uid){currentUserId=uid;remoteConnected=true;auth.currentUser=uid?{uid}:null;isGuestMode=!uid;++authGeneration;currentNotes={};}
         export function setNotes(notes) { currentNotes = notes; }
         export function notesForTest() { return currentNotes; }
@@ -201,5 +201,11 @@ test('stale cached Windows note never overwrites a newer PWA body on startup, ev
 test('classifying a note transaction preserves newer remote body content',async()=>{
  const local={id:'memo',body:'preserved',title:'memo',folderId:'',updatedAt:1};
  const app=await setup({cachedRows:[{owner:'alice',id:'memo',note:local,pending:false,base:local}]});
- try{app.api.changeTestOwner('alice');app.api.setNotes({memo:local});app.remote('users/alice/notes/memo',{...local,body:'newer PWA body'});app.api.scheduleSaveNote('memo',{folderId:'folder_work'});app.api.flushPendingSave('memo');await new Promise(r=>setTimeout(r,30));const write=app.calls.writes.find(w=>w.path==='users/alice/notes/memo'&&w.transaction);assert.equal(write.value.folderId,'folder_work');assert.equal(write.value.body,'newer PWA body');}finally{app.close()}
+ try{app.api.changeTestOwner('alice');app.api.setNotes({memo:local});app.remote('users/alice/notes/memo',{...local,body:'newer PWA body'});app.api.scheduleSaveNote('memo',{folderId:'folder_work'});app.api.flushPendingSave('memo');await new Promise(r=>setTimeout(r,30));const write=app.calls.writes.find(w=>w.path==='users/alice/notes/memo'&&w.transaction);assert.equal(write.value.folderId,'folder_work');assert.equal(write.value.body,'newer PWA body');assert.equal(app.api.notesForTest().memo.body,'newer PWA body');}finally{app.close()}
+});
+test('a pending timestamp-only save preserves the remote timestamp and adopts its latest body',async()=>{
+ const local={id:'memo',body:'old body',title:'memo',updatedAt:1};
+ const remote={...local,body:'new body',updatedAt:200};
+ const app=await setup({cachedRows:[{owner:'alice',id:'memo',note:local,pending:true,pendingFields:['updatedAt'],base:local}]});
+ try{app.api.changeTestOwner('alice');app.api.setNotes({memo:local});app.remote('users/alice/notes/memo',remote);await app.api.safeCloudWrite('memo');const write=app.calls.writes.find(w=>w.transaction);assert.equal(write.value.updatedAt,200);assert.equal(app.api.notesForTest().memo.body,'new body');}finally{app.close()}
 });

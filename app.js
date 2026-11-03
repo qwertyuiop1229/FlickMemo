@@ -43,7 +43,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.110";
+const APP_VERSION = "1.3.111";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -253,7 +253,7 @@ async function safeCloudWrite(id, fields = null) {
             if (!validNote(remote, id)) return;
             const resolved = reconcileNote(note, remote, row?.base, fields ? Object.keys(fields) : (row?.pendingFields || Object.keys(note)));
             if (resolved.conflict) return;
-            return { ...resolved.note, updatedAt: note.updatedAt };
+            return resolved.patch ? { ...resolved.note, updatedAt: note.updatedAt } : remote;
         }, { applyLocally: false });
         if (!result.committed) {
             if (owner === currentUserId && generation === authGeneration) {
@@ -268,7 +268,20 @@ async function safeCloudWrite(id, fields = null) {
             return false;
         }
         const acknowledged = await noteStore.acknowledge(owner, note, fields);
-        if (acknowledged && currentUserId === owner && JSON.stringify(currentNotes[id]) === JSON.stringify(note)) pendingLocalIds.delete(id);
+        if (acknowledged && currentUserId === owner && generation === authGeneration && JSON.stringify(currentNotes[id]) === JSON.stringify(note)) {
+            pendingLocalIds.delete(id);
+            // A no-op transaction need not emit another parent onValue event.
+            // Adopt the committed merge only while this exact draft is unchanged.
+            const committed = result.snapshot.val();
+            if (validNote(committed, id)) {
+                currentNotes[id] = committed;
+                await saveLocalNote(committed, false);
+                if (owner === currentUserId && generation === authGeneration) {
+                    if (activeNoteId === id && JSON.stringify(currentNotes[id]) === JSON.stringify(committed)) selectNote(id, false, true);
+                    renderList(searchInput.value);
+                }
+            }
+        }
         if (owner === currentUserId && generation === authGeneration) refreshCloudStatus();
         return true;
     } catch (error) { return owner === currentUserId && generation === authGeneration ? handleSyncError(error) : false; }
