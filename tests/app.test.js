@@ -48,7 +48,7 @@ async function setup({ edge = false, extension = false, saveGate, cachedRows = [
     const dbApi = { getDatabase: () => ({}), ref: (_, path) => path,
         set: async (path,value) => {calls.writes.push({path,value});}, remove: async () => {}, get: async path => ({ val: () => remoteValues.get(path) ?? null }),
         runTransaction: async (path, callback) => { const value = callback(remoteValues.get(path) ?? null); if (value !== undefined) { remoteValues.set(path,value); calls.writes.push({path,value,transaction:true}); } return {committed:value !== undefined,snapshot:{val:()=>remoteValues.get(path) ?? null}}; },
-        update: async (path,value) => calls.writes.push({path,value,partial:true}), onValue: (path,callback) => { snapshots.set(path, callback); return () => snapshots.delete(path); }, off(path) { snapshots.delete(path); } };
+        update: async (path,value) => calls.writes.push({path,value,partial:true}), onValue: (path,callback) => { snapshots.set(path, callback); if (/\/notes\/[^/]+$/.test(path)) queueMicrotask(() => callback({val:()=>remoteValues.get(path) ?? null})); return () => snapshots.delete(path); }, off(path) { snapshots.delete(path); } };
     let messageListener;
     const chrome = {
         runtime: { id: extensionId, getURL: path => `chrome-extension://${extensionId}/${path}`,
@@ -83,7 +83,7 @@ async function setup({ edge = false, extension = false, saveGate, cachedRows = [
     const source = await fs.readFile(new URL('../app.js', import.meta.url), 'utf8');
     const module = new vm.SourceTextModule(source + `
         export { scheduleSaveNote, flushPendingSave, loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
-        export function changeTestOwner(uid){currentUserId=uid;auth.currentUser=uid?{uid}:null;isGuestMode=!uid;++authGeneration;currentNotes={};}
+        export function changeTestOwner(uid){currentUserId=uid;remoteConnected=true;auth.currentUser=uid?{uid}:null;isGuestMode=!uid;++authGeneration;currentNotes={};}
         export function setNotes(notes) { currentNotes = notes; }
         export function notesForTest() { return currentNotes; }
         export function historySize() { return textHistory.reduce((sum, text) => sum + text.length, 0); }

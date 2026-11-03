@@ -1,5 +1,6 @@
 // Three-way field merge. A stale device must never replace an unseen remote edit.
 export function reconcileNote(local, remote, base, fields = Object.keys(local || {})) {
+    if (!remote || typeof remote !== 'object') return { note: remote, patch: null, conflict: local || null };
     const patch = {}, conflicts = [];
     for (const key of fields) {
         if (['id', 'updatedAt', 'conflictOf'].includes(key)) continue;
