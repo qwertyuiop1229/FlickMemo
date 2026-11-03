@@ -8,13 +8,13 @@ import { normalizeImageToPng } from '/clipboardFiles.js';
 const result = document.querySelector('#results'), status = document.querySelector('#status');
 function check(condition, message) { if (!condition) throw new Error(message); }
 function report(text) { const li = document.createElement('li'); li.textContent = text; result.append(li); }
-async function makePair(room) {
+async function makePair(room, slow = true) {
   const files = [], errors = [];
   const a = new FileTransferManager({}, {}, (s,e) => { if(s==='channel_error')errors.push(e); });
   const b = new FileTransferManager({}, {}, (s,e) => { if(s==='channel_error')errors.push(e); }, blob => files.push(blob));
   if(room) { a.setCustomEncryptionKey('a'.repeat(64)); b.setCustomEncryptionKey('a'.repeat(64)); }
   const original = b.decryptChunk.bind(b);
-  b.decryptChunk = async (...args) => { await new Promise(r=>setTimeout(r,20)); return original(...args); };
+  b.decryptChunk = async (...args) => { if(slow)await new Promise(r=>setTimeout(r,20)); return original(...args); };
   const pa = a.peerConnection = new RTCPeerConnection({iceServers:[]});
   const pb = b.peerConnection = new RTCPeerConnection({iceServers:[]});
   const ca=[],cb=[];
@@ -54,7 +54,21 @@ document.querySelector('#run').onclick=async()=>{
         check(peers.errors.length===0,peers.errors.map(e=>e.message).join('; '));
       } finally {peers.close();}
     }
-    status.textContent='PASS: 12 real WebRTC and PNG checks';document.body.dataset.result='passed';
+    const peers = await makePair(false, false);
+    try {
+      let received = 0, maximumRead = 0;
+      peers.b.setReceiveSinkFactory(async () => ({
+        write: async bytes => { check(peers.b.receiveBuffer.length === 0, 'Unexpected accumulated receive data'); check(new Uint8Array(bytes).every((value,index) => value === (received + index) % 251), 'Stream bytes changed'); received += bytes.byteLength; },
+        close: async () => ({saved:true,size:received}), abort: async () => {}
+      }));
+      const deadline = Date.now() + 5000; while(peers.a._peerReceiveLimit !== Number.MAX_SAFE_INTEGER) { if(Date.now()>deadline)throw Error('Capacity negotiation timeout'); await new Promise(resolve=>setTimeout(resolve,10)); }
+      const file = { name:'virtual-80MiB.bin', type:'application/octet-stream', size:80*1024*1024,
+        slice(start,end) { const length = Math.min(this.size,end)-start; maximumRead = Math.max(maximumRead,length); return {arrayBuffer:async()=>Uint8Array.from({length},(_,i)=>(start+i)%251).buffer}; }
+      };
+      await peers.a.sendFileP2P(file); check(received === file.size && maximumRead <= 32768, 'Unbounded source or incomplete stream');
+      report('PASS streaming: 80MiB virtual source, exact bytes, bounded 32KiB reads, no aggregate receive Blob');
+    } finally { peers.close(); }
+    status.textContent='PASS: 13 real WebRTC and PNG/streaming checks';document.body.dataset.result='passed';
   } catch(error) {status.textContent='FAIL: '+error.message;document.body.dataset.result='failed';}
 };
 </script></html>

@@ -1,3 +1,6 @@
+import { directorySink } from './streamingFiles.js';
+import { setupFolders } from './platform/folders.js';
+import { reconcileNote } from './noteSync.js';
 import { uniqueArchiveName } from './archiveNames.js';
 import { copyClipboardFile } from './clipboardFiles.js';
 import { validNote } from './noteData.js';
@@ -27,6 +30,7 @@ import {
     get,
     update,
     onValue,
+    runTransaction,
     off
 } from "firebase/database";
 
@@ -39,7 +43,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.108";
+const APP_VERSION = "1.3.109";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -57,6 +61,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 let currentDbRef = null;
+let stopSyncConnection = null, remoteConnected = false;
 const isDesktop = !!window.__TAURI_INTERNALS__;
 const localWrites = new WriteBarrier();
 const desktopReady = isDesktop ? import('./platform/desktop.js') : Promise.resolve(null);
@@ -212,34 +217,56 @@ function handleSyncError(error) {
     return false;
 }
 
-function trackedCloudWrite(id, operation, fields = null) {
-    const owner = currentUserId;
+function refreshCloudStatus() {
+    if (!currentUserId) setStatus('synced', 'ローカル保存済み');
+    else if (!remoteConnected) setStatus('offline', '端末に保存済み・再接続待ち');
+    else if (pendingLocalIds.size || pendingDeleteIds.size) setStatus('saving', '端末に保存済み・クラウド同期待ち');
+    else setStatus('synced', 'クラウド同期完了');
+}
+function recoverDraft(note, owner = currentUserId) {
+    if (!owner || owner !== currentUserId || !note) return;
+    const title = `${note.title || 'メモ'}（競合の控え）`;
+    if (Object.values(currentNotes).some(value => value.conflictOf === note.id && value.body === note.body && value.title === title && value.folderId === note.folderId && value.pinned === note.pinned)) return;
+    const backup = { ...note, id: 'note_' + crypto.randomUUID(), title: `${note.title || 'メモ'}（競合の控え）`, conflictOf: note.id, updatedAt: Date.now() };
+    currentNotes[backup.id] = backup; saveLocalNote(backup); syncSaveNote(backup);
+    showToast('別の端末での変更を反映しました。この端末の未同期内容は「競合の控え」に残しました。', 7000);
+}
+async function safeCloudWrite(id, fields = null) {
+    const owner = currentUserId, generation = authGeneration;
     const note = currentNotes[id] ? structuredClone(currentNotes[id]) : null;
-    return operation.then(async () => {
-        if (note) {
-            const acknowledged = await noteStore.acknowledge(owner, note, fields);
-            if (acknowledged && currentUserId === owner && JSON.stringify(currentNotes[id]) === JSON.stringify(note)) pendingLocalIds.delete(id);
+    if (!owner || !note) return false;
+    const target = ref(db, `users/${owner}/notes/${id}`);
+    try {
+        const row = await noteStore.get(owner, id);
+        await get(target); // Seed the transaction from the remote record before any durable replay.
+        if (owner !== currentUserId || generation !== authGeneration) return false;
+        const result = await runTransaction(target, remote => {
+            if (remote == null) return row?.base ? undefined : note;
+            if (!validNote(remote, id)) return;
+            const resolved = reconcileNote(note, remote, row?.base, fields ? Object.keys(fields) : (row?.pendingFields || Object.keys(note)));
+            if (resolved.conflict) return;
+            return { ...resolved.note, updatedAt: note.updatedAt };
+        }, { applyLocally: false });
+        if (!result.committed) {
+            if (owner === currentUserId && generation === authGeneration) {
+                recoverDraft(note, owner);
+                if (JSON.stringify(currentNotes[id]) === JSON.stringify(note)) {
+                    const remote = result.snapshot.val(); pendingLocalIds.delete(id);
+                    if (validNote(remote,id)) { currentNotes[id] = remote; saveLocalNote(remote,false); if (activeNoteId === id) selectNote(id,false,true); }
+                    else { delete currentNotes[id]; deleteLocalNote(id,false); }
+                    renderList(searchInput.value);
+                }
+            }
+            return false;
         }
+        const acknowledged = await noteStore.acknowledge(owner, note, fields);
+        if (acknowledged && currentUserId === owner && JSON.stringify(currentNotes[id]) === JSON.stringify(note)) pendingLocalIds.delete(id);
+        if (owner === currentUserId && generation === authGeneration) refreshCloudStatus();
         return true;
-    }).catch(error => {
-        lastSyncedData = {}; // A failed write must not suppress the next retry.
-        return handleSyncError(error);
-    });
+    } catch (error) { return owner === currentUserId && generation === authGeneration ? handleSyncError(error) : false; }
 }
-
-// 完全保存
-function syncSaveNote(note) {
-    if (!currentUserId || !note || !note.id) return;
-    const noteRef = ref(db, `users/${currentUserId}/notes/${note.id}`);
-    return trackedCloudWrite(note.id, set(noteRef, note));
-}
-
-// 1文字単位の差分更新（RTDB通信量を最小限にする）
-function syncUpdateNoteFields(id, fields) {
-    if (!currentUserId || !id || !fields) return;
-    const noteRef = ref(db, `users/${currentUserId}/notes/${id}`);
-    return trackedCloudWrite(id, update(noteRef, fields), fields);
-}
+function syncSaveNote(note) { return note?.id ? safeCloudWrite(note.id) : Promise.resolve(false); }
+function syncUpdateNoteFields(id, fields) { return fields ? safeCloudWrite(id, fields) : Promise.resolve(false); }
 
 function syncDeleteNote(id) {
     if (!currentUserId || !id) return;
@@ -361,12 +388,13 @@ let activeNoteId = null;
 let pendingDeleteId = null;
 let lastMovedToTrashNote = null;
 let currentTab = 'notes';
-const initialLocation = { tab: 'notes', noteId: null, editor: false };
+const initialLocation = { tab: 'notes', noteId: null, editor: false, folderId: 'all' };
 const navigation = createNavigation({
     initial: initialLocation,
     valid: location => !location.noteId || (!!currentNotes[location.noteId] && !!currentNotes[location.noteId].deletedAt === (location.tab === 'trash')),
     changed: state => { btnBack.disabled = !state.back; document.getElementById('btn-forward').disabled = !state.forward; },
     apply: location => {
+        folders.setActive(location.folderId || 'all');
         if (syncDebounceTimer && activeNoteId) flushPendingSave(activeNoteId);
         if (location.tab === 'transfer') openTransferView();
         else {
@@ -384,13 +412,44 @@ const navigation = createNavigation({
     }
 });
 function recordLocation() {
-    navigation.record({ tab: currentTab, noteId: currentTab === 'transfer' ? null : (activeNoteId && currentNotes[activeNoteId] && !!currentNotes[activeNoteId].deletedAt === (currentTab === 'trash') ? activeNoteId : null), editor: mainLayout.classList.contains('view-editor') });
+    if (applyingFolder) return;
+    navigation.record({ folderId: folders.active, tab: currentTab, noteId: currentTab === 'transfer' ? null : (activeNoteId && currentNotes[activeNoteId] && !!currentNotes[activeNoteId].deletedAt === (currentTab === 'trash') ? activeNoteId : null), editor: mainLayout.classList.contains('view-editor') });
 }
 let toastTimer = null;
 let currentUserId = null;
 let isGuestMode = false;
 
 // 省メモリ・通信節約用の最適化タイマー＆差分キャッシュ
+let applyingFolder = false;
+const folders = setupFolders({
+    changed: () => renderList(searchInput.value), notes: () => currentNotes,
+    select: () => {
+        if (syncDebounceTimer && activeNoteId) flushPendingSave(activeNoteId);
+        applyingFolder = true;
+        try {
+            openNotesView();
+            if (!activeNoteId || !currentNotes[activeNoteId] || currentNotes[activeNoteId].deletedAt || !folders.matches(currentNotes[activeNoteId])) {
+                const first = Object.values(currentNotes).filter(note => !note.deletedAt && folders.matches(note)).sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+                if (first) selectNote(first.id, false);
+                else { activeNoteId = null; noteBody.value = ''; noteTitleInput.value = ''; noteBody.disabled = true; noteTitleInput.disabled = true; editorToolbar.classList.add('hidden'); noteTitleInput.classList.add('hidden'); noteCodeView.classList.add('hidden'); charCount.classList.add('hidden'); dateDisplay.classList.add('hidden'); mainLayout.classList.remove('view-editor'); }
+            }
+            if (window.innerWidth <= 768) mainLayout.classList.remove('view-editor');
+        } finally { applyingFolder = false; recordLocation(); }
+    },
+    move: folderId => {
+        if (!activeNoteId || !currentNotes[activeNoteId]) return;
+        scheduleSaveNote(activeNoteId, { folderId }); flushPendingSave(activeNoteId);
+        if (folders.active !== 'all') folders.setActive(folderId || 'unfiled');
+        renderList(searchInput.value); folders.selected(currentNotes[activeNoteId]); recordLocation();
+    },
+    write: (id, value) => currentUserId ? set(ref(db, `users/${currentUserId}/folders/${id}`), value) : Promise.resolve(), notify: showToast
+});
+const folderListButton = document.createElement('button'); folderListButton.id = 'btn-folder-list'; folderListButton.type = 'button'; folderListButton.className = 'm3-icon-button mobile-only'; folderListButton.title = 'フォルダとメモ一覧'; folderListButton.setAttribute('aria-label', folderListButton.title);
+folderListButton.innerHTML = '<span class="material-symbols-outlined">folder_open</span>';
+folderListButton.onclick = () => { if (syncDebounceTimer && activeNoteId) flushPendingSave(activeNoteId); mainLayout.classList.remove('view-editor'); recordLocation(); };
+editorToolbar.querySelector('.toolbar-group')?.prepend(folderListButton);
+let currentFolderRef = null;
+const pendingEditFields = new Map();
 let syncDebounceTimer = null;
 let lastSyncedData = {};
 
@@ -846,6 +905,9 @@ function updateActiveNoteItemDOM(id) {
 function scheduleSaveNote(id, updatedFields) {
     if (!id || !currentNotes[id]) return;
 
+    const dirtyFields = pendingEditFields.get(id) || new Set();
+    for (const key of Object.keys(updatedFields)) dirtyFields.add(key);
+    pendingEditFields.set(id, dirtyFields);
     Object.assign(currentNotes[id], updatedFields);
     currentNotes[id].updatedAt = Date.now();
     saveLocalNote(currentNotes[id]);
@@ -871,21 +933,16 @@ function flushPendingSave(id) {
 
     saveLocalNote(note);
 
-    const last = lastSyncedData[note.id];
-    if (last && last.body === note.body && last.title === note.title && last.pinned === note.pinned) {
-        setStatus('synced', 'クラウド同期完了');
+    const keys = pendingEditFields.get(note.id); pendingEditFields.delete(note.id);
+    if (!keys?.size) {
+        if (!currentUserId) setStatus('synced', 'ローカル保存済み');
         return;
     }
-
-    lastSyncedData = { [note.id]: { body: note.body, title: note.title, pinned: note.pinned } };
-    const pendingWrite = syncUpdateNoteFields(note.id, {
-        body: note.body,
-        title: note.title,
-        pinned: note.pinned,
-        updatedAt: note.updatedAt
-    });
+    const fields = Object.fromEntries([...keys].map(key => [key, note[key] ?? null]));
+    fields.updatedAt = note.updatedAt;
+    const pendingWrite = syncUpdateNoteFields(note.id, fields);
     if (!currentUserId) setStatus('synced', 'ローカル保存済み');
-    else pendingWrite?.then(result => { if (result !== false) setStatus('synced', 'クラウド同期完了'); });
+    else pendingWrite?.then(result => { if (result !== false) refreshCloudStatus(); });
 }
 
 function updateExtensionBadge() {
@@ -1015,6 +1072,7 @@ async function loadLocalNotes() {
         const notes = entries.map(row => row.note).filter(note => validNote(note));
         if (generation !== cacheGeneration || owner !== cacheOwner()) return;
         currentNotes = Object.fromEntries(notes.map(note => [note.id, note]));
+        folders.setOwner(owner);
         pendingLocalIds = new Set(entries.filter(row => row.pending && validNote(row.note)).map(row => row.id));
         pendingDeleteIds = new Set(entries.filter(row => row.pending && row.note === null).map(row => row.id));
         renderList(searchInput.value);
@@ -1026,7 +1084,10 @@ async function loadLocalNotes() {
 function saveLocalNote(note, pending = true) {
     if (!note?.id) return;
     if (pending && currentUserId) pendingLocalIds.add(note.id);
-    return localWrites.track(`${cacheOwner()}:${note.id}`, noteStore.put(cacheOwner(), note, pending && !!currentUserId)).catch(localSaveError);
+    const owner = cacheOwner(), snapshot = structuredClone(note);
+    return localWrites.track(`${owner}:${note.id}`, noteStore.put(owner, snapshot, pending && !!currentUserId)).then(dirty => {
+        if (dirty === false && owner === cacheOwner() && JSON.stringify(currentNotes[note.id]) === JSON.stringify(snapshot)) pendingLocalIds.delete(note.id);
+    }).catch(localSaveError);
 }
 function deleteLocalNote(id, pending = true) {
     if (!id) return;
@@ -1038,13 +1099,13 @@ async function clearLocalData() {
     ++cacheGeneration;
     clearTimeout(syncDebounceTimer);
     syncDebounceTimer = null;
-    lastSyncedData = {};
+    lastSyncedData = {}; pendingEditFields.clear();
     pendingLocalIds = new Set();
     pendingDeleteIds = new Set();
     resetTextHistory();
     currentNotes = Object.create(null);
     activeNoteId = null;
-    navigation.reset();
+    navigation.reset(); folders.setOwner(null);
     pendingDeleteId = null;
     lastMovedToTrashNote = null;
     noteBody.value = '';
@@ -1059,7 +1120,10 @@ async function clearLocalData() {
     noteCodeView.classList.add('hidden');
     closeImagePreviewModal();
     clearTransferHistoryUI();
-    stagedFilesQueue = [];
+    stagedFilesQueue = []; receiveDirectory = null;
+    if (isDesktop) await desktopReady.then(({desktop}) => desktop.receiveForget()).catch(() => {});
+    if (transferManager) { transferManager.cleanupPeerConnection?.(); transferManager.setReceiveSinkFactory?.(null); }
+    receiveTools.querySelector('[data-release]').hidden = true;
     renderStagedFilesUI();
     renderList('');
 }
@@ -1114,14 +1178,15 @@ let listVisibleLimit = 150;
 let lastListScope = '';
 function renderList(filter = '') {
     navigation.refresh();
-    const scope = currentTab + ':' + filter;
+    folders.render();
+    const scope = currentTab + ':' + folders.active + ':' + filter;
     if (scope !== lastListScope) { lastListScope = scope; listVisibleLimit = 150; }
     noteList.innerHTML = '';
     const now = Date.now();
 
     const filtered = Object.values(currentNotes)
         .filter(n => {
-            if (currentTab === 'notes') return !n.deletedAt;
+            if (currentTab === 'notes') return !n.deletedAt && folders.matches(n);
             return !!n.deletedAt && (now - n.deletedAt <= SEVEN_DAYS_MS);
         })
         .filter(n => (n.body || '').includes(filter) || (n.title || '').includes(filter))
@@ -1230,6 +1295,8 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
     activeNoteId = id;
     const n = currentNotes[id] || { title: '', body: '', pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
 
+    if (currentTab === 'notes' && !folders.matches(n)) folders.setActive(folders.effective(n) || 'unfiled');
+    folders.selected(n);
     const isTrashNote = !!n.deletedAt;
     noteBody.disabled = isTrashNote;
     noteTitleInput.disabled = isTrashNote;
@@ -1306,10 +1373,8 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
 
     if (!isRemoteSync) recordLocation();
     if (autoFocus && !isTrashNote && !isSameNote) {
-        setTimeout(() => {
-            noteBody.focus();
-            noteBody.setSelectionRange(noteBody.value.length, noteBody.value.length);
-        }, 50);
+        noteBody.focus({ preventScroll: true });
+        noteBody.setSelectionRange(noteBody.value.length, noteBody.value.length);
     }
 }
 
@@ -1756,6 +1821,12 @@ if (btnPreviewDownload) {
 }
 
 function handleFileReceived(blob, filename, mode) {
+    if (blob?.saved) {
+        addTransferHistory(filename, blob.size, '受信・保存済み', mode || 'WAN_P2P');
+        if (transferStatusLabel) transferStatusLabel.textContent = '保存先への書込みが完了しました';
+        setTransferUILock(false); scheduleProgressAutoDismiss();
+        showToast(`「${filename}」を選択したフォルダに保存しました`, 7000); return;
+    }
     const emoji = getFileIconEmoji(filename, blob.type);
     if (transferStatusLabel) transferStatusLabel.textContent = '受信完了';
     const isImage = isImageFile(filename, blob.type);
@@ -1923,6 +1994,24 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = nul
 }
 
 let stagedFilesQueue = [];
+let receiveDirectory = null;
+const receiveTools = document.createElement('div'); receiveTools.className = 'transfer-storage-tools';
+receiveTools.innerHTML = '<button type="button" class="btn-secondary-sm" data-directory><span class="material-symbols-outlined">folder_open</span>大容量受信の保存先を選ぶ</button><button type="button" class="btn-secondary-sm" data-release hidden>保存先を解除</button><button type="button" class="btn-danger-sm" data-cancel>転送を中止</button><p role="status"></p>';
+document.getElementById('dropzone-area')?.after(receiveTools);
+const receiveHint = receiveTools.querySelector('[role=status]');
+if (!isDesktop && typeof window.showDirectoryPicker !== 'function') { receiveTools.querySelector('[data-directory]').disabled = true; receiveHint.textContent = 'この環境の受信は64MiBまでです。大容量の受信にはPCのChrome・Edge等で保存先を選択してください。送信は受信側が対応していれば大容量にも対応します。'; }
+else receiveHint.textContent = '保存先を選ぶと、受信データを少量ずつ直接保存します。複数ファイルもZIPを作らず順に送信します。';
+receiveTools.querySelector('[data-directory]').onclick = async () => {
+    if (transferManager?.incomingFileInfo || transferManager?.isSending) { showToast('転送が終わってから保存先を変更してください'); return; }
+    try { let directory;
+        if (isDesktop) {
+            const { desktop } = await desktopReady; const name = await desktop.receiveDirectory(); if (!name) return;
+            directory = { name, native: true }; receiveDirectory = directory; ensureTransferManager().setReceiveSinkFactory(info => desktop.receiveSink(info));
+        } else { directory = await window.showDirectoryPicker({ mode: 'readwrite' }); receiveDirectory = directory; ensureTransferManager().setReceiveSinkFactory(info => directorySink(directory, info, window)); } receiveHint.textContent = `受信保存先: ${directory.name}（直接保存・ファイルサイズの固定上限なし）`; receiveTools.querySelector('[data-release]').hidden = false; }
+    catch (error) { if (error.name !== 'AbortError') showToast('保存先を選べません: ' + error.message); }
+};
+receiveTools.querySelector('[data-release]').onclick = () => { try { transferManager?.setReceiveSinkFactory(null); receiveDirectory = null; if (isDesktop) desktopReady.then(({desktop}) => desktop.receiveForget()).catch(() => {}); receiveHint.textContent = '保存先を解除しました。通常受信は64MiBまでです。'; receiveTools.querySelector('[data-release]').hidden = true; } catch (error) { showToast(error.message); } };
+receiveTools.querySelector('[data-cancel]').onclick = () => { transferManager?.cleanupPeerConnection(new Error('転送を中止しました')); stagedFilesQueue = []; if (fileInput) fileInput.value = ''; renderStagedFilesUI(); setTransferUILock(false); showToast('転送を中止し、ファイル参照を解放しました'); };
 
 const stagedFilesCard = document.getElementById('staged-files-card');
 const stagedFileList = document.getElementById('staged-file-list');
@@ -2059,55 +2148,22 @@ if (btnStartSend) {
         }
 
         let fileToSend = null;
-        setTransferUILock(true); // 送信中の UI 操作をロック
-
+        setTransferUILock(true);
         try {
-            if (stagedFilesQueue.length === 1) {
+            while (stagedFilesQueue.length) {
                 fileToSend = stagedFilesQueue[0];
-            } else {
-                if (stagedFilesQueue.reduce((sum, file) => sum + file.size, 0) > 60 * 1024 * 1024) throw new Error('まとめて送信するファイルは合計60MiBまでです');
-                showToast("複数ファイルを軽量ZIP圧縮中...");
-                const { default: JSZip } = await import('jszip');
-                const zip = new JSZip();
-                const usedNames = new Set();
-
-                for (let i = 0; i < stagedFilesQueue.length; i++) {
-                    const file = stagedFilesQueue[i];
-                    const name = uniqueArchiveName(file.name || `file_${i + 1}`, usedNames);
-
-                    // DOM File から生バイトデータ (ArrayBuffer) を読み出して ZIP に追加
-                    const arrayBuffer = await file.arrayBuffer();
-                    zip.file(name, arrayBuffer);
-                }
-
-                const zipBlob = await zip.generateAsync({
-                    type: "blob",
-                    mimeType: "application/zip",
-                    compression: "DEFLATE",
-                    compressionOptions: { level: 5 }
-                });
-
-                const todayStr = new Date().toISOString().slice(0, 10);
-                const zipFileName = `FlickMemo_Files_${todayStr}.zip`;
-                fileToSend = new File([zipBlob], zipFileName, { type: "application/zip" });
+                const name = fileToSend.name, size = fileToSend.size;
+                if (transferStatusLabel) transferStatusLabel.textContent = `「${name}」を送信中`;
+                const actualMode = await transferManager.sendFileP2P(fileToSend);
+                addTransferHistory(name, size, '送信', actualMode);
+                stagedFilesQueue.shift(); fileToSend = null; renderStagedFilesUI();
+                showToast(`「${name}」の受信完了を確認しました`);
             }
-
-            showToast(`「${fileToSend.name}」の送信を開始します...`);
-
-            const actualMode = await transferManager.sendFileP2P(fileToSend);
-
-            if (transferStatusLabel) transferStatusLabel.textContent = '相手の受信完了を確認しました';
+            if (transferStatusLabel) transferStatusLabel.textContent = 'すべてのファイルの受信完了を確認しました';
             scheduleProgressAutoDismiss();
-            addTransferHistory(fileToSend.name, fileToSend.size, '送信', actualMode);
-            showToast(`✅ 「${fileToSend.name}」の送信が完了しました！`);
-
-            stagedFilesQueue = [];
-            renderStagedFilesUI();
-        } catch (err) {
-            console.error("Send Error:", err);
-            showToast("送信失敗: " + (err.message || "接続を確認してください"));
-        } finally {
-            setTransferUILock(false); // UI ロック解除
+        } catch (err) { console.error('Send Error:', err); showToast('送信失敗: ' + (err.message || '接続を確認してください')); }
+        finally {
+            fileToSend = null; stagedFilesQueue = []; if (fileInput) fileInput.value = ''; renderStagedFilesUI(); setTransferUILock(false);
         }
     };
 }
@@ -2278,6 +2334,7 @@ function ensureTransferManager() {
             (blob, filename, mode) => handleFileReceived(blob, filename, mode),
             (bytes, total, name, direction) => handleTransferProgress(bytes, total, name, direction)
         );
+        if (receiveDirectory) { const directory = receiveDirectory; transferManager.setReceiveSinkFactory(info => directory.native ? desktopReady.then(({desktop}) => desktop.receiveSink(info)) : directorySink(directory, info, window)); }
     }
     if (transferManager) {
         transferManager.isGuestMode = isGuestMode;
@@ -2463,8 +2520,8 @@ function createNewNote(autoFocus = true) {
     }
     cleanupEmptyNotes();
 
-    const newId = 'note_' + Date.now();
-    currentNotes[newId] = { id: newId, title: '', body: '', pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
+    const newId = 'note_' + crypto.randomUUID();
+    currentNotes[newId] = { id: newId, folderId: ['all', 'unfiled'].includes(folders.active) ? '' : folders.active, title: '', body: '', pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
     saveLocalNote(currentNotes[newId]);
     selectNote(newId, autoFocus);
     setStatus('saving', '新規作成中...');
@@ -2974,6 +3031,8 @@ onAuthStateChanged(auth, async user => {
         desktopSessionChain.catch(error => showToast('Windowsのアカウント設定に失敗しました: ' + String(error)));
     }
     if (currentDbRef) { off(currentDbRef); currentDbRef = null; }
+    stopSyncConnection?.(); stopSyncConnection = null; remoteConnected = false;
+    if (currentFolderRef) { off(currentFolderRef); currentFolderRef = null; }
     // Stop using the previous UID's presence paths before starting the new one.
     if (transferManager && currentUserId !== (user?.uid || null)) transferManager.stopDevicePresence();
     if (user) finishAuthAttempt();
@@ -3014,10 +3073,21 @@ onAuthStateChanged(auth, async user => {
         }
         // Replay only this account's durable pending edits before attaching the snapshot listener.
         for (const id of pendingDeleteIds) syncDeleteNote(id);
-        for (const id of pendingLocalIds) syncSaveNote(currentNotes[id]);
-        currentDbRef = ref(db, `users/${user.uid}/notes`);
-        onValue(currentDbRef, snapshot => {
+        // Pending bodies are reconciled against the first remote snapshot before replay.
+        if (currentFolderRef) off(currentFolderRef);
+        currentFolderRef = ref(db, `users/${user.uid}/folders`);
+        onValue(currentFolderRef, snapshot => { if (generation === authGeneration && auth.currentUser?.uid === user.uid) folders.receive(snapshot.val()); }, handleSyncError);
+        stopSyncConnection = onValue(ref(db, '.info/connected'), snapshot => {
             if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
+            remoteConnected = snapshot.val() === true; refreshCloudStatus();
+            if (remoteConnected) for (const id of pendingLocalIds) if (currentNotes[id]) syncSaveNote(currentNotes[id]);
+        });
+        currentDbRef = ref(db, `users/${user.uid}/notes`);
+        let snapshotTicket = 0;
+        onValue(currentDbRef, async snapshot => {
+            const ticket = ++snapshotTicket;
+            const pendingRows = new Map(await Promise.all([...pendingLocalIds].map(async id => [id, await noteStore.get(user.uid, id).catch(error => { localSaveError(error); return null; })])));
+            if (ticket !== snapshotTicket || generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
             try {
                 const remoteNotes = snapshot.val() || {};
                 let hasChanges = false;
@@ -3047,8 +3117,23 @@ onAuthStateChanged(auth, async user => {
                 Object.entries(remoteNotes).forEach(([id, n]) => {
                     if (!validNote(n, id) || pendingDeleteIds.has(id)) return;
                     const local = currentNotes[n.id];
-                    if (pendingLocalIds.has(n.id) && local && JSON.stringify(local) !== JSON.stringify(n)) return;
-                    if (!local || (n.updatedAt || 0) >= (local.updatedAt || 0)) {
+                    if (pendingLocalIds.has(n.id) && local && JSON.stringify(local) !== JSON.stringify(n)) {
+                        const row = pendingRows.get(n.id);
+                        const fields = new Set(row?.pendingFields || Object.keys(local));
+                        for (const key of Object.keys(local)) if (JSON.stringify(local[key]) !== JSON.stringify(row?.note?.[key])) fields.add(key);
+                        const resolved = reconcileNote(local, n, row?.base, [...fields]);
+                        if (resolved.conflict) {
+                            recoverDraft(local);
+                        }
+                        if (resolved.patch) {
+                            const merged = { ...resolved.note, updatedAt: Date.now() };
+                            currentNotes[n.id] = merged; saveLocalNote(merged);
+                            syncUpdateNoteFields(n.id, { ...resolved.patch, updatedAt: merged.updatedAt });
+                            hasChanges = true; if (activeNoteId === n.id) activeNoteChanged = true; return;
+                        }
+                        pendingLocalIds.delete(n.id);
+                    }
+                    { // Remote snapshot is authoritative for fields without pending local edits.
                         if (!local || JSON.stringify(local) !== JSON.stringify(n)) {
                             currentNotes[n.id] = n;
                             saveLocalNote(n, false);
@@ -3060,6 +3145,9 @@ onAuthStateChanged(auth, async user => {
                     }
                 });
 
+                for (const id of pendingLocalIds) {
+                    if (!remoteNotes[id] && currentNotes[id] && !pendingDeleteIds.has(id)) syncSaveNote(currentNotes[id]);
+                }
                 cleanExpiredTrash();
                 
                 if (hasChanges) {
@@ -3086,11 +3174,11 @@ onAuthStateChanged(auth, async user => {
                         }
                     }
                 }
-                setStatus('synced', 'クラウド同期完了');
+                refreshCloudStatus();
                 checkPendingExtensionNotes();
             } catch (err) {
                 console.error("onValue processing error:", err);
-                setStatus('synced', '同期処理中にエラーが発生しました');
+                setStatus('offline', '同期処理中にエラーが発生しました');
             }
         }, error => {
             console.error("Sync Error:", error);

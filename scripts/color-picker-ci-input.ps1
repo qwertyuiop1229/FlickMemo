@@ -71,9 +71,9 @@ switch($Action){
   if(![FlickPickerInput]::ClientToScreen($flickMain,[ref]$flickPoint)){throw 'Coordinate conversion failed'}
   $flickProcess.Refresh();$flickCpuBefore=$flickProcess.TotalProcessorTime.TotalMilliseconds;$flickMemoryBefore=$flickProcess.PrivateMemorySize64
   $flickClock=[Diagnostics.Stopwatch]::StartNew()
-  for($flickStep=0;$flickStep -lt 60;$flickStep++){
+  for($flickStep=0;$flickStep -lt 180;$flickStep++){
    [void][FlickPickerInput]::SetCursorPos($flickPoint.X+($flickStep%80),$flickPoint.Y+($flickStep%60))
-   Start-Sleep -Milliseconds 66
+   Start-Sleep -Milliseconds 16
   }
   $flickProcess.Refresh();$flickClock.Stop()
   $flickPercent=100*($flickProcess.TotalProcessorTime.TotalMilliseconds-$flickCpuBefore)/$flickClock.Elapsed.TotalMilliseconds

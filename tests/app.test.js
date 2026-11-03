@@ -1,3 +1,6 @@
+import { directorySink } from '../streamingFiles.js';
+import { setupFolders } from '../platform/folders.js';
+import { reconcileNote } from '../noteSync.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -14,7 +17,7 @@ import { WriteBarrier } from '../platform/writeBarrier.js';
 import { createNavigation } from '../platform/navigation.js';
 import { setupColorPicker } from '../platform/colorPicker.js';
 
-async function setup({ edge = false, extension = false, saveGate } = {}) {
+async function setup({ edge = false, extension = false, saveGate, cachedRows = [] } = {}) {
     const extensionId = 'a'.repeat(32);
     const dom = new JSDOM(await fs.readFile(new URL('../index.html', import.meta.url), 'utf8'), {
         url: extension ? `chrome-extension://${extensionId}/index.html` : 'https://flickmemo-qwe.web.app/',
@@ -41,9 +44,11 @@ async function setup({ edge = false, extension = false, saveGate } = {}) {
             static credential(id, access) { return { id, access }; }
         }
     };
+    const snapshots = new Map(), remoteValues = new Map();
     const dbApi = { getDatabase: () => ({}), ref: (_, path) => path,
-        set: async (path,value) => {calls.writes.push({path,value});}, remove: async () => {}, get: async () => ({ val: () => null }),
-        update: async () => {}, onValue: () => () => {}, off() {} };
+        set: async (path,value) => {calls.writes.push({path,value});}, remove: async () => {}, get: async path => ({ val: () => remoteValues.get(path) ?? null }),
+        runTransaction: async (path, callback) => { const value = callback(remoteValues.get(path) ?? null); if (value !== undefined) { remoteValues.set(path,value); calls.writes.push({path,value,transaction:true}); } return {committed:value !== undefined,snapshot:{val:()=>remoteValues.get(path) ?? null}}; },
+        update: async (path,value) => calls.writes.push({path,value,partial:true}), onValue: (path,callback) => { snapshots.set(path, callback); return () => snapshots.delete(path); }, off(path) { snapshots.delete(path); } };
     let messageListener;
     const chrome = {
         runtime: { id: extensionId, getURL: path => `chrome-extension://${extensionId}/${path}`,
@@ -55,7 +60,9 @@ async function setup({ edge = false, extension = false, saveGate } = {}) {
         tabs: { create: async ({ url }) => calls.opened.push(url) }
     };
     const factory = new IDBFactory();
-    const dependencies = {
+    const seed = new NoteStore(factory);
+    for (const row of cachedRows) await seed.write(store => store.put(row));
+    const dependencies = { './streamingFiles.js': { directorySink }, './platform/folders.js': { setupFolders: args => setupFolders({ ...args, doc: window.document, win: window }) }, './noteSync.js': { reconcileNote },
         'firebase/app': { initializeApp: () => ({}) }, 'firebase/auth': authApi, 'firebase/database': dbApi,
         './archiveNames.js': archiveNames, './clipboardFiles.js': clipboardFiles, './authProtocol.js': protocol, './noteData.js': noteData,
         './noteStore.js': { NoteStore: class extends NoteStore { constructor() { super(factory); } async put(...args){await super.put(...args);await saveGate?.();} } },
@@ -75,9 +82,10 @@ async function setup({ edge = false, extension = false, saveGate } = {}) {
     const context = vm.createContext(sandbox);
     const source = await fs.readFile(new URL('../app.js', import.meta.url), 'utf8');
     const module = new vm.SourceTextModule(source + `
-        export { loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
+        export { scheduleSaveNote, flushPendingSave, loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
         export function changeTestOwner(uid){currentUserId=uid;auth.currentUser=uid?{uid}:null;isGuestMode=!uid;++authGeneration;currentNotes={};}
         export function setNotes(notes) { currentNotes = notes; }
+        export function notesForTest() { return currentNotes; }
         export function historySize() { return textHistory.reduce((sum, text) => sum + text.length, 0); }
     `, { context, importModuleDynamically: async () => { throw new Error('Unexpected eager dynamic import'); } });
     await module.link(specifier => {
@@ -89,7 +97,7 @@ async function setup({ edge = false, extension = false, saveGate } = {}) {
     });
     await module.evaluate();
     await authCallback(null);
-    return { dom, api: module.namespace, calls, chrome, session, document: window.document,
+    return { dom, login: async user => { auth.currentUser=user; await authCallback(user); }, remote: (path,value) => remoteValues.set(path,value), snapshot: async (path,value) => { if (value && typeof value === 'object') for (const [id,note] of Object.entries(value)) remoteValues.set(path + '/' + id,note); return snapshots.get(path)?.({ val: () => value }); }, api: module.namespace, calls, chrome, session, document: window.document,
         message: (...args) => messageListener(...args), close: () => dom.window.close() };
 }
 
@@ -178,4 +186,20 @@ test('permanent navigation buttons restore note and transfer locations, skip del
         forward.click(); assert.equal(doc.getElementById('note-body').value, 'Second memo');
         await app.api.clearLocalData(); assert.equal(back.disabled, true); assert.equal(forward.disabled, true);
     } finally { app.close(); }
+});
+
+
+test('stale cached Windows note never overwrites a newer PWA body on startup, even with an ahead clock',async()=>{
+ const old={id:'note_stale',title:'cached',body:'Windows old content',updatedAt:99999999999999};
+ const app=await setup({cachedRows:[{owner:'alice',id:old.id,note:old,pending:true}]});
+ try{await app.login({uid:'alice',displayName:'Test',email:'test@example.test'});assert.equal(app.calls.writes.some(w=>w.path==='users/alice/notes/note_stale'),false);
+ const remote={...old,body:'Latest PWA content',updatedAt:1};await app.snapshot('users/alice/notes',{note_stale:remote});await new Promise(r=>setTimeout(r,20));
+ assert.equal(app.api.notesForTest().note_stale.body,remote.body);assert.ok(Object.values(app.api.notesForTest()).some(n=>n.conflictOf===old.id&&n.body===old.body));
+ assert.equal(app.calls.writes.some(w=>w.path==='users/alice/notes/note_stale'&&w.value.body===old.body),false);
+ }finally{app.close()}
+});
+test('classifying a note transaction preserves newer remote body content',async()=>{
+ const local={id:'memo',body:'preserved',title:'memo',folderId:'',updatedAt:1};
+ const app=await setup({cachedRows:[{owner:'alice',id:'memo',note:local,pending:false,base:local}]});
+ try{app.api.changeTestOwner('alice');app.api.setNotes({memo:local});app.remote('users/alice/notes/memo',{...local,body:'newer PWA body'});app.api.scheduleSaveNote('memo',{folderId:'folder_work'});app.api.flushPendingSave('memo');await new Promise(r=>setTimeout(r,30));const write=app.calls.writes.find(w=>w.path==='users/alice/notes/memo'&&w.transaction);assert.equal(write.value.folderId,'folder_work');assert.equal(write.value.body,'newer PWA body');}finally{app.close()}
 });

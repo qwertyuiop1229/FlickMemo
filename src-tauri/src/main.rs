@@ -7,7 +7,9 @@ mod color_picker;
 mod history_store;
 mod history_sync;
 mod privacy;
+mod receive_files;
 mod retry;
+mod startup;
 mod updates;
 
 use history_store::{Entry, Stats, Store};
@@ -485,6 +487,34 @@ fn diagnostic_smoke(shared: Arc<Shared>) {
                 shared.app.exit(1);
                 return;
             }
+            if cycle == 1 {
+                let checked = std::fs::read_dir(root.join("receive-test"))
+                    .ok()
+                    .and_then(|mut entries| entries.next())
+                    .and_then(Result::ok)
+                    .and_then(|entry| std::fs::read(entry.path()).ok())
+                    .is_some_and(|bytes| {
+                        bytes.len() == 32771
+                            && bytes[..32768]
+                                .iter()
+                                .enumerate()
+                                .all(|(i, byte)| *byte == (i % 251) as u8)
+                            && bytes[32768..] == [4, 5, 6]
+                    });
+                let _ = std::fs::write(
+                    root.join("native-receive.json"),
+                    serde_json::json!({"passed":checked,"rawIpc":true,"bytes":32771}).to_string(),
+                );
+                if !checked {
+                    report(
+                        cycle,
+                        "failed",
+                        Some("Raw binary receive IPC or disk commit failed"),
+                    );
+                    shared.app.exit(1);
+                    return;
+                }
+            }
             report(cycle, "open", None);
             std::thread::sleep(std::time::Duration::from_millis(
                 if cycle == 1 || cycle == 20 { 2000 } else { 100 },
@@ -522,6 +552,13 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             desktop_status,
+            receive_files::desktop_receive_directory,
+            receive_files::desktop_receive_begin,
+            receive_files::desktop_receive_write,
+            receive_files::desktop_receive_finish,
+            receive_files::desktop_receive_abort,
+            startup::desktop_startup_status,
+            startup::desktop_startup_set,
             desktop_open_download,
             desktop_settings,
             desktop_session,
@@ -616,6 +653,11 @@ fn main() {
                 }
             }
             app.manage(shared.clone());
+            let receiver = if let Some(root) = shared.diagnostic_directory.as_ref() {
+                let directory = root.join("receive-test"); std::fs::create_dir_all(&directory)?;
+                receive_files::Receiver::diagnostic(directory)
+            } else { receive_files::Receiver::default() };
+            app.manage(Arc::new(Mutex::new(receiver)));
             app.manage(color_picker::start(shared.clone()));
             app.manage(Arc::new(updates::Updates::default()));
             history_sync::start(shared.clone());
@@ -628,6 +670,7 @@ fn main() {
                 MenuItem::with_id(app, "pause", "クリップボード記録を停止", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &pause, &quit])?;
+            let click_menu = menu.clone();
             TrayIconBuilder::with_id("flickmemo")
                 .icon(
                     app.default_window_icon()
@@ -636,6 +679,17 @@ fn main() {
                 )
                 .tooltip("FlickMemo — 記録は初期OFF")
                 .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(move |tray, event| {
+                    use tauri::tray::{TrayIconEvent, MouseButton, MouseButtonState};
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let front = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false) && window.hwnd().ok().is_some_and(|h| unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() == h.0 });
+                            if front { let _ = window.popup_menu(&click_menu); } else { let _ = show(app); }
+                        } else { let _ = show(app); }
+                    }
+                })
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
                         let _ = show(app);

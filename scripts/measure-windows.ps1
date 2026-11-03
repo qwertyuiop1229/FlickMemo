@@ -44,6 +44,7 @@ try {
     $flickSamples | Export-Csv -LiteralPath (Join-Path $flickOutput 'memory.csv') -NoTypeInformation -Encoding utf8
     $flickResult | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $flickOutput 'lifecycle.json') -Encoding utf8
     if(Test-Path -LiteralPath (Join-Path $flickFolder.FullName 'clipboard.json')) {Copy-Item -LiteralPath (Join-Path $flickFolder.FullName 'clipboard.json') -Destination (Join-Path $flickOutput 'clipboard.json')}
+    if(Test-Path -LiteralPath (Join-Path $flickFolder.FullName 'native-receive.json')) {Copy-Item -LiteralPath (Join-Path $flickFolder.FullName 'native-receive.json') -Destination (Join-Path $flickOutput 'native-receive.json')}
     $flickSamples | Select-Object -Last 10 | Format-Table -AutoSize
     Write-Output '20回の同じWebViewの表示・保存待機・休止・再表示を検証しました。診断専用DB/profileを使用し、実アカウントやクリップボード本文は使用していません。'
 } finally {

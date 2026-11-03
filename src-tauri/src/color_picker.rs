@@ -131,6 +131,8 @@ pub struct Status {
     recent: Vec<String>,
     error: Option<String>,
     active: bool,
+    position_updates: u64,
+    sample_updates: u64,
 }
 #[derive(Clone, Serialize)]
 pub struct Picked {
@@ -208,6 +210,9 @@ struct Worker {
     hook: Option<InputHook>,
     capture: Option<SampleBuffer>,
     last_sample: Instant,
+    panel_buffer: Option<PanelBuffer>,
+    position_updates: u64,
+    sample_updates: u64,
     previous: HWND,
     began: Instant,
     sample: u32,
@@ -223,6 +228,8 @@ impl Worker {
             recent: self.recent.clone(),
             error: self.error.clone(),
             active: self.active,
+            position_updates: self.position_updates,
+            sample_updates: self.sample_updates,
         }
     }
     fn persist(&self, p: &Preferences, recent: &[String]) -> Result<(), String> {
@@ -308,6 +315,8 @@ impl Worker {
             };
             self.last_sample = Instant::now() - Duration::from_secs(1);
             self.active = true;
+            self.position_updates = 0;
+            self.sample_updates = 0;
             if self
                 .shared
                 .app
@@ -318,10 +327,11 @@ impl Worker {
             }
             self.began = Instant::now();
             self.update();
+            InvalidateRect(self.hwnd, std::ptr::null(), 0);
             ShowWindow(self.hwnd, SW_SHOWNORMAL);
             SetForegroundWindow(self.hwnd);
             SetFocus(self.hwnd);
-            if SetTimer(self.hwnd, 1, 66, None) == 0 {
+            if SetTimer(self.hwnd, 1, 15, None) == 0 {
                 self.finish(None);
                 return Err("色の取得を開始できません".into());
             }
@@ -335,11 +345,11 @@ impl Worker {
         }
         if point.x == self.point.x
             && point.y == self.point.y
-            && self.last_sample.elapsed() < Duration::from_millis(200)
+            && self.last_sample.elapsed() < Duration::from_millis(30)
         {
             return;
         }
-        self.last_sample = Instant::now();
+        let refresh_sample = self.last_sample.elapsed() >= Duration::from_millis(30);
         let mut monitor: MONITORINFO = std::mem::zeroed();
         monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
         let handle = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
@@ -365,6 +375,7 @@ impl Worker {
         let x = x.max(monitor.rcWork.left);
         let y = y.max(monitor.rcWork.top);
         if resized || bounds.left != x || bounds.top != y {
+            self.position_updates += 1;
             SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
         }
         if resized {
@@ -381,14 +392,21 @@ impl Worker {
             }
         }
         // One 7x7 readback instead of 50 synchronous screen GetPixel calls.
-        if let Some(capture) = self.capture.as_mut() {
-            if let Some(pixels) = capture.read(point) {
-                self.pixels = pixels;
-                self.sample = pixels[24];
-                self.point = point;
+        if refresh_sample {
+            if let Some(capture) = self.capture.as_mut() {
+                if let Some(pixels) = capture.read(point) {
+                    self.sample_updates += 1;
+                    let changed = self.pixels != pixels;
+                    self.pixels = pixels;
+                    self.sample = pixels[24];
+                    self.point = point;
+                    self.last_sample = Instant::now();
+                    if changed {
+                        InvalidateRect(self.hwnd, std::ptr::null(), 0);
+                    }
+                }
             }
         }
-        InvalidateRect(self.hwnd, std::ptr::null(), 0);
     }
     unsafe fn finish(&mut self, point: Option<POINT>) {
         self.active = false;
@@ -402,6 +420,7 @@ impl Worker {
             SetForegroundWindow(self.previous);
         }
         if point.is_none() {
+            self.panel_buffer = None;
             let _ = self
                 .shared
                 .app
@@ -652,11 +671,63 @@ impl Drop for SampleBuffer {
         }
     }
 }
+// Stock DC brush avoids allocating 50 GDI brushes per frame.
 unsafe fn rect(dc: HDC, area: RECT, color: u32) {
-    let brush = CreateSolidBrush(color);
-    if !brush.is_null() {
-        FillRect(dc, &area, brush);
-        DeleteObject(brush);
+    SetDCBrushColor(dc, color);
+    FillRect(dc, &area, GetStockObject(DC_BRUSH));
+}
+struct PanelBuffer {
+    dc: HDC,
+    bitmap: HBITMAP,
+    previous: HGDIOBJ,
+    font: HFONT,
+    old_font: HGDIOBJ,
+    pen: HPEN,
+    width: i32,
+    height: i32,
+}
+impl PanelBuffer {
+    unsafe fn new(target: HDC, width: i32, height: i32) -> Option<Self> {
+        let dc = CreateCompatibleDC(target);
+        if dc.is_null() {
+            return None;
+        }
+        let bitmap = CreateCompatibleBitmap(target, width, height);
+        if bitmap.is_null() {
+            DeleteDC(dc);
+            return None;
+        }
+        let previous = SelectObject(dc, bitmap);
+        let mut font: LOGFONTW = std::mem::zeroed();
+        font.lfHeight = -15;
+        font.lfWeight = 500;
+        let family = wide("Segoe UI");
+        font.lfFaceName[..family.len()].copy_from_slice(&family);
+        let font = CreateFontIndirectW(&font);
+        let old_font = SelectObject(dc, font);
+        let pen = CreatePen(PS_SOLID, 2, 0x00ffffff);
+        Some(Self {
+            dc,
+            bitmap,
+            previous,
+            font,
+            old_font,
+            pen,
+            width,
+            height,
+        })
+    }
+}
+impl Drop for PanelBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            SelectObject(self.dc, self.old_font);
+            SelectObject(self.dc, self.previous);
+            DeleteObject(self.font);
+            DeleteObject(self.pen);
+            DeleteObject(self.bitmap);
+            DeleteDC(self.dc);
+        }
     }
 }
 unsafe fn text(dc: HDC, value: &str, area: RECT, color: u32) {
@@ -673,15 +744,28 @@ unsafe fn text(dc: HDC, value: &str, area: RECT, color: u32) {
 }
 unsafe fn paint(hwnd: HWND) {
     let mut ps: PAINTSTRUCT = std::mem::zeroed();
-    let dc = BeginPaint(hwnd, &mut ps);
+    let target = BeginPaint(hwnd, &mut ps);
     let mut area: RECT = std::mem::zeroed();
     GetClientRect(hwnd, &mut area);
-    SetMapMode(dc, MM_ANISOTROPIC);
-    SetWindowExtEx(dc, 300, 114, std::ptr::null_mut());
-    SetViewportExtEx(dc, area.right, area.bottom, std::ptr::null_mut());
     WORKER.with(|cell| {
-        let Ok(cell) = cell.try_borrow() else { return };
-        let Some(w) = cell.as_ref() else { return };
+        let Ok(mut cell) = cell.try_borrow_mut() else {
+            return;
+        };
+        let Some(w) = cell.as_mut() else { return };
+        if w.panel_buffer
+            .as_ref()
+            .is_none_or(|p| p.width != area.right || p.height != area.bottom)
+        {
+            w.panel_buffer = PanelBuffer::new(target, area.right, area.bottom);
+        }
+        let Some(buffer) = w.panel_buffer.as_ref() else {
+            return;
+        };
+        let dc = buffer.dc;
+        let pen = buffer.pen;
+        SetMapMode(dc, MM_ANISOTROPIC);
+        SetWindowExtEx(dc, 300, 114, std::ptr::null_mut());
+        SetViewportExtEx(dc, area.right, area.bottom, std::ptr::null_mut());
         rect(
             dc,
             RECT {
@@ -693,13 +777,6 @@ unsafe fn paint(hwnd: HWND) {
             0x00201f1e,
         );
         SetBkMode(dc, TRANSPARENT as i32);
-        let mut font: LOGFONTW = std::mem::zeroed();
-        font.lfHeight = -15;
-        font.lfWeight = 500;
-        let family = wide("Segoe UI");
-        font.lfFaceName[..family.len()].copy_from_slice(&family);
-        let font = CreateFontIndirectW(&font);
-        let old = SelectObject(dc, font);
         if let Some(value) = w.confirmation.as_ref() {
             rect(
                 dc,
@@ -748,13 +825,11 @@ unsafe fn paint(hwnd: HWND) {
                     );
                 }
             }
-            let pen = CreatePen(PS_SOLID, 2, 0x00ffffff);
             let oldpen = SelectObject(dc, pen);
             let oldbrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
             Rectangle(dc, 40, 40, 51, 51);
             SelectObject(dc, oldbrush);
             SelectObject(dc, oldpen);
-            DeleteObject(pen);
             text(
                 dc,
                 &format(w.sample, &w.prefs),
@@ -789,8 +864,8 @@ unsafe fn paint(hwnd: HWND) {
                 0x009f9995,
             );
         }
-        SelectObject(dc, old);
-        DeleteObject(font);
+        SetMapMode(dc, MM_TEXT);
+        BitBlt(target, 0, 0, area.right, area.bottom, dc, 0, 0, SRCCOPY);
     });
     EndPaint(hwnd, &ps);
 }
@@ -803,6 +878,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
     if msg == WM_DESTROY {
         PostQuitMessage(0);
         return 0;
+    }
+    if msg == WM_ERASEBKGND {
+        return 1;
     }
     if msg == WM_PAINT {
         paint(hwnd);
@@ -860,6 +938,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                     if w == 2 {
                         ShowWindow(hwnd, SW_HIDE);
                         KillTimer(hwnd, 2);
+                        worker.panel_buffer = None;
                     } else if worker.active {
                         if worker.began.elapsed() > Duration::from_secs(60)
                             || !clipboard::input_desktop_is_unlocked()
@@ -974,6 +1053,9 @@ pub fn start(shared: Arc<Shared>) -> Service {
                 hook: None,
                 capture: None,
                 last_sample: Instant::now(),
+                panel_buffer: None,
+                position_updates: 0,
+                sample_updates: 0,
                 previous: std::ptr::null_mut(),
                 began: Instant::now(),
                 sample: 0,

@@ -34,6 +34,7 @@ export class NoteStore {
     async put(owner, note, pending = false) {
         // Snapshot now, before an account switch or subsequent edit can mutate it.
         const row = { owner, id: note.id, note: structuredClone(note), pending };
+        let effectivePending = false;
         return this.write(store => {
             const request = store.get([owner, note.id]);
             request.onsuccess = () => {
@@ -45,9 +46,15 @@ export class NoteStore {
                         if (JSON.stringify(previous?.note?.[key]) !== JSON.stringify(row.note[key])) dirtyFields.add(key);
                     }
                 }
-                store.put({ ...row, pendingFields: pending ? [...dirtyFields] : [] });
+                effectivePending = pending && dirtyFields.size > 0;
+                const base = previous?.pending ? previous.base : (previous?.note || null);
+                store.put({ ...row, pending: effectivePending, base: effectivePending ? base : row.note, pendingFields: effectivePending ? [...dirtyFields] : [] });
             };
-        });
+        }).then(() => effectivePending);
+    }
+    async get(owner, id) {
+        const db = await this.ready;
+        return new Promise((resolve, reject) => { const request = db.transaction('accountNotes').objectStore('accountNotes').get([owner, id]); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
     }
     async delete(owner, id, pending = false) {
         return this.write(store => pending ? store.put({ owner, id, note: null, pending: true }) : store.delete([owner, id]));
@@ -62,7 +69,7 @@ export class NoteStore {
                 if (!fields) {
                     if (JSON.stringify(row.note) === JSON.stringify(note)) {
                         acknowledged = true;
-                        store.put({ ...row, pending: false, pendingFields: [] });
+                        store.put({ ...row, pending: false, pendingFields: [], base: row.note });
                     }
                     return;
                 }

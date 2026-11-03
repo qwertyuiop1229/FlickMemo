@@ -48,6 +48,10 @@ async function open(){
  let page;
  for(let n=0;n<100;n++){page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().includes('tauri.localhost'));if(page)break;await delay(100);}
  assert.ok(page,'Packaged app page missing');
+ if(await page.locator('#startup-system-settings').count()){
+  const status=await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('desktop_startup_status'));
+  if(!status.asked)await page.locator('#startup-choice-dialog [data-no]').click({timeout:15_000});
+ }
  await page.locator('#btn-guest-login').click({timeout:30_000});
  return page;
 }
@@ -88,8 +92,15 @@ try{
  page=await open();
  const pickerSettings=await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('desktop_color_status'));
  assert.equal(pickerSettings.preferences.format,'rgb');assert.equal(pickerSettings.preferences.enabled,false);assert.equal(pickerSettings.preferences.remember,false);assert.deepEqual(pickerSettings.recent,[]);
+ await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('desktop_startup_set',{enable:true}));
+ const startup = await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('desktop_startup_status'));
+ assert.equal(startup.enabled,true);assert.equal(startup.asked,true);
+ await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('desktop_startup_set',{enable:false}));
+ assert.equal((await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('desktop_startup_status'))).enabled,false);
+ await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('desktop_startup_set',{enable:true}));
  await close(page);
  await installer(path.join(installRoot,'uninstall.exe'),['/S',`_?=${installRoot}`]);
+ await assert.rejects(exec('reg.exe',['query','HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','/v','FlickMemo'],{windowsHide:true}));
  await fs.writeFile('desktop-reports/upgrade.json',JSON.stringify({baseline,version,notePreserved:true,titlePreserved:true,activeNotePreserved:true,actualWindowClose:true,retainedWebView:true,isolatedProfile:true},null,2));
  console.log(`Actual installed WebView2 ${baseline} -> ${version}: Japanese/emoji note, title, active note and save-on-close preserved PASS`);
 }catch(error){

@@ -47,8 +47,16 @@ export class FileTransferManager {
         this._protocolReady = false;
         this._chunkSize = CHUNK_SIZE;
         this._outgoing = null;
+        this.receiveSinkFactory = null;
+        this._receiveSink = null;
+        this._peerReceiveLimit = MAX_RECEIVE_BYTES;
     }
 
+    setReceiveSinkFactory(factory) {
+        if (this.incomingFileInfo) throw new Error('受信が終わってから保存先を変更してください');
+        this.receiveSinkFactory = factory;
+        if (this._protocolReady && this.dataChannel?.readyState === 'open') this.dataChannel.send(JSON.stringify({ type: 'RECEIVE_CAPACITY', maxReceiveBytes: factory ? Number.MAX_SAFE_INTEGER : MAX_RECEIVE_BYTES }));
+    }
     setCustomEncryptionKey(keyString) {
         this.customKeyString = keyString || null;
         this.cryptoKey = null;
@@ -301,6 +309,7 @@ export class FileTransferManager {
     }
 
     resetReceiveBuffer(keepFileInfo = false) {
+        if (!keepFileInfo && this._receiveSink) { const sink = this._receiveSink; this._receiveSink = null; Promise.resolve(sink.abort()).catch(() => {}); }
         if (this.receiveBuffer) {
             this.receiveBuffer.length = 0; // メモリを明示的に即時解放 (iOS Safari/PWA 対策)
         }
@@ -664,7 +673,7 @@ export class FileTransferManager {
             if (handshake.localChunkSize < 4096) { fail(new Error('このブラウザの転送サイズに対応していません。ブラウザを更新してください')); return; }
             handshake.sent = true;
             try { dc.send(JSON.stringify({ type: 'HELLO', protocol: TRANSFER_PROTOCOL_VERSION,
-                nonce: handshake.nonce, mode: handshake.roomKey ? 'room' : 'session', chunkSize: handshake.localChunkSize })); }
+                nonce: handshake.nonce, mode: handshake.roomKey ? 'room' : 'session', chunkSize: handshake.localChunkSize, maxReceiveBytes: this.receiveSinkFactory ? Number.MAX_SAFE_INTEGER : MAX_RECEIVE_BYTES })); }
             catch (error) { fail(error); return; }
             this._handshakeTimer = setTimeout(() => fail(new Error(UPDATE_MESSAGE)), 10000);
         };
@@ -698,12 +707,17 @@ export class FileTransferManager {
                             start();
                             if (handshake.hello || meta.protocol !== TRANSFER_PROTOCOL_VERSION ||
                                 !/^[a-f0-9]{32}$/.test(meta.nonce || '') || meta.mode !== (handshake.roomKey ? 'room' : 'session') || !Number.isSafeInteger(meta.chunkSize) || meta.chunkSize < 4096 || meta.chunkSize > CHUNK_SIZE) throw new Error(UPDATE_MESSAGE);
+                            if (meta.maxReceiveBytes != null && (!Number.isSafeInteger(meta.maxReceiveBytes) || meta.maxReceiveBytes < 0)) throw new Error('受信可能サイズが不正です');
+                            this._peerReceiveLimit = meta.maxReceiveBytes ?? MAX_RECEIVE_BYTES;
                             handshake.hello = true;
                             this._chunkSize = Math.min(handshake.localChunkSize, meta.chunkSize);
                             const proof = handshake.roomKey ? await this.keyProof(meta.nonce) : null;
                             if (generation !== this._receiveGeneration) return;
                             dc.send(JSON.stringify({ type: 'HELLO_ACK', protocol: TRANSFER_PROTOCOL_VERSION, nonce: meta.nonce, proof }));
                             maybeReady();
+                        } else if (meta.type === 'RECEIVE_CAPACITY') {
+                            if (!this._protocolReady || !Number.isSafeInteger(meta.maxReceiveBytes) || meta.maxReceiveBytes < 0) throw new Error('受信可能サイズが不正です');
+                            this._peerReceiveLimit = meta.maxReceiveBytes;
                         } else if (meta.type === 'HELLO_ACK') {
                             if (meta.protocol !== TRANSFER_PROTOCOL_VERSION || meta.nonce !== handshake.nonce) throw new Error(UPDATE_MESSAGE);
                             if (handshake.roomKey && meta.proof !== await this.keyProof(handshake.nonce)) throw new Error('共有リンクの暗号鍵が一致しません。リンクを作り直して再接続してください');
@@ -727,16 +741,24 @@ export class FileTransferManager {
                         } else {
                             if (!this._protocolReady) throw new Error(UPDATE_MESSAGE);
                             if (meta.type === 'file_header') {
-                                if (this.incomingFileInfo || !/^[a-f0-9]{32}$/.test(meta.id || '') || !Number.isSafeInteger(meta.size) || meta.size < 0 || meta.size > MAX_RECEIVE_BYTES ||
-                                    typeof meta.name !== 'string' || meta.name.length > 255 || typeof meta.encrypted !== 'boolean' || meta.chunkSize !== this._chunkSize) throw new Error('受信情報が不正、または64MiBの上限を超えています');
+                                if (this.incomingFileInfo || !/^[a-f0-9]{32}$/.test(meta.id || '') || !Number.isSafeInteger(meta.size) || meta.size < 0 || meta.size > (this.receiveSinkFactory ? Number.MAX_SAFE_INTEGER : MAX_RECEIVE_BYTES) ||
+                                    typeof meta.name !== 'string' || meta.name.length > 255 || typeof meta.encrypted !== 'boolean' || meta.chunkSize !== this._chunkSize) throw new Error('受信情報が不正です。大容量ファイルは受信側で直接保存先を選択してください');
                                 if (this.isE2EEEnabled && !meta.encrypted) throw new Error('暗号化されていない受信を拒否しました');
                                 this.resetReceiveBuffer(); this.incomingFileInfo = meta;
+                                if (this.receiveSinkFactory) {
+                                    const sink = await this.receiveSinkFactory(meta);
+                                    if (generation !== this._receiveGeneration || this.dataChannel !== dc) { await sink.abort(); return; }
+                                    this._receiveSink = sink;
+                                }
                                 receiveProgress();
                                 this.onProgress(0, meta.size, meta.name, 'rec');
                             } else if (meta.type === 'file_end') {
                                 const info = this.incomingFileInfo;
                                 if (!info || meta.id !== info.id || this.receivedSize !== info.size) throw new Error('受信ファイルが不完全です');
-                                const blob = new Blob(this.receiveBuffer, { type: typeof info.mime === 'string' ? info.mime : 'application/octet-stream' });
+                                const sink = this._receiveSink;
+                                const blob = sink ? await sink.close() : new Blob(this.receiveBuffer, { type: typeof info.mime === 'string' ? info.mime : 'application/octet-stream' });
+                                if (generation !== this._receiveGeneration || this.dataChannel !== dc) return;
+                                this._receiveSink = null;
                                 this.resetReceiveBuffer();
                                 clearTimeout(this._receiveTimer);
                                 await this.onFileReceived(blob, this.sanitizeFilename(info.name), info.mode || 'WAN_P2P');
@@ -757,7 +779,9 @@ export class FileTransferManager {
                         const payload = info.encrypted ? await this.decryptChunk(buffer, context) : buffer;
                         if (generation !== this._receiveGeneration) return;
                         if (payload.byteLength !== Math.min(info.chunkSize, info.size - this.receivedSize) || payload.byteLength === 0) throw new Error('受信チャンクのサイズが不正です');
-                        this.receiveBuffer.push(payload); this.receivedSize += payload.byteLength;
+                        if (this._receiveSink) await this._receiveSink.write(payload);
+                        else this.receiveBuffer.push(payload);
+                        if (generation !== this._receiveGeneration || this.dataChannel !== dc) return; this.receivedSize += payload.byteLength;
                         receiveProgress();
                         dc.send(JSON.stringify({ type: 'chunk_received', id: info.id, bytes: this.receivedSize }));
                         this.onProgress(this.receivedSize, info.size, info.name, 'rec');
@@ -837,7 +861,8 @@ export class FileTransferManager {
         await this._readyPromise;
         if (!this._protocolReady || this.dataChannel !== channel) throw new Error(UPDATE_MESSAGE);
         if (this._outgoing) throw new Error('別のファイルを送信中です');
-        if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_RECEIVE_BYTES) throw new Error('1回の転送は64MiBまでです');
+        if (!Number.isSafeInteger(file.size) || file.size < 0) throw new Error('ファイルのサイズが不正です');
+        if (file.size > this._peerReceiveLimit) throw new Error('受信側で大容量受信用の保存先を選択してください。直接保存に非対応の環境では64MiBまでです');
         const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
         const encrypted = !!this.isE2EEEnabled;
         const chunkSize = this._chunkSize;

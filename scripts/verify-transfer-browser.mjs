@@ -17,7 +17,7 @@ try {
     const status = await page.locator('#status').textContent();
     const checks = await page.locator('#results li').allTextContents();
     assert.equal(await page.locator('body').getAttribute('data-result'), 'passed', status);
-    assert.equal(checks.length, 12);
+    assert.equal(checks.length, 13);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ browser: channel, version: browser.version(), status, checks }, null, 2));
     await context.close();

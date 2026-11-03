@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {waitForAsyncState} from './async-state.mjs';
@@ -15,7 +16,12 @@ export async function verifyWindowsColors(page,pid){
  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  await input('hotkey');
  await wait(s=>s.active,'グローバルキーによる採色開始');
- const performance=JSON.parse((await input('performance')).stdout);console.log('Color picker movement performance:',performance);
+ const before=await invoke('desktop_color_status');
+ const performance=JSON.parse((await input('performance')).stdout),after=await invoke('desktop_color_status');
+ performance.positionUpdates=after.positionUpdates-before.positionUpdates;performance.sampleUpdates=after.sampleUpdates-before.sampleUpdates;
+ performance.followFps=Number((performance.positionUpdates/(performance.durationMs/1000)).toFixed(1));
+ await fs.writeFile('desktop-reports/color-picker-performance.json',JSON.stringify(performance,null,2));
+ assert.ok(performance.followFps>=25,JSON.stringify(performance));console.log('Color picker movement performance:',performance);
  await input('choose');
  const pickedStatus=await wait(s=>!s.active&&s.recent[0]==='#2A79B4','採色とコピーの完了');
  assert.equal(pickedStatus.error,null,JSON.stringify(pickedStatus));

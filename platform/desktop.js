@@ -1,3 +1,4 @@
+import { setupStartup } from './startup.js';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { createDesktopUpdates } from './desktopUpdates.js';
@@ -5,6 +6,18 @@ import './desktopUpdates.css';
 
 let expectedOwner = 'guest';
 export const desktop = {
+    receiveDirectory: () => invoke('desktop_receive_directory'),
+    receiveForget: () => invoke('desktop_receive_abort', { id: null }),
+    receiveSink: async info => {
+        const { id } = await invoke('desktop_receive_begin', { name: info.name, size: info.size }); let offset = 0;
+        return {
+            write: async chunk => { await invoke('desktop_receive_write', chunk, { headers: { 'x-flickmemo-transfer': id, 'x-flickmemo-offset': String(offset) } }); offset += chunk.byteLength; },
+            close: () => invoke('desktop_receive_finish', { id }),
+            abort: () => invoke('desktop_receive_abort', { id })
+        };
+    },
+    startupStatus: () => invoke('desktop_startup_status'),
+    startupSet: enable => invoke('desktop_startup_set', { enable }),
     status: () => invoke('desktop_status', { expectedOwner }),
     settings: value => invoke('desktop_settings', { ...value, expectedOwner }),
     session: session => { expectedOwner = session?.uid || 'guest'; return invoke('desktop_session', { session }); },
@@ -57,6 +70,7 @@ export async function setupDesktop({ prepareClose, notify }) {
     }
     const diagnostic = await invoke('desktop_ready', { verified: false });
     if(!diagnostic){
+        void setupStartup({ api: desktop, notify });
         const updates=createDesktopUpdates({api:desktop,prepareClose,notify});
         await listen('desktop-window-opened',()=>updates.check());
         void updates.check();
@@ -87,6 +101,9 @@ export async function setupDesktop({ prepareClose, notify }) {
                 if (editor.value !== expected) { await invoke('desktop_smoke_failed', { error: 'Retained editor state changed' }); return; }
                 await invoke('desktop_ready', { verified: true });
             });
+            const sink = await desktop.receiveSink({ name: 'diagnostic-native.bin', size: 32771 });
+            const bytes = Uint8Array.from({ length: 32768 }, (_, i) => i % 251);
+            await sink.write(bytes); await sink.write(new Uint8Array([4,5,6])); await sink.close();
             await invoke('desktop_ready', { verified: true });
         } catch (error) {
             await invoke('desktop_smoke_failed', { error: String(error?.message || error) });

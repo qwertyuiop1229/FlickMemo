@@ -73,6 +73,7 @@ jobs:
             desktop-reports/memory.csv
             desktop-reports/lifecycle.json
             desktop-reports/clipboard.json
+            desktop-reports/native-receive.json
             desktop-reports/installer.json
             desktop-reports/upgrade*.json
             desktop-reports/upgrade*.png
