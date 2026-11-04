@@ -17,13 +17,14 @@ import { WriteBarrier } from '../platform/writeBarrier.js';
 import { createNavigation } from '../platform/navigation.js';
 import { setupColorPicker } from '../platform/colorPicker.js';
 
-async function setup({ edge = false, extension = false, saveGate, transactionGate, transactionEcho = false, cachedRows = [] } = {}) {
+async function setup({ edge = false, extension = false, saveGate, transactionGate, transactionEcho = false, directoryPicker, cachedRows = [] } = {}) {
     const extensionId = 'a'.repeat(32);
     const dom = new JSDOM(await fs.readFile(new URL('../index.html', import.meta.url), 'utf8'), {
         url: extension ? `chrome-extension://${extensionId}/index.html` : 'https://flickmemo-qwe.web.app/',
         pretendToBeVisual: true
     });
     const window = dom.window;
+    if (directoryPicker) window.showDirectoryPicker = directoryPicker;
     window.matchMedia = () => ({ matches: false });
     window.open = url => { calls.opened.push(url); return calls.popup; };
     Object.defineProperty(window, 'crypto', { value: webcrypto });
@@ -99,6 +100,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
         export function changeTestOwner(uid){currentUserId=uid;remoteConnected=true;auth.currentUser=uid?{uid}:null;isGuestMode=!uid;++authGeneration;currentNotes={};}
         export function setNotes(notes) { currentNotes = notes; }
         export function notesForTest() { return currentNotes; }
+        export function receiveDirectoryForTest() { return receiveDirectory; }
         export function historySize() { return textHistory.reduce((sum, text) => sum + text.length, 0); }
     `, { context, importModuleDynamically: async () => { throw new Error('Unexpected eager dynamic import'); } });
     await module.link(specifier => {
@@ -246,4 +248,9 @@ test('queued memo saves are discarded after switching accounts and cannot change
  app.api.scheduleSaveNote('memo',{body:'alice queued'});const second=app.api.safeCloudWrite('memo',{body:true,updatedAt:true});app.api.changeTestOwner('bob');app.api.setNotes({memo:{id:'memo',body:'bob private'}});release();await Promise.all([first,second]);
  assert.equal(app.api.notesForTest().memo.body,'bob private');assert.equal(app.calls.writes.length,1);assert.equal(app.calls.writes[0].path,'users/alice/notes/memo');assert.equal(app.calls.writes[0].value.body,'alice first');
  }finally{release?.();app.close()}
+});
+
+test('a directory chooser resolved after account cleanup cannot grant the next session a save destination',async()=>{
+ let release;const app=await setup({directoryPicker:()=>new Promise(resolve=>release=resolve)});
+ try{const button=app.document.querySelector('[data-directory]');const choosing=button.onclick();assert.equal(button.disabled,true);await app.api.clearLocalData();release({name:'Alice private folder'});await choosing;assert.equal(app.api.receiveDirectoryForTest(),null);assert.equal(app.document.querySelector('[data-release]').hidden,true);assert.equal(button.disabled,false);assert.equal(app.document.querySelector('.transfer-storage-tools [role=status]').textContent.includes('Alice'),false);}finally{release?.({name:'old'});app.close()}
 });

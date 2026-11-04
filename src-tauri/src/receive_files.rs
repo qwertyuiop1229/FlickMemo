@@ -14,6 +14,7 @@ pub type Service = Arc<Mutex<Receiver>>;
 pub struct Receiver {
     directory: Option<PathBuf>,
     active: Option<Partial>,
+    selection_generation: u64,
 }
 struct Partial {
     id: String,
@@ -65,8 +66,27 @@ impl Receiver {
     pub fn diagnostic(directory: PathBuf) -> Self {
         Self {
             directory: Some(directory),
-            active: None,
+            ..Self::default()
         }
+    }
+    fn begin_selection(&mut self) -> u64 {
+        self.selection_generation = self.selection_generation.wrapping_add(1);
+        self.selection_generation
+    }
+    fn select_directory(&mut self, generation: u64, directory: PathBuf) -> Result<bool, String> {
+        if generation != self.selection_generation {
+            return Ok(false);
+        }
+        if self.active.is_some() {
+            return Err("受信が終了してから保存先を選択してください".into());
+        }
+        self.directory = Some(directory);
+        Ok(true)
+    }
+    fn forget(&mut self) {
+        self.begin_selection();
+        self.active.take();
+        self.directory = None;
     }
 
     fn begin(&mut self, name: &str, size: u64) -> Result<Started, String> {
@@ -191,6 +211,10 @@ pub async fn desktop_receive_directory(
 ) -> Result<Option<String>, String> {
     let state = state.inner().clone();
     let hwnd = window.hwnd().map_err(|_| "画面を確認できません")?.0 as usize;
+    let generation = state
+        .lock()
+        .map_err(|_| "保存先選択を開始できません")?
+        .begin_selection();
     task(move || unsafe {
         use windows::Win32::{Foundation::HWND, System::Com::*, UI::Shell::*};
         CoInitializeEx(None, COINIT_APARTMENTTHREADED)
@@ -235,11 +259,9 @@ pub async fn desktop_receive_directory(
             .to_string_lossy()
             .into_owned();
         let mut receiver = state.lock().map_err(|_| "保存処理を開始できません")?;
-        if receiver.active.is_some() {
-            return Err("受信が終了してから保存先を選択してください".into());
-        }
-        receiver.directory = Some(path);
-        Ok(Some(display))
+        Ok(receiver
+            .select_directory(generation, path)?
+            .then_some(display))
     })
     .await
 }
@@ -325,7 +347,7 @@ pub async fn desktop_receive_abort(
             receiver.active.take();
         }
         if id.is_none() {
-            receiver.directory = None;
+            receiver.forget();
         }
         Ok(())
     })
@@ -341,7 +363,7 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         let mut receiver = Receiver {
             directory: Some(dir.clone()),
-            active: None,
+            ..Receiver::default()
         };
         let started = receiver.begin("../日本語.txt", 3).unwrap();
         assert!(receiver.write(&started.id, 1, &[1]).is_err());
@@ -367,5 +389,25 @@ mod tests {
         receiver.active.take();
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
         std::fs::remove_dir(dir).unwrap();
+    }
+    #[test]
+    fn stale_directory_dialogs_cannot_restore_a_forgotten_or_newer_session_permission() {
+        let mut receiver = Receiver::default();
+        let old = receiver.begin_selection();
+        receiver.forget();
+        assert!(!receiver
+            .select_directory(old, PathBuf::from("old-session"))
+            .unwrap());
+        assert!(receiver.directory.is_none());
+        assert!(receiver.begin("blocked.bin", 1).is_err());
+        let stale = receiver.begin_selection();
+        let latest = receiver.begin_selection();
+        assert!(!receiver
+            .select_directory(stale, PathBuf::from("stale-choice"))
+            .unwrap());
+        assert!(receiver
+            .select_directory(latest, PathBuf::from("current-choice"))
+            .unwrap());
+        assert_eq!(receiver.directory, Some(PathBuf::from("current-choice")));
     }
 }

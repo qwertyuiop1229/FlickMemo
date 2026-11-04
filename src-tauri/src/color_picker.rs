@@ -358,12 +358,10 @@ impl Worker {
         }
         let refresh_sample = self.last_sample.elapsed() >= Duration::from_millis(30);
         let moved = !self.follow_valid || point.x != self.point.x || point.y != self.point.y;
-        let interval = if motion {
-            FOLLOW_INTERVAL
-        } else {
-            Duration::from_millis(33)
-        };
-        if moved && self.last_follow.elapsed() >= interval {
+        // Input notifications are already rate-limited on the input thread.
+        // Gating again here would drop alternating frames when dispatch latency
+        // varies, or when a fallback tick ran just before a motion notification.
+        if moved && (motion || self.last_follow.elapsed() >= Duration::from_millis(33)) {
             let mut monitor: MONITORINFO = std::mem::zeroed();
             monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
             let handle = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
@@ -391,8 +389,12 @@ impl Worker {
             let x = x.max(monitor.rcWork.left);
             let y = y.max(monitor.rcWork.top);
             if resized || bounds.left != x || bounds.top != y {
+                let flags = SWP_NOACTIVATE | SWP_NOZORDER | if resized { 0 } else { SWP_NOSIZE };
+                if SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, width, height, flags) == 0 {
+                    self.follow_valid = false;
+                    return;
+                }
                 self.position_updates += 1;
-                SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
             }
             if resized {
                 let region = CreateRoundRectRgn(

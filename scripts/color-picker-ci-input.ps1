@@ -28,7 +28,7 @@ public static class FlickPickerInput {
  public static void MoveFrames(int x,int y) {
   int left=GetSystemMetrics(76),top=GetSystemMetrics(77),width=GetSystemMetrics(78),height=GetSystemMetrics(79);
   if(width<2||height<2)throw new Exception("Invalid desktop bounds");
-  for(int i=0;i<240;i++) {
+  for(int i=0;i<720;i++) {
    uint dx=(uint)Math.Min(Math.Max(65535L*(x+i%80-left)/(width-1),0L),65535L);
    uint dy=(uint)Math.Min(Math.Max(65535L*(y+i%60-top)/(height-1),0L),65535L);
    mouse_event(0xC001,dx,dy,0,UIntPtr.Zero);

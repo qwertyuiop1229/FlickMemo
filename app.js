@@ -43,7 +43,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.112";
+const APP_VERSION = "1.3.113";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1160,6 +1160,9 @@ async function clearLocalData() {
     closeImagePreviewModal();
     clearTransferHistoryUI();
     stagedFilesQueue = []; receiveDirectory = null;
+    ++receiveChoiceEpoch;
+    receiveTools.querySelector('[data-directory]').disabled = !canSelectReceiveDirectory;
+    receiveHint.textContent = receiveDefaultHint;
     if (isDesktop) await desktopReady.then(({desktop}) => desktop.receiveForget()).catch(() => {});
     if (transferManager) { transferManager.cleanupPeerConnection?.(); transferManager.setReceiveSinkFactory?.(null); }
     receiveTools.querySelector('[data-release]').hidden = true;
@@ -2034,22 +2037,41 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = nul
 
 let stagedFilesQueue = [];
 let receiveDirectory = null;
+let receiveChoiceEpoch = 0;
+const canSelectReceiveDirectory = isDesktop || typeof window.showDirectoryPicker === 'function';
 const receiveTools = document.createElement('div'); receiveTools.className = 'transfer-storage-tools';
 receiveTools.innerHTML = '<button type="button" class="btn-secondary-sm" data-directory><span class="material-symbols-outlined">folder_open</span>大容量受信の保存先を選ぶ</button><button type="button" class="btn-secondary-sm" data-release hidden>保存先を解除</button><button type="button" class="btn-danger-sm" data-cancel>転送を中止</button><p role="status"></p>';
 document.getElementById('dropzone-area')?.after(receiveTools);
 const receiveHint = receiveTools.querySelector('[role=status]');
-if (!isDesktop && typeof window.showDirectoryPicker !== 'function') { receiveTools.querySelector('[data-directory]').disabled = true; receiveHint.textContent = 'この環境の受信は64MiBまでです。大容量の受信にはPCのChrome・Edge等で保存先を選択してください。送信は受信側が対応していれば大容量にも対応します。'; }
-else receiveHint.textContent = '保存先を選ぶと、受信データを少量ずつ直接保存します。複数ファイルもZIPを作らず順に送信します。';
+const receiveDefaultHint = canSelectReceiveDirectory ? '保存先を選ぶと、受信データを少量ずつ直接保存します。複数ファイルもZIPを作らず順に送信します。' : 'この環境の受信は64MiBまでです。大容量の受信にはPCのChrome・Edge等で保存先を選択してください。送信は受信側が対応していれば大容量にも対応します。';
+receiveTools.querySelector('[data-directory]').disabled = !canSelectReceiveDirectory;
+receiveHint.textContent = receiveDefaultHint;
 receiveTools.querySelector('[data-directory]').onclick = async () => {
     if (transferManager?.incomingFileInfo || transferManager?.isSending) { showToast('転送が終わってから保存先を変更してください'); return; }
+    const choice = ++receiveChoiceEpoch, generation = cacheGeneration;
+    const current = () => choice === receiveChoiceEpoch && generation === cacheGeneration;
+    receiveTools.querySelector('[data-directory]').disabled = true;
     try { let directory;
         if (isDesktop) {
-            const { desktop } = await desktopReady; const name = await desktop.receiveDirectory(); if (!name) return;
+            const { desktop } = await desktopReady; if (!current()) return;
+            const name = await desktop.receiveDirectory(); if (!name || !current()) return;
             directory = { name, native: true }; receiveDirectory = directory; ensureTransferManager().setReceiveSinkFactory(info => desktop.receiveSink(info));
-        } else { directory = await window.showDirectoryPicker({ mode: 'readwrite' }); receiveDirectory = directory; ensureTransferManager().setReceiveSinkFactory(info => directorySink(directory, info, window)); } receiveHint.textContent = `受信保存先: ${directory.name}（直接保存・ファイルサイズの固定上限なし）`; receiveTools.querySelector('[data-release]').hidden = false; }
-    catch (error) { if (error.name !== 'AbortError') showToast('保存先を選べません: ' + error.message); }
+        } else { directory = await window.showDirectoryPicker({ mode: 'readwrite' }); if (!current()) return; receiveDirectory = directory; ensureTransferManager().setReceiveSinkFactory(info => directorySink(directory, info, window)); } receiveHint.textContent = `受信保存先: ${directory.name}（直接保存・ファイルサイズの固定上限なし）`; receiveTools.querySelector('[data-release]').hidden = false; }
+    catch (error) { if (current() && error?.name !== 'AbortError') showToast('保存先を選べません: ' + String(error?.message || error)); }
+    finally { if (current()) receiveTools.querySelector('[data-directory]').disabled = !canSelectReceiveDirectory; }
 };
-receiveTools.querySelector('[data-release]').onclick = () => { try { transferManager?.setReceiveSinkFactory(null); receiveDirectory = null; if (isDesktop) desktopReady.then(({desktop}) => desktop.receiveForget()).catch(() => {}); receiveHint.textContent = '保存先を解除しました。通常受信は64MiBまでです。'; receiveTools.querySelector('[data-release]').hidden = true; } catch (error) { showToast(error.message); } };
+receiveTools.querySelector('[data-release]').onclick = async () => {
+    let choice;
+    try {
+        transferManager?.setReceiveSinkFactory(null);
+        choice = ++receiveChoiceEpoch; receiveDirectory = null;
+        receiveTools.querySelector('[data-directory]').disabled = true;
+        receiveTools.querySelector('[data-release]').hidden = true;
+        if (isDesktop) await desktopReady.then(({desktop}) => desktop.receiveForget());
+        if (choice === receiveChoiceEpoch) receiveHint.textContent = '保存先を解除しました。通常受信は64MiBまでです。';
+    } catch (error) { if (choice === undefined || choice === receiveChoiceEpoch) { if (choice !== undefined) receiveTools.querySelector('[data-release]').hidden = false; showToast('保存先を解除できません: ' + String(error?.message || error)); } }
+    finally { if (choice === receiveChoiceEpoch) receiveTools.querySelector('[data-directory]').disabled = !canSelectReceiveDirectory; }
+};
 receiveTools.querySelector('[data-cancel]').onclick = () => { transferManager?.cleanupPeerConnection(new Error('転送を中止しました')); stagedFilesQueue = []; if (fileInput) fileInput.value = ''; renderStagedFilesUI(); setTransferUILock(false); showToast('転送を中止し、ファイル参照を解放しました'); };
 
 const stagedFilesCard = document.getElementById('staged-files-card');

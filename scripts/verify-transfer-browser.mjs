@@ -13,7 +13,11 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`${base}/tests/fixtures/transfer-browser.html`, { waitUntil: 'networkidle' });
     await page.locator('#run').click();
-    await page.waitForFunction(() => !!document.body.dataset.result, null, { timeout: 60000 });
+    // A large virtual source may legitimately take over a minute on a slow
+    // browser. Poll a few times per second, avoiding a frame-by-frame observer.
+    // The production transfer's 30-second no-progress watchdog remains tested.
+    try { await page.waitForFunction(() => !!document.body.dataset.result, null, { timeout: 180000, polling: 250 }); }
+    catch (error) { console.error('Transfer state at timeout:',await page.evaluate(()=>({status:document.getElementById('status').textContent,checks:document.querySelectorAll('#results li').length})));throw error; }
     const status = await page.locator('#status').textContent();
     const checks = await page.locator('#results li').allTextContents();
     assert.equal(await page.locator('body').getAttribute('data-result'), 'passed', status);
