@@ -3,6 +3,7 @@ export function validFolder(value, id = value?.id) { return !!value && typeof va
 export function setupFolders({ doc = document, win = window, notes, select, move, write, notify, changed = () => {} }) {
     let owner = 'guest', generation = 0, items = Object.create(null), dirty = Object.create(null), active = 'all', editing = null;
     const inFlight = new Set();
+    let renderedState = null;
     const root = doc.createElement('section'); root.className = 'folder-section'; root.setAttribute('aria-label', 'メモのフォルダ');
     root.innerHTML = '<div class="folder-heading"><span>フォルダ</span><button type="button" class="m3-icon-button" data-add aria-label="フォルダを作成"><span class="material-symbols-outlined">create_new_folder</span></button></div><div class="folder-list"></div>';
     doc.querySelector('.sidebar-top')?.prepend(root);
@@ -15,11 +16,13 @@ export function setupFolders({ doc = document, win = window, notes, select, move
     picker.querySelector('select').onchange = event => move(event.target.value);
     function persist() { try { win.localStorage.setItem(`flickmemo-folders:${owner}`, JSON.stringify({ items, dirty })); } catch { throw Error('フォルダ設定を端末に保存できません'); } }
     function send(id) {
-        if (owner === 'guest' || !dirty[id] || inFlight.has(`${owner}:${id}`)) return;
-        const uid = owner, ticket = generation, value = dirty[id], key = `${uid}:${id}`; inFlight.add(key);
+        if (owner === 'guest' || !dirty[id]) return;
+        const uid = owner, ticket = generation, value = dirty[id], key = `${uid}:${ticket}:${id}`;
+        if (inFlight.has(key)) return;
+        inFlight.add(key);
         Promise.resolve().then(() => { if (ticket !== generation) return false; return write(id, value); }).then(result => {
             if (result !== false && ticket === generation && JSON.stringify(dirty[id]) === JSON.stringify(value)) { delete dirty[id]; persist(); }
-        }).catch(error => notify(`フォルダは端末に保存済みです。同期できませんでした: ${error.message}`)).finally(() => { inFlight.delete(key); if (ticket === generation && dirty[id] && JSON.stringify(dirty[id]) !== JSON.stringify(value)) send(id); });
+        }).catch(error => { if (ticket === generation) notify(`フォルダは端末に保存済みです。同期できませんでした: ${error.message}`); }).finally(() => { inFlight.delete(key); if (ticket === generation && dirty[id] && JSON.stringify(dirty[id]) !== JSON.stringify(value)) send(id); });
     }
     function update(id, name, deleted = false) {
         const value = { id, name: name.trim(), updatedAt: Date.now(), ...(deleted ? { deletedAt: Date.now() } : {}) };
@@ -43,6 +46,11 @@ export function setupFolders({ doc = document, win = window, notes, select, move
     function render() {
         const folders = currentItems(), counts = new Map(), values = Object.values(notes()).filter(n => !n.deletedAt);
         for (const note of values) { const id = effective(note); counts.set(id, (counts.get(id) || 0) + 1); }
+        const state = JSON.stringify([owner, active, values.length, counts.get('') || 0, folders.map(f => [f.id, f.name, counts.get(f.id) || 0])]);
+        // Body edits and cloud acknowledgements do not change folder controls.
+        // Preserve their DOM and keyboard focus instead of rebuilding every row.
+        if (state === renderedState) return;
+        renderedState = state;
         const list = root.querySelector('.folder-list'); list.replaceChildren();
         for (const item of [{ id: 'all', name: 'すべてのメモ' }, { id: 'unfiled', name: '未分類' }, ...folders]) {
             const row = doc.createElement('div'); row.className = 'folder-row';

@@ -43,7 +43,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.111";
+const APP_VERSION = "1.3.112";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -231,7 +231,23 @@ function recoverDraft(note, owner = currentUserId) {
     currentNotes[backup.id] = backup; saveLocalNote(backup); syncSaveNote(backup);
     showToast('別の端末での変更を反映しました。この端末の未同期内容は「競合の控え」に残しました。', 7000);
 }
-async function safeCloudWrite(id, fields = null) {
+const cloudWrites = new Map();
+function safeCloudWrite(id, fields = null) {
+    const owner = currentUserId, generation = authGeneration;
+    if (!owner || !currentNotes[id]) return Promise.resolve(false);
+    if (!remoteConnected) { refreshCloudStatus(); return Promise.resolve(false); }
+    const key = `${generation}:${owner}:${id}`;
+    const fieldNames = fields ? Object.keys(fields) : null;
+    // Serialize writes to the same memo; queued work captures the latest draft
+    // only when it starts, rather than retaining another body-sized snapshot.
+    const previous = cloudWrites.get(key)?.promise || Promise.resolve();
+    const entry = { owner, generation, promise: null };
+    entry.promise = previous.catch(() => {}).then(() => owner === currentUserId && generation === authGeneration
+        ? writeNoteTransaction(id, fieldNames) : false).finally(() => { if (cloudWrites.get(key) === entry) cloudWrites.delete(key); });
+    cloudWrites.set(key, entry);
+    return entry.promise;
+}
+async function writeNoteTransaction(id, fieldNames = null) {
     const owner = currentUserId, generation = authGeneration;
     const note = currentNotes[id] ? structuredClone(currentNotes[id]) : null;
     if (!owner || !note) return false;
@@ -240,6 +256,7 @@ async function safeCloudWrite(id, fields = null) {
     let release = null, readTimer = null;
     try {
         const row = await noteStore.get(owner, id);
+        const writtenFields = fieldNames || (row?.pendingFields || Object.keys(note));
         // Keep this location subscribed: get() alone may prune the SDK cache
         // before runTransaction reads its initial value.
         await new Promise((resolve, reject) => {
@@ -247,16 +264,16 @@ async function safeCloudWrite(id, fields = null) {
             release = onValue(target, () => resolve(), reject);
         });
         clearTimeout(readTimer);
-        if (owner !== currentUserId || generation !== authGeneration) return false;
+        if (owner !== currentUserId || generation !== authGeneration || !currentNotes[id] || pendingDeleteIds.has(id)) return false;
         const result = await runTransaction(target, remote => {
             if (remote == null) return row?.base ? undefined : note;
             if (!validNote(remote, id)) return;
-            const resolved = reconcileNote(note, remote, row?.base, fields ? Object.keys(fields) : (row?.pendingFields || Object.keys(note)));
+            const resolved = reconcileNote(note, remote, row?.base, writtenFields);
             if (resolved.conflict) return;
             return resolved.patch ? { ...resolved.note, updatedAt: note.updatedAt } : remote;
         }, { applyLocally: false });
         if (!result.committed) {
-            if (owner === currentUserId && generation === authGeneration) {
+            if (owner === currentUserId && generation === authGeneration && currentNotes[id] && !pendingDeleteIds.has(id)) {
                 recoverDraft(note, owner);
                 if (JSON.stringify(currentNotes[id]) === JSON.stringify(note)) {
                     const remote = result.snapshot.val(); pendingLocalIds.delete(id);
@@ -267,7 +284,7 @@ async function safeCloudWrite(id, fields = null) {
             }
             return false;
         }
-        const acknowledged = await noteStore.acknowledge(owner, note, fields);
+        const acknowledged = await noteStore.acknowledge(owner, note, Object.fromEntries(writtenFields.map(key => [key, note[key]])));
         if (acknowledged && currentUserId === owner && generation === authGeneration && JSON.stringify(currentNotes[id]) === JSON.stringify(note)) {
             pendingLocalIds.delete(id);
             // A no-op transaction need not emit another parent onValue event.
@@ -3108,6 +3125,14 @@ onAuthStateChanged(auth, async user => {
         let snapshotTicket = 0;
         onValue(currentDbRef, async snapshot => {
             const ticket = ++snapshotTicket;
+            // Firebase can emit our commit before resolving runTransaction.
+            // Reconcile its echo only after the durable base is acknowledged.
+            let pendingWrites;
+            while ((pendingWrites = [...cloudWrites.values()].filter(entry => entry.owner === user.uid && entry.generation === generation).map(entry => entry.promise)).length) {
+                await Promise.allSettled(pendingWrites);
+                if (ticket !== snapshotTicket || generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
+            }
+            if (ticket !== snapshotTicket || generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
             const pendingRows = new Map(await Promise.all([...pendingLocalIds].map(async id => [id, await noteStore.get(user.uid, id).catch(error => { localSaveError(error); return null; })])));
             if (ticket !== snapshotTicket || generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
             try {

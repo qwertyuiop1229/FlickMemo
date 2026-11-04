@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory } from 'fake-indexeddb';
 import { NoteStore } from '../noteStore.js';
+import { reconcileNote } from '../noteSync.js';
 
 test('guest notes survive reopening without leaking across accounts', async () => {
     const factory = new IDBFactory();
@@ -77,4 +78,20 @@ test('acknowledging a pin update cannot mark an unsent body edit as synced', asy
     assert.equal((await store.entries('alice'))[0].pending, true);
     assert.equal(await store.acknowledge('alice', pinned, { body: pinned.body, title: '', pinned: true, updatedAt: 3 }), true);
     assert.equal((await store.entries('alice'))[0].pending, false);
+});
+
+test('a saved draft advances the base without clearing newer typing or unrelated dirty fields', async () => {
+    for (const full of [false, true]) {
+        const store = new NoteStore(new IDBFactory());
+        const original = {id:'n',body:'original',title:'original title',updatedAt:1};
+        const sent = {...original,body:'first edit',updatedAt:2};
+        const later = {...sent,body:'continued typing',title:'unsent title',updatedAt:3};
+        await store.put('alice',original); await store.put('alice',sent,true); await store.put('alice',later,true);
+        assert.equal(await store.acknowledge('alice',sent,full ? null : {body:sent.body,updatedAt:2}),false);
+        const row=await store.get('alice','n');
+        assert.equal(row.note.body,later.body); assert.equal(row.base.body,sent.body);
+        assert.equal(row.base.title,original.title); assert.equal(row.pending,true);
+        const merged=reconcileNote(row.note,sent,row.base,row.pendingFields);
+        assert.equal(merged.conflict,null); assert.equal(merged.note.body,later.body);
+    }
 });

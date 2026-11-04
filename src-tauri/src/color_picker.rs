@@ -22,6 +22,9 @@ use windows_sys::Win32::{
 const REQUEST: u32 = WM_APP + 80;
 const PICK: u32 = WM_APP + 81;
 const CANCEL: u32 = WM_APP + 82;
+const MOTION: u32 = WM_APP + 83;
+const REFLOW: u32 = WM_APP + 84;
+const FOLLOW_INTERVAL: Duration = Duration::from_millis(15);
 const CLASS: &str = "FlickMemo.ColorPicker";
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
@@ -133,6 +136,7 @@ pub struct Status {
     active: bool,
     position_updates: u64,
     sample_updates: u64,
+    motion_updates: u64,
 }
 #[derive(Clone, Serialize)]
 pub struct Picked {
@@ -210,9 +214,12 @@ struct Worker {
     hook: Option<InputHook>,
     capture: Option<SampleBuffer>,
     last_sample: Instant,
+    last_follow: Instant,
+    follow_valid: bool,
     panel_buffer: Option<PanelBuffer>,
     position_updates: u64,
     sample_updates: u64,
+    motion_updates: u64,
     previous: HWND,
     began: Instant,
     sample: u32,
@@ -230,6 +237,7 @@ impl Worker {
             active: self.active,
             position_updates: self.position_updates,
             sample_updates: self.sample_updates,
+            motion_updates: self.motion_updates,
         }
     }
     fn persist(&self, p: &Preferences, recent: &[String]) -> Result<(), String> {
@@ -314,9 +322,12 @@ impl Worker {
                 }
             };
             self.last_sample = Instant::now() - Duration::from_secs(1);
+            self.last_follow = self.last_sample;
+            self.follow_valid = false;
             self.active = true;
             self.position_updates = 0;
             self.sample_updates = 0;
+            self.motion_updates = 0;
             if self
                 .shared
                 .app
@@ -326,70 +337,80 @@ impl Worker {
                 let _ = self.shared.app.emit_to("main", "desktop-color-started", ());
             }
             self.began = Instant::now();
-            self.update();
+            self.update(true);
             InvalidateRect(self.hwnd, std::ptr::null(), 0);
             ShowWindow(self.hwnd, SW_SHOWNORMAL);
             SetForegroundWindow(self.hwnd);
             SetFocus(self.hwnd);
-            if SetTimer(self.hwnd, 1, 15, None) == 0 {
+            // Motion follows input events. This slower timer handles animated
+            // pixels beneath a stationary cursor, final motion and cancellation.
+            if SetTimer(self.hwnd, 1, 33, None) == 0 {
                 self.finish(None);
                 return Err("色の取得を開始できません".into());
             }
         }
         Ok(())
     }
-    unsafe fn update(&mut self) {
+    unsafe fn update(&mut self, motion: bool) {
         let mut point: POINT = std::mem::zeroed();
         if GetCursorPos(&mut point) == 0 {
             return;
         }
-        if point.x == self.point.x
-            && point.y == self.point.y
-            && self.last_sample.elapsed() < Duration::from_millis(30)
-        {
-            return;
-        }
         let refresh_sample = self.last_sample.elapsed() >= Duration::from_millis(30);
-        let mut monitor: MONITORINFO = std::mem::zeroed();
-        monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        let handle = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
-        if GetMonitorInfoW(handle, &mut monitor) == 0 {
-            return;
-        }
-        let scale = (GetDpiForWindow(self.hwnd).max(96) as f64 / 96.).min(4.);
-        let width = (300. * scale).round() as i32;
-        let height = (114. * scale).round() as i32;
-        let x = if point.x + width + 20 < monitor.rcWork.right {
-            point.x + 20
+        let moved = !self.follow_valid || point.x != self.point.x || point.y != self.point.y;
+        let interval = if motion {
+            FOLLOW_INTERVAL
         } else {
-            point.x - width - 20
+            Duration::from_millis(33)
         };
-        let y = if point.y + height + 22 < monitor.rcWork.bottom {
-            point.y + 22
-        } else {
-            point.y - height - 22
-        };
-        let mut bounds: RECT = std::mem::zeroed();
-        GetWindowRect(self.hwnd, &mut bounds);
-        let resized = bounds.right - bounds.left != width || bounds.bottom - bounds.top != height;
-        let x = x.max(monitor.rcWork.left);
-        let y = y.max(monitor.rcWork.top);
-        if resized || bounds.left != x || bounds.top != y {
-            self.position_updates += 1;
-            SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
-        }
-        if resized {
-            let region = CreateRoundRectRgn(
-                0,
-                0,
-                width,
-                height,
-                (24. * scale) as i32,
-                (24. * scale) as i32,
-            );
-            if SetWindowRgn(self.hwnd, region, 0) == 0 {
-                DeleteObject(region);
+        if moved && self.last_follow.elapsed() >= interval {
+            let mut monitor: MONITORINFO = std::mem::zeroed();
+            monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            let handle = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+            if GetMonitorInfoW(handle, &mut monitor) == 0 {
+                return;
             }
+            let dpi = GetDpiForWindow(self.hwnd).max(96);
+            let scale = (dpi as f64 / 96.).min(4.);
+            let width = (300. * scale).round() as i32;
+            let height = (114. * scale).round() as i32;
+            let x = if point.x + width + 20 < monitor.rcWork.right {
+                point.x + 20
+            } else {
+                point.x - width - 20
+            };
+            let y = if point.y + height + 22 < monitor.rcWork.bottom {
+                point.y + 22
+            } else {
+                point.y - height - 22
+            };
+            let mut bounds: RECT = std::mem::zeroed();
+            GetWindowRect(self.hwnd, &mut bounds);
+            let resized =
+                bounds.right - bounds.left != width || bounds.bottom - bounds.top != height;
+            let x = x.max(monitor.rcWork.left);
+            let y = y.max(monitor.rcWork.top);
+            if resized || bounds.left != x || bounds.top != y {
+                self.position_updates += 1;
+                SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+            }
+            if resized {
+                let region = CreateRoundRectRgn(
+                    0,
+                    0,
+                    width,
+                    height,
+                    (24. * scale) as i32,
+                    (24. * scale) as i32,
+                );
+                if SetWindowRgn(self.hwnd, region, 0) == 0 {
+                    DeleteObject(region);
+                }
+            }
+            self.point = point;
+            // Moving the window may synchronously change its monitor/DPI.
+            self.follow_valid = GetDpiForWindow(self.hwnd).max(96) == dpi;
+            self.last_follow = Instant::now();
         }
         // One 7x7 readback instead of 50 synchronous screen GetPixel calls.
         if refresh_sample {
@@ -399,7 +420,6 @@ impl Worker {
                     let changed = self.pixels != pixels;
                     self.pixels = pixels;
                     self.sample = pixels[24];
-                    self.point = point;
                     self.last_sample = Instant::now();
                     if changed {
                         InvalidateRect(self.hwnd, std::ptr::null(), 0);
@@ -509,16 +529,21 @@ impl Worker {
 }
 // Dedicated input pump: screen readback/painting must never block a global input hook.
 thread_local! { static INPUT_TARGET: std::cell::Cell<HWND> = const { std::cell::Cell::new(std::ptr::null_mut()) };
-static INPUT_ENABLED: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) }; }
+static INPUT_ENABLED: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+static INPUT_MOTION: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+static INPUT_LAST_MOTION: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) }; }
 struct InputHook {
     thread: u32,
     enabled: Arc<AtomicBool>,
+    motion_pending: Arc<AtomicBool>,
 }
 impl InputHook {
     unsafe fn start(hwnd: HWND) -> Result<Self, String> {
         let target = hwnd as usize;
         let enabled = Arc::new(AtomicBool::new(true));
         let hook_enabled = enabled.clone();
+        let motion_pending = Arc::new(AtomicBool::new(false));
+        let hook_motion = motion_pending.clone();
         let (tx, rx) = mpsc::sync_channel(0);
         std::thread::Builder::new()
             .name("color-input".into())
@@ -527,6 +552,7 @@ impl InputHook {
                 PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
                 INPUT_TARGET.with(|v| v.set(target as HWND));
                 INPUT_ENABLED.with(|v| *v.borrow_mut() = Some(hook_enabled));
+                INPUT_MOTION.with(|v| *v.borrow_mut() = Some(hook_motion));
                 let hook = SetWindowsHookExW(
                     WH_MOUSE_LL,
                     Some(mouse_hook),
@@ -553,7 +579,11 @@ impl InputHook {
             .map_err(|_| "画面の選択操作を開始できません")?;
         rx.recv_timeout(Duration::from_secs(2))
             .map_err(|_| "選択操作の準備がタイムアウトしました".to_string())?
-            .map(|thread| Self { thread, enabled })
+            .map(|thread| Self {
+                thread,
+                enabled,
+                motion_pending,
+            })
     }
 }
 impl Drop for InputHook {
@@ -574,6 +604,27 @@ unsafe extern "system" fn mouse_hook(code: i32, w: WPARAM, l: LPARAM) -> LRESULT
         });
         if !target.is_null() && enabled {
             match w as u32 {
+                WM_MOUSEMOVE => {
+                    let now = Instant::now();
+                    if INPUT_LAST_MOTION.with(|v| {
+                        v.get()
+                            .is_none_or(|last| now.duration_since(last) >= FOLLOW_INTERVAL)
+                    }) {
+                        INPUT_MOTION.with(|cell| {
+                            if let Some(pending) = cell.borrow().as_ref() {
+                                // At most one queued motion message, independent
+                                // of mouse polling rate. Never capture or paint here.
+                                if !pending.swap(true, Ordering::Relaxed) {
+                                    if PostMessageW(target, MOTION, 0, 0) != 0 {
+                                        INPUT_LAST_MOTION.with(|v| v.set(Some(now)));
+                                    } else {
+                                        pending.store(false, Ordering::Relaxed);
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
                 WM_LBUTTONDOWN | WM_RBUTTONDOWN => return 1,
                 WM_LBUTTONUP => {
                     let data = &*(l as *const MSLLHOOKSTRUCT);
@@ -870,6 +921,14 @@ unsafe fn paint(hwnd: HWND) {
     EndPaint(hwnd, &ps);
 }
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if msg == WM_DPICHANGED
+        || msg == WM_DISPLAYCHANGE
+        || (msg == WM_SETTINGCHANGE && w as u32 == SPI_SETWORKAREA)
+    {
+        // Defer reflow: SetWindowPos can reenter this procedure while Worker is borrowed.
+        PostMessageW(hwnd, REFLOW, 0, 0);
+        return 0;
+    }
     // Alt+F4 must cancel, never destroy the service window with an input hook alive.
     if msg == WM_CLOSE {
         PostMessageW(hwnd, CANCEL, 0, 0);
@@ -890,6 +949,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
         REQUEST,
         PICK,
         CANCEL,
+        MOTION,
+        REFLOW,
         WM_TIMER,
         WM_HOTKEY,
         WM_KEYDOWN,
@@ -903,6 +964,23 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
             };
             let Some(worker) = cell.as_mut() else { return };
             match msg {
+                REFLOW => {
+                    if worker.active {
+                        worker.follow_valid = false;
+                        worker.last_follow = Instant::now() - Duration::from_secs(1);
+                        worker.update(true);
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                    }
+                }
+                MOTION => {
+                    if let Some(hook) = worker.hook.as_ref() {
+                        hook.motion_pending.store(false, Ordering::Relaxed);
+                    }
+                    if worker.active {
+                        worker.motion_updates += 1;
+                        worker.update(true);
+                    }
+                }
                 REQUEST => {
                     while let Ok(request) = worker.queue.try_recv() {
                         let result = worker.handle(request.operation);
@@ -935,6 +1013,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                     }
                 }
                 WM_TIMER => {
+                    if let Some(hook) = worker.hook.as_ref() {
+                        hook.motion_pending.store(false, Ordering::Relaxed);
+                    }
                     if w == 2 {
                         ShowWindow(hwnd, SW_HIDE);
                         KillTimer(hwnd, 2);
@@ -945,7 +1026,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                         {
                             worker.finish(None);
                         } else {
-                            worker.update();
+                            worker.update(false);
                         }
                     }
                 }
@@ -969,7 +1050,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                                         _ => p.y += 1,
                                     }
                                     SetCursorPos(p.x, p.y);
-                                    worker.update();
+                                    worker.update(true);
                                 }
                             }
                             _ => {}
@@ -1053,9 +1134,12 @@ pub fn start(shared: Arc<Shared>) -> Service {
                 hook: None,
                 capture: None,
                 last_sample: Instant::now(),
+                last_follow: Instant::now(),
+                follow_valid: false,
                 panel_buffer: None,
                 position_updates: 0,
                 sample_updates: 0,
+                motion_updates: 0,
                 previous: std::ptr::null_mut(),
                 began: Instant::now(),
                 sample: 0,

@@ -66,19 +66,16 @@ export class NoteStore {
             request.onsuccess = () => {
                 const row = request.result;
                 if (!row?.note) return;
-                if (!fields) {
-                    if (JSON.stringify(row.note) === JSON.stringify(note)) {
-                        acknowledged = true;
-                        store.put({ ...row, pending: false, pendingFields: [], base: row.note });
-                    }
-                    return;
-                }
                 const dirtyFields = new Set(row.pendingFields || Object.keys(row.note));
-                for (const key of Object.keys(fields)) {
+                const base = { ...(row.base || {}) };
+                for (const key of Object.keys(fields || note)) {
+                    // The server accepted this value even if typing has continued.
+                    // Advance only sent fields, leaving unsent fields' bases intact.
+                    if (note[key] === undefined) delete base[key]; else base[key] = structuredClone(note[key]);
                     if (JSON.stringify(row.note[key]) === JSON.stringify(note[key])) dirtyFields.delete(key);
                 }
                 acknowledged = dirtyFields.size === 0;
-                store.put({ ...row, pending: !acknowledged, pendingFields: [...dirtyFields] });
+                store.put({ ...row, pending: !acknowledged, pendingFields: [...dirtyFields], base });
             };
         });
         return acknowledged;

@@ -17,7 +17,7 @@ import { WriteBarrier } from '../platform/writeBarrier.js';
 import { createNavigation } from '../platform/navigation.js';
 import { setupColorPicker } from '../platform/colorPicker.js';
 
-async function setup({ edge = false, extension = false, saveGate, cachedRows = [] } = {}) {
+async function setup({ edge = false, extension = false, saveGate, transactionGate, transactionEcho = false, cachedRows = [] } = {}) {
     const extensionId = 'a'.repeat(32);
     const dom = new JSDOM(await fs.readFile(new URL('../index.html', import.meta.url), 'utf8'), {
         url: extension ? `chrome-extension://${extensionId}/index.html` : 'https://flickmemo-qwe.web.app/',
@@ -28,7 +28,7 @@ async function setup({ edge = false, extension = false, saveGate, cachedRows = [
     window.open = url => { calls.opened.push(url); return calls.popup; };
     Object.defineProperty(window, 'crypto', { value: webcrypto });
     Object.defineProperty(window.navigator, 'userAgent', { value: edge ? 'Windows Edg/130.0' : 'Windows Chrome/130.0' });
-    const calls = { opened: [], credentials: [], tokens: 0, popup: { closed: false }, signedOut: 0, writes:[] };
+    const calls = { opened: [], credentials: [], tokens: 0, popup: { closed: false }, signedOut: 0, writes:[], echoes:[] };
     const session = {};
     let authCallback;
     const auth = { currentUser: null };
@@ -47,7 +47,20 @@ async function setup({ edge = false, extension = false, saveGate, cachedRows = [
     const snapshots = new Map(), remoteValues = new Map();
     const dbApi = { getDatabase: () => ({}), ref: (_, path) => path,
         set: async (path,value) => {calls.writes.push({path,value});}, remove: async () => {}, get: async path => ({ val: () => remoteValues.get(path) ?? null }),
-        runTransaction: async (path, callback) => { const value = callback(remoteValues.get(path) ?? null); if (value !== undefined) { remoteValues.set(path,value); calls.writes.push({path,value,transaction:true}); } return {committed:value !== undefined,snapshot:{val:()=>remoteValues.get(path) ?? null}}; },
+        runTransaction: async (path, callback) => {
+            const value = callback(structuredClone(remoteValues.get(path) ?? null));
+            if (value !== undefined) {
+                remoteValues.set(path,value); calls.writes.push({path,value,transaction:true});
+                if (transactionEcho) {
+                    const parent = path.slice(0,path.lastIndexOf('/'));
+                    const notes = structuredClone(Object.fromEntries([...remoteValues].filter(([key])=>key.startsWith(parent+'/')).map(([key,note])=>[key.slice(parent.length+1),note])));
+                    calls.echoes.push(Promise.resolve(snapshots.get(parent)?.({val:()=>notes})));
+                }
+            }
+            const snapshot = structuredClone(remoteValues.get(path) ?? null);
+            await transactionGate?.({path,value});
+            return {committed:value !== undefined,snapshot:{val:()=>snapshot}};
+        },
         update: async (path,value) => calls.writes.push({path,value,partial:true}), onValue: (path,callback) => { snapshots.set(path, callback); if (/\/notes\/[^/]+$/.test(path)) queueMicrotask(() => callback({val:()=>remoteValues.get(path) ?? null})); return () => snapshots.delete(path); }, off(path) { snapshots.delete(path); } };
     let messageListener;
     const chrome = {
@@ -97,7 +110,7 @@ async function setup({ edge = false, extension = false, saveGate, cachedRows = [
     });
     await module.evaluate();
     await authCallback(null);
-    return { dom, login: async user => { auth.currentUser=user; await authCallback(user); }, remote: (path,value) => remoteValues.set(path,value), snapshot: async (path,value) => { if (value && typeof value === 'object') for (const [id,note] of Object.entries(value)) remoteValues.set(path + '/' + id,note); return snapshots.get(path)?.({ val: () => value }); }, api: module.namespace, calls, chrome, session, document: window.document,
+    return { dom, login: async user => { auth.currentUser=user; await authCallback(user); }, remote: (path,value) => remoteValues.set(path,structuredClone(value)), snapshot: async (path,value) => { if (value && typeof value === 'object') for (const [id,note] of Object.entries(value)) remoteValues.set(path + '/' + id,structuredClone(note)); return snapshots.get(path)?.({ val: () => value }); }, api: module.namespace, calls, chrome, session, document: window.document,
         message: (...args) => messageListener(...args), close: () => dom.window.close() };
 }
 
@@ -208,4 +221,29 @@ test('a pending timestamp-only save preserves the remote timestamp and adopts it
  const remote={...local,body:'new body',updatedAt:200};
  const app=await setup({cachedRows:[{owner:'alice',id:'memo',note:local,pending:true,pendingFields:['updatedAt'],base:local}]});
  try{app.api.changeTestOwner('alice');app.api.setNotes({memo:local});app.remote('users/alice/notes/memo',remote);await app.api.safeCloudWrite('memo');const write=app.calls.writes.find(w=>w.transaction);assert.equal(write.value.updatedAt,200);assert.equal(app.api.notesForTest().memo.body,'new body');}finally{app.close()}
+});
+
+test('typing during a cloud save and its early Firebase echo never creates a false conflict or loses text',async()=>{
+ const original={id:'memo',body:'original',title:'memo',updatedAt:1};
+ let release,started;const began=new Promise(resolve=>started=resolve);let blocked=false;
+ const app=await setup({transactionEcho:true,cachedRows:[{owner:'alice',id:'memo',note:original,pending:false,base:original}],transactionGate:()=>{if(!blocked){blocked=true;started();return new Promise(resolve=>release=resolve)}}});
+ try{
+  await app.login({uid:'alice',displayName:'Test'});await app.snapshot('users/alice/notes',{memo:original});await app.snapshot('.info/connected',true);
+  app.api.scheduleSaveNote('memo',{body:'first edit'});const first=app.api.safeCloudWrite('memo',{body:'first edit',updatedAt:2});await began;
+  app.api.scheduleSaveNote('memo',{body:'continued typing'});const second=app.api.safeCloudWrite('memo',{body:'continued typing',updatedAt:3});
+  release();await Promise.all([first,second]);await Promise.all(app.calls.echoes);
+  assert.equal(app.api.notesForTest().memo.body,'continued typing');
+  assert.equal(Object.values(app.api.notesForTest()).some(note=>note.conflictOf==='memo'),false);
+  assert.equal(app.calls.writes.filter(write=>write.path==='users/alice/notes/memo').at(-1).value.body,'continued typing');
+ }finally{release?.();app.close()}
+});
+
+test('queued memo saves are discarded after switching accounts and cannot change the new account UI',async()=>{
+ const original={id:'memo',body:'alice original',title:'memo',updatedAt:1};let release,started;
+ const began=new Promise(resolve=>started=resolve);
+ const app=await setup({cachedRows:[{owner:'alice',id:'memo',note:original,pending:false,base:original}],transactionGate:()=>{started();return new Promise(resolve=>release=resolve)}});
+ try{app.api.changeTestOwner('alice');app.api.setNotes({memo:original});app.remote('users/alice/notes/memo',original);app.api.scheduleSaveNote('memo',{body:'alice first'});const first=app.api.safeCloudWrite('memo',{body:true,updatedAt:true});await began;
+ app.api.scheduleSaveNote('memo',{body:'alice queued'});const second=app.api.safeCloudWrite('memo',{body:true,updatedAt:true});app.api.changeTestOwner('bob');app.api.setNotes({memo:{id:'memo',body:'bob private'}});release();await Promise.all([first,second]);
+ assert.equal(app.api.notesForTest().memo.body,'bob private');assert.equal(app.calls.writes.length,1);assert.equal(app.calls.writes[0].path,'users/alice/notes/memo');assert.equal(app.calls.writes[0].value.body,'alice first');
+ }finally{release?.();app.close()}
 });

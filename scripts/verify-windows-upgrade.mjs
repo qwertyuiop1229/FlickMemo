@@ -10,7 +10,7 @@ import {verifyAsset} from './release.mjs';
 import {verifyWindowsColors} from './verify-windows-colors.mjs';
 if(process.env.GITHUB_ACTIONS!=='true'||process.platform!=='win32')throw new Error('Disposable GitHub Windows runner required');
 const exec=promisify(execFile),delay=ms=>new Promise(r=>setTimeout(r,ms));
-const baseline='1.3.91';
+const baseline='1.3.111';
 const {version}=JSON.parse(await fs.readFile('version.json','utf8'));
 const root=await fs.mkdtemp(path.join(os.tmpdir(),'FlickMemo-upgrade-'));
 const installRoot=path.join(root,'application');
@@ -19,9 +19,9 @@ const oldInstaller=path.join(root,'previous.exe');
 const newInstaller=path.resolve(`src-tauri/target/release/bundle/nsis/FlickMemo_${version}_x64-setup.exe`);
 const response=await fetch(`https://github.com/qwertyuiop1229/FlickMemo/releases/download/v${baseline}/FlickMemo-Setup.exe`,{signal:AbortSignal.timeout(60_000)});
 assert.equal(response.status,200);const chunks=[];let size=0;
-for await(const chunk of response.body){size+=chunk.length;if(size>3182418)throw new Error('Baseline installer exceeds known size');chunks.push(chunk);}
+for await(const chunk of response.body){size+=chunk.length;if(size>3282263)throw new Error('Baseline installer exceeds known size');chunks.push(chunk);}
 const bytes=Buffer.concat(chunks);
-verifyAsset(bytes,{bytes:3182418,sha256:'2981e641b28857b540d11fd01a79ec49ffa3d3a1a648651fa58e7766839586c1'});
+verifyAsset(bytes,{bytes:3282263,sha256:'4ab065c42230376f0a526f81b99f475e2d25e1c7bb85c804e84477f6169d55d6'});
 await fs.writeFile(oldInstaller,bytes);
 function installer(file,args){return new Promise((resolve,reject)=>{
  const child=spawn(file,args,{windowsHide:true,stdio:'ignore'});
@@ -80,6 +80,7 @@ try{
  await configureWebview();
  await installer(oldInstaller,['/S',`/D=${installRoot}`]);
  let page=await open();await page.locator('#btn-new').click();await page.locator('#note-title-input').fill('Upgrade regression');await page.locator('#note-body').fill(sentinel);
+ await verifyWindowsColors(page,application.pid,{baseline:true});
  await close(page);
  await installer(newInstaller,['/S','/UPDATE',`/D=${installRoot}`]);
  page=await open();await page.waitForFunction(text=>document.getElementById('note-body').value===text,sentinel,{timeout:20_000});

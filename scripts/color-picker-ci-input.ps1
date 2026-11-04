@@ -1,5 +1,5 @@
 # Only synthetic input/clipboard in a disposable GitHub Windows runner.
-param([ValidateSet('focus','hotkey','choose','preview','cancel','close','clipboard','performance')][string]$Action,[int]$ApplicationProcessId)
+param([ValidateSet('focus','hotkey','choose','preview','cancel','close','clipboard','performance','idle','resources')][string]$Action,[int]$ApplicationProcessId)
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Disposable GitHub Windows runner required'}
 $flickProcess=Get-Process -Id $ApplicationProcessId
@@ -23,6 +23,18 @@ public static class FlickPickerInput {
  [DllImport("user32.dll")] public static extern void mouse_event(uint flags,uint dx,uint dy,uint data,UIntPtr extra);
  [DllImport("user32.dll")] public static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd,uint msg,IntPtr wparam,IntPtr lparam);
+ [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+ [DllImport("user32.dll")] public static extern uint GetGuiResources(IntPtr process,uint flags);
+ public static void MoveFrames(int x,int y) {
+  int left=GetSystemMetrics(76),top=GetSystemMetrics(77),width=GetSystemMetrics(78),height=GetSystemMetrics(79);
+  if(width<2||height<2)throw new Exception("Invalid desktop bounds");
+  for(int i=0;i<240;i++) {
+   uint dx=(uint)Math.Min(Math.Max(65535L*(x+i%80-left)/(width-1),0L),65535L);
+   uint dy=(uint)Math.Min(Math.Max(65535L*(y+i%60-top)/(height-1),0L),65535L);
+   mouse_event(0xC001,dx,dy,0,UIntPtr.Zero);
+   System.Threading.Thread.Sleep(8);
+  }
+ }
  public static IntPtr Find(uint pid,string title) { IntPtr found=IntPtr.Zero;
   EnumWindows((hwnd,param)=>{uint owner;GetWindowThreadProcessId(hwnd,out owner);if(owner==pid){var text=new StringBuilder(256);GetWindowText(hwnd,text,text.Capacity);if(text.ToString()==title){found=hwnd;return false;}}return true;},IntPtr.Zero);return found;
  }
@@ -64,17 +76,14 @@ switch($Action){
   if($Action -eq 'close'){$flickMessage=0x10;$flickKey=0}else{$flickMessage=0x100;$flickKey=0x1B}
   if(![FlickPickerInput]::PostMessage($flickPicker,$flickMessage,[IntPtr]$flickKey,[IntPtr]::Zero)){throw 'Cancel failed'}
  }
- 'performance'{
+ {$_ -in 'performance','idle'}{
   $flickMain=[FlickPickerInput]::Find([uint32]$ApplicationProcessId,'FlickMemo')
   if($flickMain -eq [IntPtr]::Zero){throw 'Main window missing'}
   $flickPoint=New-Object FlickPickerInput+Point;$flickPoint.X=80;$flickPoint.Y=80
   if(![FlickPickerInput]::ClientToScreen($flickMain,[ref]$flickPoint)){throw 'Coordinate conversion failed'}
   $flickProcess.Refresh();$flickCpuBefore=$flickProcess.TotalProcessorTime.TotalMilliseconds;$flickMemoryBefore=$flickProcess.PrivateMemorySize64
   $flickClock=[Diagnostics.Stopwatch]::StartNew()
-  for($flickStep=0;$flickStep -lt 180;$flickStep++){
-   [void][FlickPickerInput]::SetCursorPos($flickPoint.X+($flickStep%80),$flickPoint.Y+($flickStep%60))
-   Start-Sleep -Milliseconds 16
-  }
+  if($Action -eq 'performance'){[FlickPickerInput]::MoveFrames($flickPoint.X,$flickPoint.Y)}else{Start-Sleep -Seconds 3}
   $flickProcess.Refresh();$flickClock.Stop()
   $flickPercent=100*($flickProcess.TotalProcessorTime.TotalMilliseconds-$flickCpuBefore)/$flickClock.Elapsed.TotalMilliseconds
   $flickMetrics=@{singleCoreCpuPercent=[Math]::Round($flickPercent,2);nativePrivateMiB=[Math]::Round($flickProcess.PrivateMemorySize64/1MB,2);privateGrowthMiB=[Math]::Round(($flickProcess.PrivateMemorySize64-$flickMemoryBefore)/1MB,2);durationMs=$flickClock.ElapsedMilliseconds}
@@ -82,5 +91,6 @@ switch($Action){
   $flickMetrics|ConvertTo-Json -Compress
   if($flickPercent -ge 50){throw 'Color picker consumed at least half of one CPU core'}
  }
+ 'resources'{@{gdi=[FlickPickerInput]::GetGuiResources($flickProcess.Handle,0);user=[FlickPickerInput]::GetGuiResources($flickProcess.Handle,1)}|ConvertTo-Json -Compress}
  'clipboard'{@{clipboard=(Get-Clipboard -Raw)} | ConvertTo-Json -Compress}
 }

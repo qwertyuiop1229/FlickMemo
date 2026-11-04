@@ -78,7 +78,7 @@ jobs:
             desktop-reports/upgrade*.json
             desktop-reports/upgrade*.png
             desktop-reports/color-picker-native.png
-            desktop-reports/color-picker-performance.json
+            desktop-reports/color-picker-*.json
           if-no-files-found: error
           retention-days: 7
       - uses: actions/cache/save@v4

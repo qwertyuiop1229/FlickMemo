@@ -4,7 +4,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {waitForAsyncState} from './async-state.mjs';
 const exec=promisify(execFile);
-export async function verifyWindowsColors(page,pid){
+export async function verifyWindowsColors(page,pid,{baseline=false}={}){
  if(process.env.GITHUB_ACTIONS!=='true'||process.platform!=='win32')throw new Error('Disposable GitHub Windows runner required');
  const input=action=>exec('powershell.exe',['-STA','-NoProfile','-File','scripts/color-picker-ci-input.ps1','-Action',action,'-ApplicationProcessId',String(pid)],{windowsHide:true});
  const invoke=(command,args)=>page.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args});
@@ -19,9 +19,19 @@ export async function verifyWindowsColors(page,pid){
  const before=await invoke('desktop_color_status');
  const performance=JSON.parse((await input('performance')).stdout),after=await invoke('desktop_color_status');
  performance.positionUpdates=after.positionUpdates-before.positionUpdates;performance.sampleUpdates=after.sampleUpdates-before.sampleUpdates;
+ performance.motionUpdates=(after.motionUpdates??0)-(before.motionUpdates??0);
  performance.followFps=Number((performance.positionUpdates/(performance.durationMs/1000)).toFixed(1));
- await fs.writeFile('desktop-reports/color-picker-performance.json',JSON.stringify(performance,null,2));
- assert.ok(performance.followFps>=25,JSON.stringify(performance));console.log('Color picker movement performance:',performance);
+ const idleBefore=await invoke('desktop_color_status'),idleStarted=Date.now(),idle=JSON.parse((await input('idle')).stdout),idleAfter=await invoke('desktop_color_status');
+ idle.observationMs=Date.now()-idleStarted;
+ idle.positionUpdates=idleAfter.positionUpdates-idleBefore.positionUpdates;idle.sampleUpdates=idleAfter.sampleUpdates-idleBefore.sampleUpdates;
+ performance.idle=idle;
+ assert.equal(idle.positionUpdates,0,'A stationary cursor must not reposition the picker');
+ assert.ok(idle.sampleUpdates>0&&idle.sampleUpdates<=Math.ceil(idle.observationMs/25)+3,JSON.stringify(idle));
+ assert.ok(idle.singleCoreCpuPercent<5,JSON.stringify(idle));
+ await fs.writeFile(`desktop-reports/color-picker-${baseline?'baseline':'performance'}.json`,JSON.stringify(performance,null,2));
+ assert.ok(performance.followFps>=25,JSON.stringify(performance));
+ if(!baseline){assert.ok(performance.motionUpdates>0,'Real input must use the event-driven motion path');assert.ok(performance.motionUpdates<=Math.ceil(performance.durationMs/15)+2,'Motion messages must be throttled');const prior=JSON.parse(await fs.readFile('desktop-reports/color-picker-baseline.json','utf8'));assert.ok(performance.followFps>=prior.followFps*0.9,JSON.stringify({prior,performance}));assert.ok(performance.singleCoreCpuPercent<=prior.singleCoreCpuPercent*1.5+2,JSON.stringify({prior,performance}));}
+ console.log(`${baseline?'Baseline':'Current'} color picker movement performance:`,performance);
  await input('choose');
  const pickedStatus=await wait(s=>!s.active&&s.recent[0]==='#2A79B4','採色とコピーの完了');
  assert.equal(pickedStatus.error,null,JSON.stringify(pickedStatus));
@@ -39,6 +49,14 @@ export async function verifyWindowsColors(page,pid){
  assert.deepEqual((await invoke('desktop_color_status')).recent,[]);
  await input('hotkey');await new Promise(resolve=>setTimeout(resolve,250));assert.equal((await invoke('desktop_color_status')).active,false);
  await assert.rejects(invoke('desktop_color_settings',{preferences:{...prefs,shortcut:'Ctrl+C'}}));
+ const beforeResources=JSON.parse((await input('resources')).stdout);
+ assert.ok(beforeResources.user>0,JSON.stringify(beforeResources));
+ for(let n=0;n<10;n++){await invoke('desktop_color_pick');await input('cancel');await wait(s=>!s.active,'繰り返し中止');}
+ await new Promise(resolve=>setTimeout(resolve,250));
+ const afterResources=JSON.parse((await input('resources')).stdout);
+ assert.ok(afterResources.gdi<=beforeResources.gdi+3,JSON.stringify({beforeResources,afterResources}));
+ assert.ok(afterResources.user<=beforeResources.user+3,JSON.stringify({beforeResources,afterResources}));
+ await fs.writeFile(`desktop-reports/color-picker-${baseline?'baseline-':''}resources.json`,JSON.stringify({beforeResources,afterResources},null,2));
  await page.evaluate(()=>document.getElementById('ci-color-patch').remove());
  console.log('Native color picker: real global hotkey, synthetic screen pixel, exact clipboard, Esc cancellation, RGB, no-history and shortcut disable PASS');
 }
