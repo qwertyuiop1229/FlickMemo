@@ -43,7 +43,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.113";
+const APP_VERSION = "1.3.114";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {

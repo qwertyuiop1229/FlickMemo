@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc,
     },
     time::{Duration, Instant},
@@ -337,7 +337,7 @@ impl Worker {
                 let _ = self.shared.app.emit_to("main", "desktop-color-started", ());
             }
             self.began = Instant::now();
-            self.update(true);
+            self.update(None);
             InvalidateRect(self.hwnd, std::ptr::null(), 0);
             ShowWindow(self.hwnd, SW_SHOWNORMAL);
             SetForegroundWindow(self.hwnd);
@@ -351,17 +351,28 @@ impl Worker {
         }
         Ok(())
     }
-    unsafe fn update(&mut self, motion: bool) {
-        let mut point: POINT = std::mem::zeroed();
-        if GetCursorPos(&mut point) == 0 {
-            return;
-        }
+    unsafe fn update(&mut self, input: Option<POINT>) {
+        let motion = input.is_some();
+        let point = match input {
+            Some(point) => point,
+            None => {
+                let mut point: POINT = std::mem::zeroed();
+                if GetCursorPos(&mut point) == 0 {
+                    return;
+                }
+                point
+            }
+        };
         let refresh_sample = self.last_sample.elapsed() >= Duration::from_millis(30);
         let moved = !self.follow_valid || point.x != self.point.x || point.y != self.point.y;
         // Input notifications are already rate-limited on the input thread.
         // Gating again here would drop alternating frames when dispatch latency
         // varies, or when a fallback tick ran just before a motion notification.
-        if moved && (motion || self.last_follow.elapsed() >= Duration::from_millis(33)) {
+        if moved
+            && (motion
+                || !self.follow_valid
+                || self.last_follow.elapsed() >= Duration::from_millis(33))
+        {
             let mut monitor: MONITORINFO = std::mem::zeroed();
             monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
             let handle = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
@@ -532,20 +543,40 @@ impl Worker {
 // Dedicated input pump: screen readback/painting must never block a global input hook.
 thread_local! { static INPUT_TARGET: std::cell::Cell<HWND> = const { std::cell::Cell::new(std::ptr::null_mut()) };
 static INPUT_ENABLED: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
-static INPUT_MOTION: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+static INPUT_MOTION: RefCell<Option<Arc<MotionState>>> = const { RefCell::new(None) };
 static INPUT_LAST_MOTION: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) }; }
 struct InputHook {
     thread: u32,
     enabled: Arc<AtomicBool>,
-    motion_pending: Arc<AtomicBool>,
+    motion: Arc<MotionState>,
+}
+struct MotionState {
+    pending: AtomicBool,
+    point: AtomicU64,
+}
+fn pack_point(point: POINT) -> u64 {
+    (point.x as u32 as u64) | ((point.y as u32 as u64) << 32)
+}
+fn unpack_point(point: u64) -> POINT {
+    POINT {
+        x: point as u32 as i32,
+        y: (point >> 32) as u32 as i32,
+    }
 }
 impl InputHook {
     unsafe fn start(hwnd: HWND) -> Result<Self, String> {
         let target = hwnd as usize;
         let enabled = Arc::new(AtomicBool::new(true));
         let hook_enabled = enabled.clone();
-        let motion_pending = Arc::new(AtomicBool::new(false));
-        let hook_motion = motion_pending.clone();
+        let mut point = std::mem::zeroed();
+        if GetCursorPos(&mut point) == 0 {
+            return Err("カーソル位置を確認できません".into());
+        }
+        let motion = Arc::new(MotionState {
+            pending: AtomicBool::new(false),
+            point: AtomicU64::new(pack_point(point)),
+        });
+        let hook_motion = motion.clone();
         let (tx, rx) = mpsc::sync_channel(0);
         std::thread::Builder::new()
             .name("color-input".into())
@@ -584,7 +615,7 @@ impl InputHook {
             .map(|thread| Self {
                 thread,
                 enabled,
-                motion_pending,
+                motion,
             })
     }
 }
@@ -607,25 +638,29 @@ unsafe extern "system" fn mouse_hook(code: i32, w: WPARAM, l: LPARAM) -> LRESULT
         if !target.is_null() && enabled {
             match w as u32 {
                 WM_MOUSEMOVE => {
+                    let point = (*(l as *const MSLLHOOKSTRUCT)).pt;
                     let now = Instant::now();
-                    if INPUT_LAST_MOTION.with(|v| {
+                    let due = INPUT_LAST_MOTION.with(|v| {
                         v.get()
                             .is_none_or(|last| now.duration_since(last) >= FOLLOW_INTERVAL)
-                    }) {
-                        INPUT_MOTION.with(|cell| {
-                            if let Some(pending) = cell.borrow().as_ref() {
-                                // At most one queued motion message, independent
-                                // of mouse polling rate. Never capture or paint here.
-                                if !pending.swap(true, Ordering::Relaxed) {
-                                    if PostMessageW(target, MOTION, 0, 0) != 0 {
-                                        INPUT_LAST_MOTION.with(|v| v.set(Some(now)));
-                                    } else {
-                                        pending.store(false, Ordering::Relaxed);
-                                    }
+                    });
+                    INPUT_MOTION.with(|cell| {
+                        if let Some(motion) = cell.borrow().as_ref() {
+                            // Publish the event's coordinates atomically. Reading
+                            // GetCursorPos on another thread can observe an older
+                            // OS cursor state while this hook is still returning.
+                            motion.point.store(pack_point(point), Ordering::Release);
+                            // At most one queued motion message, independent
+                            // of mouse polling rate. Never capture or paint here.
+                            if due && !motion.pending.swap(true, Ordering::Relaxed) {
+                                if PostMessageW(target, MOTION, 0, 0) != 0 {
+                                    INPUT_LAST_MOTION.with(|v| v.set(Some(now)));
+                                } else {
+                                    motion.pending.store(false, Ordering::Relaxed);
                                 }
                             }
-                        });
-                    }
+                        }
+                    });
                 }
                 WM_LBUTTONDOWN | WM_RBUTTONDOWN => return 1,
                 WM_LBUTTONUP => {
@@ -962,6 +997,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
     {
         WORKER.with(|cell| {
             let Ok(mut cell) = cell.try_borrow_mut() else {
+                if msg == MOTION {
+                    PostMessageW(hwnd, MOTION, 0, 0);
+                }
                 return;
             };
             let Some(worker) = cell.as_mut() else { return };
@@ -970,17 +1008,18 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                     if worker.active {
                         worker.follow_valid = false;
                         worker.last_follow = Instant::now() - Duration::from_secs(1);
-                        worker.update(true);
+                        worker.update(None);
                         InvalidateRect(hwnd, std::ptr::null(), 0);
                     }
                 }
                 MOTION => {
-                    if let Some(hook) = worker.hook.as_ref() {
-                        hook.motion_pending.store(false, Ordering::Relaxed);
-                    }
                     if worker.active {
-                        worker.motion_updates += 1;
-                        worker.update(true);
+                        if let Some(hook) = worker.hook.as_ref() {
+                            hook.motion.pending.store(false, Ordering::Relaxed);
+                            let point = unpack_point(hook.motion.point.load(Ordering::Acquire));
+                            worker.motion_updates += 1;
+                            worker.update(Some(point));
+                        }
                     }
                 }
                 REQUEST => {
@@ -1015,9 +1054,6 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                     }
                 }
                 WM_TIMER => {
-                    if let Some(hook) = worker.hook.as_ref() {
-                        hook.motion_pending.store(false, Ordering::Relaxed);
-                    }
                     if w == 2 {
                         ShowWindow(hwnd, SW_HIDE);
                         KillTimer(hwnd, 2);
@@ -1028,7 +1064,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                         {
                             worker.finish(None);
                         } else {
-                            worker.update(false);
+                            worker.update(None);
                         }
                     }
                 }
@@ -1052,7 +1088,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                                         _ => p.y += 1,
                                     }
                                     SetCursorPos(p.x, p.y);
-                                    worker.update(true);
+                                    worker.update(Some(p));
                                 }
                             }
                             _ => {}
@@ -1195,6 +1231,20 @@ pub fn start(shared: Arc<Shared>) -> Service {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn motion_snapshots_preserve_negative_and_extreme_virtual_desktop_coordinates() {
+        for (x, y) in [(0, 0), (-1920, -1080), (1920, 1080), (i32::MIN, i32::MAX)] {
+            let state = MotionState {
+                pending: AtomicBool::new(false),
+                point: AtomicU64::new(0),
+            };
+            state
+                .point
+                .store(pack_point(POINT { x, y }), Ordering::Release);
+            let actual = unpack_point(state.point.load(Ordering::Acquire));
+            assert_eq!((actual.x, actual.y), (x, y));
+        }
+    }
     #[test]
     fn shortcuts_and_preferences_reject_reserved_or_ambiguous_input() {
         for key in ["Ctrl+Alt+C", "Alt+Shift+0", "Ctrl+Shift+Z"] {
