@@ -1,5 +1,5 @@
 # Only synthetic input/clipboard in a disposable GitHub Windows runner.
-param([ValidateSet('focus','hotkey','choose','preview','cancel','close','clipboard','performance','idle','resources')][string]$Action,[int]$ApplicationProcessId)
+param([ValidateSet('focus','hotkey','choose','preview','cancel','close','clipboard','performance','idle','resources','window')][string]$Action,[int]$ApplicationProcessId)
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Disposable GitHub Windows runner required'}
 $flickProcess=Get-Process -Id $ApplicationProcessId
@@ -25,6 +25,8 @@ public static class FlickPickerInput {
  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd,uint msg,IntPtr wparam,IntPtr lparam);
  [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
  [DllImport("user32.dll")] public static extern uint GetGuiResources(IntPtr process,uint flags);
+ [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+ [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hwnd);
  public static void MoveFrames(int x,int y) {
   int left=GetSystemMetrics(76),top=GetSystemMetrics(77),width=GetSystemMetrics(78),height=GetSystemMetrics(79);
   if(width<2||height<2)throw new Exception("Invalid desktop bounds");
@@ -92,5 +94,9 @@ switch($Action){
   if($flickPercent -ge 50){throw 'Color picker consumed at least half of one CPU core'}
  }
  'resources'{@{gdi=[FlickPickerInput]::GetGuiResources($flickProcess.Handle,0);user=[FlickPickerInput]::GetGuiResources($flickProcess.Handle,1)}|ConvertTo-Json -Compress}
+ 'window'{
+  $flickMain=[FlickPickerInput]::Find([uint32]$ApplicationProcessId,'FlickMemo')
+  @{exists=($flickMain -ne [IntPtr]::Zero);visible=[FlickPickerInput]::IsWindowVisible($flickMain);minimized=[FlickPickerInput]::IsIconic($flickMain);threads=$flickProcess.Threads.Count}|ConvertTo-Json -Compress
+ }
  'clipboard'{@{clipboard=(Get-Clipboard -Raw)} | ConvertTo-Json -Compress}
 }

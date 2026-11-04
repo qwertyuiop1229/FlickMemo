@@ -1,0 +1,43 @@
+name: Replay Windows audit artifact
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: Verified Windows build run to test (matching checkout version)
+        required: true
+        default: '41809494219'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  replay:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'audit: replay Windows artifact')
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: FlickMemo-Windows-unsigned
+          run-id: ${{ inputs.artifact_run_id || '41809494219' }}
+          github-token: ${{ github.token }}
+          path: .
+      - name: Diagnose upgrade and retained window with bounded stages
+        run: node scripts/verify-windows-upgrade.mjs
+        timeout-minutes: 8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: FlickMemo-Windows-audit-replay
+          path: |
+            desktop-reports/upgrade*.json
+            desktop-reports/upgrade*.png
+            desktop-reports/color-picker-*.json
+          retention-days: 7
