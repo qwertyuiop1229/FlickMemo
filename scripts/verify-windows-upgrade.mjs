@@ -86,8 +86,8 @@ async function close(page){
  }
  retiredTargets.add(currentTarget);
  await stage('disconnect CDP',()=>browser.close(),5000);browser=null;
- const process=application;application=null;
- if(process.exitCode===null){const exited=new Promise(resolve=>process.once('exit',resolve));process.kill();await stage('terminate test app',()=>exited,5000);}
+ const endingApplication=application;application=null;
+ if(endingApplication.exitCode===null){const exited=new Promise(resolve=>endingApplication.once('exit',resolve));endingApplication.kill();await stage('terminate test app',()=>exited,5000);}
  await delay(1500);
 }
 const sentinel='Upgrade regression 日本語😀\nPreserve committed notes and active selection.';

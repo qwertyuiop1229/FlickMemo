@@ -544,6 +544,7 @@ impl Worker {
 thread_local! { static INPUT_TARGET: std::cell::Cell<HWND> = const { std::cell::Cell::new(std::ptr::null_mut()) };
 static INPUT_ENABLED: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
 static INPUT_MOTION: RefCell<Option<Arc<MotionState>>> = const { RefCell::new(None) };
+static FOLLOW_MOTION: RefCell<Option<Arc<MotionState>>> = const { RefCell::new(None) };
 static INPUT_LAST_MOTION: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) }; }
 struct InputHook {
     thread: u32,
@@ -612,10 +613,13 @@ impl InputHook {
             .map_err(|_| "画面の選択操作を開始できません")?;
         rx.recv_timeout(Duration::from_secs(2))
             .map_err(|_| "選択操作の準備がタイムアウトしました".to_string())?
-            .map(|thread| Self {
-                thread,
-                enabled,
-                motion,
+            .map(|thread| {
+                FOLLOW_MOTION.with(|slot| *slot.borrow_mut() = Some(motion.clone()));
+                Self {
+                    thread,
+                    enabled,
+                    motion,
+                }
             })
     }
 }
@@ -623,6 +627,15 @@ impl Drop for InputHook {
     fn drop(&mut self) {
         unsafe {
             self.enabled.store(false, Ordering::SeqCst);
+            FOLLOW_MOTION.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                if slot
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &self.motion))
+                {
+                    slot.take();
+                }
+            });
             PostThreadMessageW(self.thread, WM_QUIT, 0, 0);
         }
     }
@@ -995,11 +1008,20 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
     ]
     .contains(&msg)
     {
+        // A native call can reenter window_proc while Worker is borrowed.
+        // Acknowledge motion independently and never requeue it in a tight loop.
+        let input_point = if msg == MOTION {
+            FOLLOW_MOTION.with(|slot| {
+                slot.borrow().as_ref().map(|motion| {
+                    motion.pending.store(false, Ordering::Relaxed);
+                    unpack_point(motion.point.load(Ordering::Acquire))
+                })
+            })
+        } else {
+            None
+        };
         WORKER.with(|cell| {
             let Ok(mut cell) = cell.try_borrow_mut() else {
-                if msg == MOTION {
-                    PostMessageW(hwnd, MOTION, 0, 0);
-                }
                 return;
             };
             let Some(worker) = cell.as_mut() else { return };
@@ -1014,9 +1036,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                 }
                 MOTION => {
                     if worker.active {
-                        if let Some(hook) = worker.hook.as_ref() {
-                            hook.motion.pending.store(false, Ordering::Relaxed);
-                            let point = unpack_point(hook.motion.point.load(Ordering::Acquire));
+                        if let Some(point) = input_point {
                             worker.motion_updates += 1;
                             worker.update(Some(point));
                         }
