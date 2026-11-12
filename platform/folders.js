@@ -5,13 +5,14 @@ export function setupFolders({ doc = document, win = window, notes, select, move
     const inFlight = new Set();
     let renderedState = null;
     const root = doc.createElement('section'); root.className = 'folder-section'; root.setAttribute('aria-label', 'メモのフォルダ');
-    root.innerHTML = '<div class="folder-heading"><span>フォルダ</span><button type="button" class="m3-icon-button" data-add aria-label="フォルダを作成"><span class="material-symbols-outlined">create_new_folder</span></button></div><div class="folder-list"></div>';
+    root.innerHTML = '<details class="folder-browser"><summary aria-label="フォルダを切り替え"><span class="material-symbols-outlined" aria-hidden="true">folder_open</span><span class="folder-current">すべてのメモ</span><span class="folder-total"></span><span class="material-symbols-outlined folder-chevron" aria-hidden="true">expand_more</span></summary><div class="folder-panel"><div class="folder-heading"><span>フォルダで絞り込み</span><button type="button" class="m3-icon-button" data-add aria-label="フォルダを作成" title="フォルダを作成"><span class="material-symbols-outlined" aria-hidden="true">create_new_folder</span></button></div><div class="folder-list"></div></div></details>';
     doc.querySelector('.sidebar-top')?.prepend(root);
     const dialog = doc.createElement('dialog'); dialog.className = 'folder-dialog';
-    dialog.innerHTML = '<form><h2>フォルダを作成</h2><label>フォルダ名<input name="name" maxlength="60" required autocomplete="off"></label><p role="status"></p><div class="folder-dialog-actions"><button type="button" data-cancel class="btn-secondary-sm">キャンセル</button><button type="submit" class="btn-primary-sm">保存</button></div></form>';
+    dialog.setAttribute('aria-labelledby','folder-dialog-title');
+    dialog.innerHTML = '<form><span class="material-symbols-outlined folder-dialog-icon" aria-hidden="true">create_new_folder</span><h2 id="folder-dialog-title">フォルダを作成</h2><p class="folder-dialog-description">メモをまとめて、見つけやすく。</p><label>フォルダ名<input name="name" maxlength="60" required autocomplete="off" placeholder="例：仕事、アイデア"></label><p role="status"></p><div class="folder-dialog-actions"><button type="button" data-cancel class="btn-secondary-sm">キャンセル</button><button type="submit" class="btn-primary-sm">作成</button></div></form>';
     doc.body.append(dialog);
     const form = dialog.querySelector('form'), message = dialog.querySelector('[role=status]');
-    const picker = doc.createElement('label'); picker.className = 'note-folder-picker'; picker.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">folder</span><select aria-label="このメモの保存フォルダ"></select>';
+    const picker = doc.createElement('label'); picker.className = 'note-folder-picker'; picker.title = 'メモの保存フォルダ'; picker.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">folder</span><select aria-label="このメモの保存フォルダ"></select><span class="material-symbols-outlined folder-picker-chevron" aria-hidden="true">expand_more</span>';
     doc.getElementById('editor-toolbar')?.append(picker);
     picker.querySelector('select').onchange = event => move(event.target.value);
     function persist() { try { win.localStorage.setItem(`flickmemo-folders:${owner}`, JSON.stringify({ items, dirty })); } catch { throw Error('フォルダ設定を端末に保存できません'); } }
@@ -35,11 +36,15 @@ export function setupFolders({ doc = document, win = window, notes, select, move
         send(id); render(); select(active);
     }
     function edit(id = null) {
+        root.querySelector('details').open = false;
         editing = id; form.querySelector('h2').textContent = id ? 'フォルダ名を変更' : 'フォルダを作成';
+        form.querySelector('[type=submit]').textContent = id ? '保存' : '作成';
         form.elements.name.value = id ? items[id].name : ''; message.textContent = '';
         dialog.showModal(); form.elements.name.focus();
     }
     root.querySelector('[data-add]').onclick = () => edit(); dialog.querySelector('[data-cancel]').onclick = () => dialog.close();
+    doc.addEventListener('pointerdown', event => { if (!root.contains(event.target)) root.querySelector('details').open = false; });
+    root.addEventListener('keydown', event => { if (event.key === 'Escape') { root.querySelector('details').open = false; root.querySelector('summary').focus(); event.preventDefault(); } });
     form.onsubmit = event => { event.preventDefault(); try { update(editing || `folder_${win.crypto.randomUUID()}`, form.elements.name.value); dialog.close(); } catch (error) { message.textContent = error.message; } };
     const currentItems = () => Object.values(items).filter(f => !f.deletedAt).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
     const effective = note => note.folderId && items[note.folderId] && !items[note.folderId].deletedAt ? note.folderId : '';
@@ -51,6 +56,8 @@ export function setupFolders({ doc = document, win = window, notes, select, move
         // Preserve their DOM and keyboard focus instead of rebuilding every row.
         if (state === renderedState) return;
         renderedState = state;
+        root.querySelector('.folder-current').textContent = active === 'all' ? 'すべてのメモ' : active === 'unfiled' ? '未分類' : items[active]?.name || 'すべてのメモ';
+        root.querySelector('.folder-total').textContent = String(active === 'all' ? values.length : counts.get(active === 'unfiled' ? '' : active) || 0);
         const list = root.querySelector('.folder-list'); list.replaceChildren();
         for (const item of [{ id: 'all', name: 'すべてのメモ' }, { id: 'unfiled', name: '未分類' }, ...folders]) {
             const row = doc.createElement('div'); row.className = 'folder-row';
@@ -58,12 +65,16 @@ export function setupFolders({ doc = document, win = window, notes, select, move
             const icon = doc.createElement('span'); icon.className = 'material-symbols-outlined'; icon.setAttribute('aria-hidden','true'); icon.textContent = item.id === 'all' ? 'description' : item.id === 'unfiled' ? 'folder_open' : 'folder';
             const name = doc.createElement('span'); name.className = 'folder-name'; name.textContent = item.name;
             const count = doc.createElement('span'); count.className = 'folder-count'; count.textContent = String(item.id === 'all' ? values.length : counts.get(item.id === 'unfiled' ? '' : item.id) || 0);
-            button.append(icon, name, count); button.onclick = () => { active = item.id; render(); select(active); }; row.append(button);
+            button.append(icon, name, count); button.onclick = () => { active = item.id; root.querySelector('details').open = false; render(); select(active); }; row.append(button);
             if (!['all', 'unfiled'].includes(item.id)) {
+                const tools = doc.createElement('details'); tools.className = 'folder-actions';
+                const more = doc.createElement('summary'); more.setAttribute('aria-label',`${item.name}: フォルダの操作`); more.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">more_horiz</span>'; tools.append(more);
+                const actions = doc.createElement('div'); actions.className = 'folder-row-actions'; tools.append(actions); row.append(tools);
+                tools.addEventListener('toggle',()=>{if(tools.open)for(const other of list.querySelectorAll('.folder-actions'))if(other!==tools)other.open=false;});
                 for (const [action, glyph, label] of [['rename', 'edit', '名前を変更'], ['delete', 'delete', 'フォルダを削除']]) {
                     const control = doc.createElement('button'); control.type = 'button'; control.className = 'folder-action'; control.setAttribute('aria-label', `${item.name}: ${label}`);
-                    const symbol = doc.createElement('span'); symbol.className = 'material-symbols-outlined'; symbol.textContent = glyph; control.append(symbol);
-                    control.onclick = () => { if (action === 'rename') edit(item.id); else if (win.confirm(`「${item.name}」を削除しますか？ メモは消えず「未分類」に移ります。`)) { try { update(item.id, item.name, true); } catch (error) { notify(error.message); } } }; row.append(control);
+                    const symbol = doc.createElement('span'); symbol.className = 'material-symbols-outlined'; symbol.setAttribute('aria-hidden','true'); symbol.textContent = glyph; control.append(symbol,doc.createTextNode(label));
+                    control.onclick = () => { tools.open=false; if (action === 'rename') edit(item.id); else if (win.confirm(`「${item.name}」を削除しますか？ メモは消えず「未分類」に移ります。`)) { try { update(item.id, item.name, true); } catch (error) { notify(error.message); } } }; actions.append(control);
                 }
             }
             list.append(row);

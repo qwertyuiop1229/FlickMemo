@@ -1,8 +1,8 @@
 import { reconcileNote } from '../noteSync.js';
 import assert from 'node:assert/strict';
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator, signInAnonymously } from 'firebase/auth';
-import { getDatabase, connectDatabaseEmulator, ref, set, get, update, query, orderByChild, limitToLast, goOffline, runTransaction, onValue } from 'firebase/database';
+import { getAuth, connectAuthEmulator, signInAnonymously, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { getDatabase, connectDatabaseEmulator, ref, set, get, update, query, orderByChild, limitToLast, goOffline, goOnline, runTransaction, onValue } from 'firebase/database';
 if (process.env.FIREBASE_DATABASE_EMULATOR_HOST !== '127.0.0.1:9000' || process.env.FIREBASE_AUTH_EMULATOR_HOST !== '127.0.0.1:9099') throw new Error('Only isolated local emulators may be used');
 const apps = [];
 let exitCode = 0;
@@ -12,7 +12,7 @@ async function client(name, login = true) {
     const auth = getAuth(app); connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
     const db = getDatabase(app); connectDatabaseEmulator(db, '127.0.0.1', 9000);
     const uid = login ? (await signInAnonymously(auth)).user.uid : null;
-    return { db, uid };
+    return { db, uid, auth };
 }
 try {
     const a = await client('a'), b = await client('b'), guest = await client('guest', false);
@@ -73,6 +73,25 @@ try {
     console.log('Note transactions: independent folder/body merge, stale body rejection, folder account isolation PASS');
     console.log('Recovery safety: Firebase empty-object roundtrip, new automatic backup rejection, legacy backup edits and owner isolation PASS');
     console.log('Database emulator: own-account CRUD, cross-account/guest rejection, atomic history deletion, newest-50 visibility, note preservation PASS');
+    const pwa=await client('resume-pwa',false),windows=await client('resume-windows',false);
+    const email=`resume-${Date.now()}@example.test`,password='synthetic-emulator-only-123';
+    const account=await createUserWithEmailAndPassword(pwa.auth,email,password);
+    await signInWithEmailAndPassword(windows.auth,email,password);
+    const resumePath=`users/${account.user.uid}/notes/resume-test`,winRef=ref(windows.db,resumePath);
+    await set(ref(pwa.db,resumePath),{id:'resume-test',body:'old cached body'});
+    let unwatchResume;
+    await new Promise((resolve,reject)=>{unwatchResume=onValue(winRef,s=>{if(s.val()?.body==='old cached body')resolve();},reject);});
+    goOffline(windows.db);
+    await set(ref(pwa.db,resumePath),{id:'resume-test',body:'latest PWA body'});
+    assert.equal((await get(winRef)).val().body,'old cached body','An active Firebase listener can return its old cache from get()');
+    await new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>{stop();reject(new Error('Fresh server content was not received after resume'));},10000);
+        const stop=onValue(winRef,s=>{if(s.val()?.body==='latest PWA body'){clearTimeout(timer);stop();resolve();}},reject);
+        goOnline(windows.db);
+    });
+    unwatchResume();
+    assert.equal((await get(winRef)).val().body,'latest PWA body');
+    console.log('Resume synchronization: same-account PWA edit while Windows is offline, cached get(), fresh body after reconnect PASS');
 } catch (error) {
     exitCode = 1;
     console.error(error);

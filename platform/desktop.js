@@ -46,7 +46,7 @@ export const desktop = {
     }
 };
 
-export async function setupDesktop({ prepareClose, notify }) {
+export async function setupDesktop({ prepareClose, notify, resume = () => {} }) {
     let closing = false;
     await listen('desktop-close-requested', async () => {
         if (closing) return;
@@ -72,7 +72,7 @@ export async function setupDesktop({ prepareClose, notify }) {
     if(!diagnostic){
         void setupStartup({ api: desktop, notify });
         const updates=createDesktopUpdates({api:desktop,prepareClose,notify});
-        await listen('desktop-window-opened',()=>updates.check());
+        await listen('desktop-window-opened',()=>{ void resume(); void updates.check(); });
         void updates.check();
     }
     if (diagnostic) {

@@ -127,3 +127,18 @@ test('another tab cannot replace or delete a protected recovery through a stale 
  await other.delete('alice',original.id,false,true);
  assert.equal(await first.get('alice',original.id),undefined);
 });
+
+test('separating a legacy recovery is atomic, account-scoped and never overwrites an existing ID',async()=>{
+ const store=new NoteStore(new IDBFactory());const note={id:'original',body:'valuable old draft',conflictOf:'original'};
+ await store.putRecovery('alice',note);
+ assert.equal(await store.separateRecovery('bob','original','backup'),null);
+ await store.put('alice',{id:'occupied',body:'keep me'});
+ await assert.rejects(store.separateRecovery('alice','original','occupied'));
+ assert.equal((await store.get('alice','original')).note.body,note.body);
+ await store.separateRecovery('alice','original','backup');
+ assert.equal(await store.get('alice','original'),undefined);
+ assert.equal((await store.get('alice','backup')).note.body,note.body);
+ assert.equal((await store.get('alice','backup')).localRecovery,true);
+ await store.put('alice',{id:'original',body:'fresh cloud content'});
+ assert.equal((await store.get('alice','original')).note.body,'fresh cloud content');
+});

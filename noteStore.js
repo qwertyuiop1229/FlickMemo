@@ -87,6 +87,23 @@ export class NoteStore {
             };
         });
     }
+    async separateRecovery(owner, id, replacementId) {
+        // Old builds could protect the original ID itself. Keep its draft under
+        // a separate local ID so that the original can receive cloud updates.
+        let replacement = null;
+        await this.write(store => {
+            const request = store.get([owner,id]);
+            request.onsuccess = () => {
+                const row = request.result;
+                if (!row?.localRecovery || row.note?.conflictOf !== id) return;
+                const title = row.note.title?.endsWith('（競合の控え）') ? row.note.title : `${row.note.title || 'メモ'}（競合の控え）`;
+                replacement = {...row,id:replacementId,note:{...row.note,id:replacementId,title},base:null,pending:false,pendingFields:[]};
+                store.add(replacement);
+                store.delete([owner,id]);
+            };
+        });
+        return replacement;
+    }
     async acknowledge(owner, note, fields = null) {
         let acknowledged = false;
         await this.write(store => {

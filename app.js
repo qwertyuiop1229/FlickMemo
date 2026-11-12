@@ -32,6 +32,8 @@ import {
     update,
     onValue,
     runTransaction,
+    goOffline,
+    goOnline,
     off
 } from "firebase/database";
 
@@ -44,7 +46,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.118";
+const APP_VERSION = "1.3.119";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -63,6 +65,7 @@ const auth = getAuth(app);
 const db = getDatabase(app);
 let currentDbRef = null;
 let stopSyncConnection = null, remoteConnected = false;
+let resumeSyncTask = null, resumeSyncKey = '', lastResumeSync = -Infinity;
 const isDesktop = !!window.__TAURI_INTERNALS__;
 const localWrites = new WriteBarrier();
 const desktopReady = isDesktop ? import('./platform/desktop.js') : Promise.resolve(null);
@@ -219,11 +222,40 @@ function handleSyncError(error) {
 }
 
 function refreshCloudStatus() {
+    const syncState = document.getElementById('sync-setting-state');
+    if (syncState) {
+        syncState.textContent = !currentUserId ? 'ログインが必要' : !remoteConnected ? '接続待ち' : pendingLocalIds.size || pendingDeleteIds.size ? '同期中' : '接続済み';
+        syncState.classList.toggle('sync-state-muted', !currentUserId || !remoteConnected);
+        document.getElementById('sync-setting-description').textContent = currentUserId ? 'このアカウントのメモを、ほかの端末と同期します。' : 'Googleアカウントでログインすると、端末間で同期できます。';
+    }
     if (localRecoveryIds.has(activeNoteId)) setStatus('synced', '復旧メモ（この端末のみ）');
     else if (!currentUserId) setStatus('synced', 'ローカル保存済み');
     else if (!remoteConnected) setStatus('offline', '端末に保存済み・再接続待ち');
     else if (pendingLocalIds.size || pendingDeleteIds.size) setStatus('saving', '端末に保存済み・クラウド同期待ち');
     else setStatus('synced', 'クラウド同期完了');
+}
+function resumeCloudSync() {
+    const owner = currentUserId, generation = authGeneration, key = `${generation}:${owner}`;
+    if (!owner || !currentDbRef) return Promise.resolve(false);
+    if (transferManager?.isSending || transferManager?.incomingFileInfo) return Promise.resolve(false);
+    if (resumeSyncKey === key && resumeSyncTask) return resumeSyncTask;
+    if (resumeSyncKey === key && Date.now() - lastResumeSync < 2000) return Promise.resolve(false);
+    resumeSyncKey = key;
+    const task = (async () => {
+        handleNoteSave();
+        await localWrites.drain();
+        if (owner !== currentUserId || generation !== authGeneration) return false;
+        // WebView2 suspension can leave a half-open socket and an old SDK cache.
+        // get() returns the active listener's cache, so reconnect the transport
+        // and let the existing three-way reconciliation process server updates.
+        lastResumeSync = Date.now(); remoteConnected = false;
+        setStatus('saving','クラウドに再接続しています…');
+        goOffline(db); goOnline(db);
+        return true;
+    })().catch(error => { if(owner===currentUserId&&generation===authGeneration)handleSyncError(error); return false; });
+    resumeSyncTask = task;
+    task.finally(() => { if(resumeSyncTask===task)resumeSyncTask=null; });
+    return task;
 }
 const localRecoveryIds = new Set(), recoveryNotices = new Set();
 async function recoverDraft(note, owner = currentUserId, inPlace = false) {
@@ -653,7 +685,7 @@ function showToast(msg, duration = 4000, actions = null) {
     setTimeout(dismiss, autoDuration);
 }
 
-window.addEventListener('online', () => setStatus('saving', 'オンライン復帰・同期中...'));
+window.addEventListener('online', () => { void resumeCloudSync(); });
 window.addEventListener('offline', () => setStatus('offline', 'ローカル保存済み'));
 
 function renderAppVersion() {
@@ -1151,7 +1183,10 @@ async function loadLocalNotes() {
     const owner = cacheOwner();
     const generation = ++cacheGeneration;
     try {
-        const entries = await noteStore.entries(owner);
+        let entries = await noteStore.entries(owner);
+        const protectedOriginals = entries.filter(row => row.localRecovery && row.note?.conflictOf === row.id);
+        for (const row of protectedOriginals) await localWrites.track(`${owner}:${row.id}`,noteStore.separateRecovery(owner,row.id,'note_'+crypto.randomUUID()));
+        if (protectedOriginals.length) entries = await noteStore.entries(owner);
         // Older versions may have left recursive backup writes in the outbox.
         // Quarantine those drafts locally before any reconnect replay.
         await Promise.all(entries.filter(row => row.pending && !row.localRecovery && validNote(row.note) && row.note.conflictOf).map(async row => {
@@ -2723,7 +2758,8 @@ btnSettingsTrigger.onclick = () => {
             btnSwitch.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;">login</span> ログイン`;
             btnSwitch.onclick = switchGoogleAccount;
         }
-        if (settingsNavSystem) settingsNavSystem.classList.add('hidden');
+        // Windows startup is a device preference, also available to guests.
+        if (settingsNavSystem) settingsNavSystem.classList.toggle('hidden', !isDesktop);
         if (settingsNavAccount) settingsNavAccount.click();
     } else {
         if (accountLabel) accountLabel.textContent = 'アカウント管理';
@@ -3303,7 +3339,7 @@ onAuthStateChanged(auth, async user => {
                     if (!isMobile) {
                         const validNotes = Object.values(currentNotes)
                             .filter(n => !n.deletedAt)
-                            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+                            .sort((a, b) => Number(localRecoveryIds.has(a.id)) - Number(localRecoveryIds.has(b.id)) || (b.updatedAt || 0) - (a.updatedAt || 0));
 
                         if (validNotes.length > 0) {
                             selectNote(validNotes[0].id, false, true);
@@ -3395,6 +3431,7 @@ document.addEventListener('visibilitychange', () => {
         handleNoteSave(); // P2P は切断しない
     } else if (document.visibilityState === 'visible') {
         checkPendingExtensionNotes();
+        if (isDesktop) void resumeCloudSync();
     }
 });
 
@@ -3418,7 +3455,7 @@ historyButton.onclick = () => openHistoryPanel().catch(error => showToast(String
 setupColorPicker({ win: window, doc: document, isDesktop, native: desktopReady.then(module => module?.desktop), notify: showToast });
 if (isDesktop) {
     desktopReady.then(async ({ setupDesktop, desktop }) => {
-        await setupDesktop({ notify: showToast, prepareClose: async () => {
+        await setupDesktop({ notify: showToast, resume: resumeCloudSync, prepareClose: async () => {
             if (transferManager?.isSending || transferManager?.incomingFileInfo) {
                 if (!window.confirm('ファイル転送中です。転送を中止して画面を閉じますか？')) throw new Error('画面を開いたまま転送を続けます');
                 transferManager.stopDevicePresence();

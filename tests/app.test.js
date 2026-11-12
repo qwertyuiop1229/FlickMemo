@@ -36,7 +36,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     window.open = url => { calls.opened.push(url); return calls.popup; };
     Object.defineProperty(window, 'crypto', { value: webcrypto });
     Object.defineProperty(window.navigator, 'userAgent', { value: edge ? 'Windows Edg/130.0' : 'Windows Chrome/130.0' });
-    const calls = { opened: [], credentials: [], tokens: 0, popup: { closed: false }, signedOut: 0, writes:[], echoes:[] };
+    const calls = { opened: [], credentials: [], tokens: 0, popup: { closed: false }, signedOut: 0, writes:[], echoes:[], reconnects:[] };
     const session = {};
     let authCallback;
     const auth = { currentUser: null };
@@ -54,6 +54,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     };
     const snapshots = new Map(), remoteValues = new Map();
     const dbApi = { getDatabase: () => ({}), ref: (_, path) => path,
+        goOffline:()=>calls.reconnects.push('offline'),goOnline:()=>calls.reconnects.push('online'),
         set: async (path,value) => {calls.writes.push({path,value});}, remove: async path => {calls.writes.push({path,deleted:true});}, get: async path => ({ val: () => remoteValues.get(path) ?? null }),
         runTransaction: async (path, callback) => {
             const returned = callback(structuredClone(remoteValues.get(path) ?? null));
@@ -105,7 +106,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     const context = vm.createContext(sandbox);
     const source = await fs.readFile(new URL('../app.js', import.meta.url), 'utf8');
     const module = new vm.SourceTextModule(source + `
-        export { recoverDraft, createNewNote, safeCloudWrite, syncDeleteNote, scheduleSaveNote, flushPendingSave, loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
+        export { resumeCloudSync, recoverDraft, createNewNote, safeCloudWrite, syncDeleteNote, scheduleSaveNote, flushPendingSave, loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
         export function changeTestOwner(uid){currentUserId=uid;remoteConnected=true;auth.currentUser=uid?{uid}:null;isGuestMode=!uid;++authGeneration;currentNotes={};}
         export function setNotes(notes) { currentNotes = notes; }
         export function notesForTest() { return currentNotes; }
@@ -330,5 +331,32 @@ test('a stale tab cannot upload or remotely delete an ID protected by another ta
   await app.api.safeCloudWrite(original.id);assert.equal(app.calls.writes.length,0);
   assert.equal(app.api.notesForTest().memo.body,recovery.body);
   assert.equal((await app.store.get('alice','memo')).note.body,recovery.body);
+ }finally{app.close()}
+});
+
+test('a legacy protected original is preserved separately and can receive the latest cloud body',async()=>{
+ const original={id:'original',body:'old Windows body',title:'memo',conflictOf:'original',updatedAt:9999999999999};
+ const app=await setup({cachedRows:[{owner:'alice',id:original.id,note:original,localRecovery:true,pending:false}]});
+ try{
+  await app.login({uid:'alice',displayName:'Test'});
+  await app.snapshot('users/alice/notes',{original:{id:'original',body:'latest PWA body',title:'memo',updatedAt:20}});
+  assert.equal(app.api.notesForTest().original.body,'latest PWA body');
+  const backups=Object.values(app.api.notesForTest()).filter(n=>n.conflictOf==='original');
+  assert.equal(backups.length,1);assert.notEqual(backups[0].id,'original');assert.equal(backups[0].body,original.body);
+  assert.equal(app.document.getElementById('note-body').value,'latest PWA body');
+  assert.equal((await app.store.get('alice',backups[0].id)).localRecovery,true);
+ }finally{app.close()}
+});
+
+test('resume reconnects once, adopts fresh server notes and does not run for guest mode',async()=>{
+ const app=await setup();
+ try{
+  assert.equal(await app.api.resumeCloudSync(),false);await app.login({uid:'alice',displayName:'Test'});
+  await app.snapshot('users/alice/notes',{memo:{id:'memo',body:'cached body',title:'memo',updatedAt:1}});
+  await Promise.all([app.api.resumeCloudSync(),app.api.resumeCloudSync(),app.api.resumeCloudSync()]);
+  assert.deepEqual(app.calls.reconnects,['offline','online']);
+  await app.snapshot('users/alice/notes',{memo:{id:'memo',body:'new PWA body',title:'memo',updatedAt:2}});
+  assert.equal(app.document.getElementById('note-body').value,'new PWA body');
+  assert.equal(app.calls.writes.length,0);
  }finally{app.close()}
 });
