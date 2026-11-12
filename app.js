@@ -1,6 +1,7 @@
 import { directorySink } from './streamingFiles.js';
 import { setupFolders } from './platform/folders.js';
-import { reconcileNote } from './noteSync.js';
+import { reconcileNote, sameValue } from './noteSync.js';
+import { setupShareQr } from './platform/shareQr.js';
 import { uniqueArchiveName } from './archiveNames.js';
 import { copyClipboardFile } from './clipboardFiles.js';
 import { validNote } from './noteData.js';
@@ -43,7 +44,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.115";
+const APP_VERSION = "1.3.116";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -218,23 +219,43 @@ function handleSyncError(error) {
 }
 
 function refreshCloudStatus() {
-    if (!currentUserId) setStatus('synced', 'ローカル保存済み');
+    if (localRecoveryIds.has(activeNoteId)) setStatus('synced', '復旧メモ（この端末のみ）');
+    else if (!currentUserId) setStatus('synced', 'ローカル保存済み');
     else if (!remoteConnected) setStatus('offline', '端末に保存済み・再接続待ち');
     else if (pendingLocalIds.size || pendingDeleteIds.size) setStatus('saving', '端末に保存済み・クラウド同期待ち');
     else setStatus('synced', 'クラウド同期完了');
 }
-function recoverDraft(note, owner = currentUserId) {
-    if (!owner || owner !== currentUserId || !note) return;
+const localRecoveryIds = new Set(), recoveryNotices = new Set();
+async function recoverDraft(note, owner = currentUserId, inPlace = false) {
+    if (!owner || owner !== currentUserId || !note) return false;
+    const generation = authGeneration;
+    if (!note.body?.trim() && !note.title?.trim()) return true;
+    const localOnly = inPlace || !!note.conflictOf || localRecoveryIds.has(note.id);
     const title = `${note.title || 'メモ'}（競合の控え）`;
-    if (Object.values(currentNotes).some(value => value.conflictOf === note.id && value.body === note.body && value.title === title && value.folderId === note.folderId && value.pinned === note.pinned)) return;
-    const backup = { ...note, id: 'note_' + crypto.randomUUID(), title: `${note.title || 'メモ'}（競合の控え）`, conflictOf: note.id, updatedAt: Date.now() };
-    currentNotes[backup.id] = backup; saveLocalNote(backup); syncSaveNote(backup);
-    showToast('別の端末での変更を反映しました。この端末の未同期内容は「競合の控え」に残しました。', 7000);
+    const existing = Object.values(currentNotes).find(value => localRecoveryIds.has(value.id) && value.conflictOf === note.id && value.body === note.body && value.title === title && sameValue(value.folderId,note.folderId) && sameValue(value.pinned,note.pinned) && sameValue(value.codeCollapsed,note.codeCollapsed));
+    const recoveryBytes = Object.values(currentNotes).reduce((bytes,value)=>bytes+(localRecoveryIds.has(value.id)?((value.body?.length||0)+(value.title?.length||0))*2:0),0);
+    if (!localOnly && !existing && (localRecoveryIds.size >= 100 || recoveryBytes + ((note.body?.length||0)+(note.title?.length||0))*2 > 16*1024*1024 || Object.values(currentNotes).filter(value => localRecoveryIds.has(value.id) && value.conflictOf === note.id).length >= 10)) {
+        setStatus('offline','同期を保留しました（端末の内容を確認してください）');
+        if (!recoveryNotices.has(note.id)) { recoveryNotices.add(note.id); showToast('復旧メモが多いため、このメモの自動同期を止めています。端末に残した内容を確認してください。',7000); }
+        return false;
+    }
+    const backup = localOnly ? { ...(currentNotes[note.id] || note), conflictOf: note.conflictOf || note.id } : existing || { ...note, id: 'note_' + crypto.randomUUID(), title, conflictOf: note.id, updatedAt: Date.now() };
+    delete backup.deletedAt;
+    localRecoveryIds.add(backup.id); pendingLocalIds.delete(backup.id); currentNotes[backup.id] = backup;
+    try { const stored=await localWrites.track(`${owner}:${backup.id}`, noteStore.putRecovery(owner, backup)); if(owner===currentUserId&&generation===authGeneration&&sameValue(currentNotes[backup.id],backup))currentNotes[backup.id]=stored; }
+    catch(error) { localSaveError(error); return false; }
+    if (owner !== currentUserId || generation !== authGeneration) return false;
+    if (!recoveryNotices.has(note.id)) {
+        recoveryNotices.add(note.id);
+        showToast('変更内容をこの端末の復旧メモに保存しました。確認してから新しいメモとして同期できます。',7000,[{label:'控えを開く',onClick:()=>{if(owner===currentUserId&&generation===authGeneration&&currentNotes[backup.id])selectNote(backup.id);}}]);
+    }
+    renderList(searchInput.value);
+    return !localOnly;
 }
 const cloudWrites = new Map();
 function safeCloudWrite(id, fields = null) {
     const owner = currentUserId, generation = authGeneration;
-    if (!owner || !currentNotes[id]) return Promise.resolve(false);
+    if (!owner || !currentNotes[id] || localRecoveryIds.has(id)) return Promise.resolve(false);
     if (!remoteConnected) { refreshCloudStatus(); return Promise.resolve(false); }
     const key = `${generation}:${owner}:${id}`;
     const fieldNames = fields ? Object.keys(fields) : null;
@@ -250,7 +271,7 @@ function safeCloudWrite(id, fields = null) {
 async function writeNoteTransaction(id, fieldNames = null) {
     const owner = currentUserId, generation = authGeneration;
     const note = currentNotes[id] ? structuredClone(currentNotes[id]) : null;
-    if (!owner || !note) return false;
+    if (!owner || !note || localRecoveryIds.has(id)) return false;
     if (!remoteConnected) { refreshCloudStatus(); return false; }
     const target = ref(db, `users/${owner}/notes/${id}`);
     let release = null, readTimer = null;
@@ -264,7 +285,7 @@ async function writeNoteTransaction(id, fieldNames = null) {
             release = onValue(target, () => resolve(), reject);
         });
         clearTimeout(readTimer);
-        if (owner !== currentUserId || generation !== authGeneration || !currentNotes[id] || pendingDeleteIds.has(id)) return false;
+        if (owner !== currentUserId || generation !== authGeneration || !currentNotes[id] || pendingDeleteIds.has(id) || localRecoveryIds.has(id)) return false;
         const result = await runTransaction(target, remote => {
             if (remote == null) return row?.base ? undefined : note;
             if (!validNote(remote, id)) return;
@@ -274,10 +295,12 @@ async function writeNoteTransaction(id, fieldNames = null) {
         }, { applyLocally: false });
         if (!result.committed) {
             if (owner === currentUserId && generation === authGeneration && currentNotes[id] && !pendingDeleteIds.has(id)) {
-                recoverDraft(note, owner);
-                if (JSON.stringify(currentNotes[id]) === JSON.stringify(note)) {
-                    const remote = result.snapshot.val(); pendingLocalIds.delete(id);
-                    if (validNote(remote,id)) { currentNotes[id] = remote; saveLocalNote(remote,false); if (activeNoteId === id) selectNote(id,false,true); }
+                const remote = result.snapshot.val();
+                if (!await recoverDraft(note, owner, !validNote(remote,id))) return false;
+                if (owner !== currentUserId || generation !== authGeneration) return false;
+                if (sameValue(currentNotes[id],note)) {
+                    pendingLocalIds.delete(id);
+                    if (validNote(remote,id)) { currentNotes[id] = remote; saveLocalNote(remote,false,note); if (activeNoteId === id) selectNote(id,false,true); }
                     else { delete currentNotes[id]; deleteLocalNote(id,false); }
                     renderList(searchInput.value);
                 }
@@ -285,7 +308,7 @@ async function writeNoteTransaction(id, fieldNames = null) {
             return false;
         }
         const acknowledged = await noteStore.acknowledge(owner, note, Object.fromEntries(writtenFields.map(key => [key, note[key]])));
-        if (acknowledged && currentUserId === owner && generation === authGeneration && JSON.stringify(currentNotes[id]) === JSON.stringify(note)) {
+        if (acknowledged && currentUserId === owner && generation === authGeneration && sameValue(currentNotes[id],note)) {
             pendingLocalIds.delete(id);
             // A no-op transaction need not emit another parent onValue event.
             // Adopt the committed merge only while this exact draft is unchanged.
@@ -294,7 +317,7 @@ async function writeNoteTransaction(id, fieldNames = null) {
                 currentNotes[id] = committed;
                 await saveLocalNote(committed, false);
                 if (owner === currentUserId && generation === authGeneration) {
-                    if (activeNoteId === id && JSON.stringify(currentNotes[id]) === JSON.stringify(committed)) selectNote(id, false, true);
+                    if (activeNoteId === id && sameValue(currentNotes[id],committed)) selectNote(id, false, true);
                     renderList(searchInput.value);
                 }
             }
@@ -309,6 +332,7 @@ function syncUpdateNoteFields(id, fields) { return fields ? safeCloudWrite(id, f
 
 function syncDeleteNote(id) {
     if (!currentUserId || !id) return;
+    if (localRecoveryIds.has(id)) return Promise.resolve(true);
     const noteRef = ref(db, `users/${currentUserId}/notes/${id}`);
     const owner = currentUserId;
     return remove(noteRef).then(() => {
@@ -357,6 +381,16 @@ const searchInput = document.getElementById('search-input');
 const authLoading = document.getElementById('auth-loading');
 const authButtons = document.getElementById('auth-buttons');
 const editorToolbar = document.getElementById('editor-toolbar');
+const recoveryTools = document.createElement('div'); recoveryTools.className = 'recovery-tools hidden';
+recoveryTools.innerHTML = '<span>この端末の復旧メモ</span><button type="button" class="btn-secondary-sm">新しいメモとして同期</button>';
+editorToolbar.after(recoveryTools);
+recoveryTools.querySelector('button').onclick = () => {
+    const draft = currentNotes[activeNoteId];
+    if (!draft || !localRecoveryIds.has(draft.id)) return;
+    const fields = { body: draft.body, title: (draft.title || '').replace(/（競合の控え）$/, ''), folderId: folders.effective(draft), pinned: !!draft.pinned, codeCollapsed: draft.codeCollapsed || {} };
+    createNewNote(false); scheduleSaveNote(activeNoteId, fields); selectNote(activeNoteId,false,true); resetTextHistory(fields.body); flushPendingSave(activeNoteId);
+    showToast('新しいメモとして端末に保存しました。接続中はクラウドへ同期します。');
+};
 const charCount = document.getElementById('char-count');
 const dateDisplay = document.getElementById('date-display');
 const btnPin = document.getElementById('btn-pin');
@@ -1108,11 +1142,20 @@ async function loadLocalNotes() {
     const generation = ++cacheGeneration;
     try {
         const entries = await noteStore.entries(owner);
+        // Older versions may have left recursive backup writes in the outbox.
+        // Quarantine those drafts locally before any reconnect replay.
+        await Promise.all(entries.filter(row => row.pending && !row.localRecovery && validNote(row.note) && row.note.conflictOf).map(async row => {
+            row.localRecovery = true; row.pending = false;
+            try { row.note = await localWrites.track(`${owner}:${row.id}`,noteStore.putRecovery(owner,row.note)); }
+            catch(error) { localSaveError(error); }
+        }));
         const notes = entries.map(row => row.note).filter(note => validNote(note));
         if (generation !== cacheGeneration || owner !== cacheOwner()) return;
         currentNotes = Object.fromEntries(notes.map(note => [note.id, note]));
+        localRecoveryIds.clear();
+        for (const row of entries) if (row.localRecovery && validNote(row.note)) localRecoveryIds.add(row.id);
         folders.setOwner(owner);
-        pendingLocalIds = new Set(entries.filter(row => row.pending && validNote(row.note)).map(row => row.id));
+        pendingLocalIds = new Set(entries.filter(row => row.pending && !row.localRecovery && validNote(row.note)).map(row => row.id));
         pendingDeleteIds = new Set(entries.filter(row => row.pending && row.note === null).map(row => row.id));
         renderList(searchInput.value);
         const restore = isDesktop ? localStorage.getItem(`desktop-active:${owner}`) : null;
@@ -1120,22 +1163,26 @@ async function loadLocalNotes() {
         else if (isGuestMode) initAutoNote();
     } catch (error) { localSaveError(error); }
 }
-function saveLocalNote(note, pending = true) {
+function saveLocalNote(note, pending = true, expectedPending = undefined) {
     if (!note?.id) return;
+    pending = pending && !localRecoveryIds.has(note.id);
     if (pending && currentUserId) pendingLocalIds.add(note.id);
     const owner = cacheOwner(), snapshot = structuredClone(note);
-    return localWrites.track(`${owner}:${note.id}`, noteStore.put(owner, snapshot, pending && !!currentUserId)).then(dirty => {
-        if (dirty === false && owner === cacheOwner() && JSON.stringify(currentNotes[note.id]) === JSON.stringify(snapshot)) pendingLocalIds.delete(note.id);
+    return localWrites.track(`${owner}:${note.id}`, noteStore.put(owner, snapshot, pending && !!currentUserId, expectedPending)).then(dirty => {
+        if (dirty === false && owner === cacheOwner() && sameValue(currentNotes[note.id],snapshot)) pendingLocalIds.delete(note.id);
+        if (owner === cacheOwner() && activeNoteId === note.id && localRecoveryIds.has(note.id)) setStatus('synced','復旧メモをこの端末に保存済み');
     }).catch(localSaveError);
 }
 function deleteLocalNote(id, pending = true) {
     if (!id) return;
+    pending = pending && !localRecoveryIds.has(id);
     pendingLocalIds.delete(id);
     if (pending && currentUserId) pendingDeleteIds.add(id);
     localWrites.track(`${cacheOwner()}:${id}`, noteStore.delete(cacheOwner(), id, pending && !!currentUserId)).catch(localSaveError);
 }
 async function clearLocalData() {
     ++cacheGeneration;
+    localRecoveryIds.clear(); recoveryNotices.clear();
     clearTimeout(syncDebounceTimer);
     syncDebounceTimer = null;
     lastSyncedData = {}; pendingEditFields.clear();
@@ -1148,6 +1195,7 @@ async function clearLocalData() {
     pendingDeleteId = null;
     lastMovedToTrashNote = null;
     noteBody.value = '';
+    recoveryTools.classList.add('hidden');
     noteTitleInput.value = '';
     noteBody.disabled = true;
     noteTitleInput.disabled = true;
@@ -1160,6 +1208,7 @@ async function clearLocalData() {
     closeImagePreviewModal();
     clearTransferHistoryUI();
     stagedFilesQueue = []; receiveDirectory = null;
+    updateRoomUI(null);
     ++receiveChoiceEpoch;
     receiveTools.querySelector('[data-directory]').disabled = !canSelectReceiveDirectory;
     receiveHint.textContent = receiveDefaultHint;
@@ -1219,6 +1268,7 @@ function cleanExpiredTrash() {
 let listVisibleLimit = 150;
 let lastListScope = '';
 function renderList(filter = '') {
+    recoveryTools.classList.toggle('hidden', !activeNoteId || !currentNotes[activeNoteId] || !localRecoveryIds.has(activeNoteId));
     navigation.refresh();
     folders.render();
     const scope = currentTab + ':' + folders.active + ':' + filter;
@@ -1335,6 +1385,7 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
     // 同一メモ（自動保存やリモート差分受信）の場合は現在のスクロール位置を完全に退避
     const prevScroll = isSameNote ? getEditorScrollState() : null;
     activeNoteId = id;
+    recoveryTools.classList.toggle('hidden', !localRecoveryIds.has(id));
     const n = currentNotes[id] || { title: '', body: '', pinned: false, codeCollapsed: {}, updatedAt: Date.now() };
 
     if (currentTab === 'notes' && !folders.matches(n)) folders.setActive(folders.effective(n) || 'unfiled');
@@ -1414,6 +1465,7 @@ function selectNote(id, autoFocus = true, isRemoteSync = false) {
     mainLayout.classList.add('view-editor');
 
     if (!isRemoteSync) recordLocation();
+    refreshCloudStatus();
     if (autoFocus && !isTrashNote && !isSameNote) {
         noteBody.focus({ preventScroll: true });
         noteBody.setSelectionRange(noteBody.value.length, noteBody.value.length);
@@ -2356,6 +2408,7 @@ const roomStatusUrl = document.getElementById('room-status-url');
 const roomCreateSection = document.getElementById('room-create-section');
 
 let currentActiveShareUrl = null;
+const shareQr = setupShareQr({ getUrl: () => currentActiveShareUrl });
 
 // 暗号学的に安全な 192bit (24バイト) Base64URL ルームID生成 (被る確率ゼロ)
 function generateSecureRoomId() {
@@ -2374,6 +2427,7 @@ function generateSecureEncryptionKey() {
 }
 
 function updateRoomUI(roomId, fullShareUrl = null) {
+    shareQr.reset();
     if (roomId) {
         roomActiveStatus?.classList.remove('hidden');
         roomCreateSection?.classList.add('hidden');
@@ -2479,7 +2533,7 @@ function checkAndHandleAutoJoinRoom() {
     if (btnTargetTabRoom) btnTargetTabRoom.click();
 
     tm.joinRoom(roomParam);
-    updateRoomUI(roomParam, window.location.href);
+    updateRoomUI(roomParam, `${AUTH_ORIGIN}/?room=${roomParam}#key=${keyParam}`);
     showToast(`共有リンクに自動接続しました！相手の接続を待機中...`);
     return true;
 }
@@ -3162,7 +3216,7 @@ onAuthStateChanged(auth, async user => {
                 let hasChanges = false;
 
                 Object.keys(currentNotes).forEach(id => {
-                    if (!remoteNotes[id] && !pendingLocalIds.has(id)) {
+                    if (!remoteNotes[id] && !pendingLocalIds.has(id) && !localRecoveryIds.has(id)) {
                         delete currentNotes[id];
                         deleteLocalNote(id, false);
                         hasChanges = true;
@@ -3183,36 +3237,37 @@ onAuthStateChanged(auth, async user => {
 
                 let activeNoteChanged = false;
 
-                Object.entries(remoteNotes).forEach(([id, n]) => {
-                    if (!validNote(n, id) || pendingDeleteIds.has(id)) return;
+                for (const [id,n] of Object.entries(remoteNotes)) {
+                    if (!validNote(n, id) || pendingDeleteIds.has(id) || localRecoveryIds.has(id)) continue;
                     const local = currentNotes[n.id];
-                    if (pendingLocalIds.has(n.id) && local && JSON.stringify(local) !== JSON.stringify(n)) {
+                    if (pendingLocalIds.has(n.id) && local && !sameValue(local,n)) {
                         const row = pendingRows.get(n.id);
                         const fields = new Set(row?.pendingFields || Object.keys(local));
-                        for (const key of Object.keys(local)) if (JSON.stringify(local[key]) !== JSON.stringify(row?.note?.[key])) fields.add(key);
+                        for (const key of Object.keys(local)) if (!sameValue(local[key],row?.note?.[key])) fields.add(key);
                         const resolved = reconcileNote(local, n, row?.base, [...fields]);
                         if (resolved.conflict) {
-                            recoverDraft(local);
+                            if (!await recoverDraft(local)) continue;
+                            if (ticket !== snapshotTicket || generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
                         }
                         if (resolved.patch) {
                             const merged = { ...resolved.note, updatedAt: Date.now() };
                             currentNotes[n.id] = merged; saveLocalNote(merged);
                             syncUpdateNoteFields(n.id, { ...resolved.patch, updatedAt: merged.updatedAt });
-                            hasChanges = true; if (activeNoteId === n.id) activeNoteChanged = true; return;
+                            hasChanges = true; if (activeNoteId === n.id) activeNoteChanged = true; continue;
                         }
                         pendingLocalIds.delete(n.id);
                     }
                     { // Remote snapshot is authoritative for fields without pending local edits.
-                        if (!local || JSON.stringify(local) !== JSON.stringify(n)) {
+                        if (!local || !sameValue(local,n)) {
                             currentNotes[n.id] = n;
-                            saveLocalNote(n, false);
+                            saveLocalNote(n, false, local);
                             hasChanges = true;
                             if (activeNoteId === n.id) {
                                 activeNoteChanged = true;
                             }
                         }
                     }
-                });
+                }
 
                 for (const id of pendingLocalIds) {
                     if (!remoteNotes[id] && currentNotes[id] && !pendingDeleteIds.has(id)) syncSaveNote(currentNotes[id]);

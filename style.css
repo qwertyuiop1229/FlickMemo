@@ -2571,6 +2571,12 @@ body.is-extension-popup {
     transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
+.recovery-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 10px 20px; background: var(--m3-surface-container); color: var(--m3-text); border-bottom: 1px solid var(--m3-border); font-size: .85rem; }
+.share-qr-dialog { width: min(360px, calc(100vw - 40px)); box-sizing: border-box; }
+.share-qr-dialog p { color: var(--m3-text-secondary); line-height: 1.6; }
+.share-qr-canvas { display: grid; place-items: center; }
+.share-qr-canvas canvas { width: min(280px, 100%); height: auto; border-radius: 12px; }
+
 .m3-toast-item.stacked-faded {
     opacity: 0.45;
     transform: scale(0.96);

@@ -1,6 +1,7 @@
 import { directorySink } from '../streamingFiles.js';
 import { setupFolders } from '../platform/folders.js';
-import { reconcileNote } from '../noteSync.js';
+import { reconcileNote, sameValue } from '../noteSync.js';
+import { setupShareQr } from '../platform/shareQr.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -18,6 +19,12 @@ import { createNavigation } from '../platform/navigation.js';
 import { setupColorPicker } from '../platform/colorPicker.js';
 
 async function setup({ edge = false, extension = false, saveGate, transactionGate, transactionEcho = false, directoryPicker, cachedRows = [] } = {}) {
+    function firebaseValue(value) {
+        if(value==null)return null;
+        if(typeof value!=='object')return value;
+        const result=Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,child])=>[key,firebaseValue(child)]).filter(([,child])=>child!==null));
+        return Object.keys(result).length?result:null;
+    }
     const extensionId = 'a'.repeat(32);
     const dom = new JSDOM(await fs.readFile(new URL('../index.html', import.meta.url), 'utf8'), {
         url: extension ? `chrome-extension://${extensionId}/index.html` : 'https://flickmemo-qwe.web.app/',
@@ -49,7 +56,8 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     const dbApi = { getDatabase: () => ({}), ref: (_, path) => path,
         set: async (path,value) => {calls.writes.push({path,value});}, remove: async () => {}, get: async path => ({ val: () => remoteValues.get(path) ?? null }),
         runTransaction: async (path, callback) => {
-            const value = callback(structuredClone(remoteValues.get(path) ?? null));
+            const returned = callback(structuredClone(remoteValues.get(path) ?? null));
+            const value = returned === undefined ? undefined : firebaseValue(returned);
             if (value !== undefined) {
                 remoteValues.set(path,value); calls.writes.push({path,value,transaction:true});
                 if (transactionEcho) {
@@ -76,7 +84,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     const factory = new IDBFactory();
     const seed = new NoteStore(factory);
     for (const row of cachedRows) await seed.write(store => store.put(row));
-    const dependencies = { './streamingFiles.js': { directorySink }, './platform/folders.js': { setupFolders: args => setupFolders({ ...args, doc: window.document, win: window }) }, './noteSync.js': { reconcileNote },
+    const dependencies = { './streamingFiles.js': { directorySink }, './platform/folders.js': { setupFolders: args => setupFolders({ ...args, doc: window.document, win: window }) }, './noteSync.js': { reconcileNote, sameValue },
         'firebase/app': { initializeApp: () => ({}) }, 'firebase/auth': authApi, 'firebase/database': dbApi,
         './archiveNames.js': archiveNames, './clipboardFiles.js': clipboardFiles, './authProtocol.js': protocol, './noteData.js': noteData,
         './noteStore.js': { NoteStore: class extends NoteStore { constructor() { super(factory); } async put(...args){await super.put(...args);await saveGate?.();} } },
@@ -85,6 +93,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
         './platform/navigation.js': { createNavigation },
         './fileTransfer.js': { FileTransferManager: class { stopDevicePresence() {} } }
     };
+    dependencies['./platform/shareQr.js'] = { setupShareQr: args => setupShareQr({ ...args, doc: window.document }) };
     const sandbox = { window, document: window.document, navigator: window.navigator, location: window.location,
         crypto: webcrypto, performance: window.performance, URL, URLSearchParams, TextEncoder, Uint8Array,
         structuredClone, Blob, File: window.File, console: { log() {}, warn() {}, error() {}, info() {} },
@@ -96,11 +105,15 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     const context = vm.createContext(sandbox);
     const source = await fs.readFile(new URL('../app.js', import.meta.url), 'utf8');
     const module = new vm.SourceTextModule(source + `
-        export { safeCloudWrite, scheduleSaveNote, flushPendingSave, loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
+        export { recoverDraft, createNewNote, safeCloudWrite, scheduleSaveNote, flushPendingSave, loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
         export function changeTestOwner(uid){currentUserId=uid;remoteConnected=true;auth.currentUser=uid?{uid}:null;isGuestMode=!uid;++authGeneration;currentNotes={};}
         export function setNotes(notes) { currentNotes = notes; }
         export function notesForTest() { return currentNotes; }
         export function receiveDirectoryForTest() { return receiveDirectory; }
+        export function activeIdForTest() { return activeNoteId; }
+        export function stageFilesForTest(files, manager) { transferManager = manager; stageFiles(files); }
+        export function stagedCountForTest() { return stagedFilesQueue.length; }
+        export async function drainCloudForTest() { for(let n=0;n<100;n++){await Promise.allSettled([...cloudWrites.values()].map(entry=>entry.promise));await new Promise(resolve=>setTimeout(resolve,1));if(!cloudWrites.size)return;}throw new Error('Cloud work did not settle'); }
         export function historySize() { return textHistory.reduce((sum, text) => sum + text.length, 0); }
     `, { context, importModuleDynamically: async () => { throw new Error('Unexpected eager dynamic import'); } });
     await module.link(specifier => {
@@ -216,7 +229,7 @@ test('stale cached Windows note never overwrites a newer PWA body on startup, ev
 test('classifying a note transaction preserves newer remote body content',async()=>{
  const local={id:'memo',body:'preserved',title:'memo',folderId:'',updatedAt:1};
  const app=await setup({cachedRows:[{owner:'alice',id:'memo',note:local,pending:false,base:local}]});
- try{app.api.changeTestOwner('alice');app.api.setNotes({memo:local});app.remote('users/alice/notes/memo',{...local,body:'newer PWA body'});app.api.scheduleSaveNote('memo',{folderId:'folder_work'});app.api.flushPendingSave('memo');await new Promise(r=>setTimeout(r,30));const write=app.calls.writes.find(w=>w.path==='users/alice/notes/memo'&&w.transaction);assert.equal(write.value.folderId,'folder_work');assert.equal(write.value.body,'newer PWA body');assert.equal(app.api.notesForTest().memo.body,'newer PWA body');}finally{app.close()}
+ try{app.api.changeTestOwner('alice');app.api.setNotes({memo:local});app.remote('users/alice/notes/memo',{...local,body:'newer PWA body'});app.api.scheduleSaveNote('memo',{folderId:'folder_work'});app.api.flushPendingSave('memo');await app.api.drainCloudForTest();const write=app.calls.writes.find(w=>w.path==='users/alice/notes/memo'&&w.transaction);assert.equal(write.value.folderId,'folder_work');assert.equal(write.value.body,'newer PWA body');assert.equal(app.api.notesForTest().memo.body,'newer PWA body');}finally{app.close()}
 });
 test('a pending timestamp-only save preserves the remote timestamp and adopts its latest body',async()=>{
  const local={id:'memo',body:'old body',title:'memo',updatedAt:1};
@@ -253,4 +266,56 @@ test('queued memo saves are discarded after switching accounts and cannot change
 test('a directory chooser resolved after account cleanup cannot grant the next session a save destination',async()=>{
  let release;const app=await setup({directoryPicker:()=>new Promise(resolve=>release=resolve)});
  try{const button=app.document.querySelector('[data-directory]');const choosing=button.onclick();assert.equal(button.disabled,true);await app.api.clearLocalData();release({name:'Alice private folder'});await choosing;assert.equal(app.api.receiveDirectoryForTest(),null);assert.equal(app.document.querySelector('[data-release]').hidden,true);assert.equal(button.disabled,false);assert.equal(app.document.querySelector('.transfer-storage-tools [role=status]').textContent.includes('Alice'),false);}finally{release?.({name:'old'});app.close()}
+});
+
+test('repeated conflicts and conflicts of recovery notes cannot generate or upload recursive backups',async()=>{
+ const app=await setup();
+ try{app.api.changeTestOwner('alice');const note={id:'original',body:'valuable local text',title:'memo',codeCollapsed:{}};app.api.setNotes({original:note});
+ for(let n=0;n<30;n++)await app.api.recoverDraft(note);
+ const backups=Object.values(app.api.notesForTest()).filter(n=>n.conflictOf==='original');assert.equal(backups.length,1);
+ const backup=backups[0];await app.api.recoverDraft(backup);await app.api.safeCloudWrite(backup.id);
+ assert.equal(Object.keys(app.api.notesForTest()).length,2);assert.equal(app.calls.writes.length,0);
+ app.api.selectNote(backup.id,false);assert.equal(app.document.querySelector('.recovery-tools').classList.contains('hidden'),false);
+ }finally{app.close()}
+});
+
+test('empty new memo conflicts never produce recovery notes and real distinct conflicts are bounded without discarding the draft',async()=>{
+ const app=await setup();
+ try{app.api.changeTestOwner('alice');const empty={id:'blank',body:'',title:'',codeCollapsed:{}};app.api.setNotes({blank:empty});for(let n=0;n<50;n++)await app.api.recoverDraft(empty);assert.equal(Object.keys(app.api.notesForTest()).length,1);
+ for(let n=0;n<10;n++)assert.equal(await app.api.recoverDraft({id:'real',body:'draft '+n,title:'memo'}),true);
+ assert.equal(await app.api.recoverDraft({id:'real',body:'latest text',title:'memo'}),false);
+ assert.equal(Object.values(app.api.notesForTest()).filter(n=>n.conflictOf==='real').length,10);assert.equal(app.calls.writes.length,0);
+ }finally{app.close()}
+});
+
+test('new empty memos remain stable through Firebase normalization and echoes instead of entering a backup loop',async()=>{
+ const app=await setup({transactionEcho:true});
+ try{await app.login({uid:'alice',displayName:'Test'});await app.snapshot('.info/connected',true);
+ for(let n=0;n<20;n++){app.api.createNewNote(false);const id=app.api.activeIdForTest();await app.api.drainCloudForTest();assert.ok(app.api.notesForTest()[id]);app.api.scheduleSaveNote(id,{body:'memo '+n});app.api.flushPendingSave(id);await app.api.drainCloudForTest();assert.equal(app.api.notesForTest()[id].body,'memo '+n);}
+ assert.equal(Object.values(app.api.notesForTest()).some(note=>note.conflictOf),false);assert.ok(app.calls.writes.length<80);
+ }finally{app.close()}
+});
+
+test('saved local recoveries survive cloud snapshots and can be explicitly copied into a normal synchronized memo',async()=>{
+ const draft={id:'recovery_old',body:'local valuable draft',title:'memo（競合の控え）',conflictOf:'original'};
+ const app=await setup({cachedRows:[{owner:'alice',id:draft.id,note:draft,pending:false,localRecovery:true}]});
+ try{await app.login({uid:'alice',displayName:'Test'});await app.snapshot('users/alice/notes',{});assert.equal(app.api.notesForTest()[draft.id].body,draft.body);
+ await app.snapshot('users/alice/notes',{[draft.id]:{...draft,body:'different remote body'}});assert.equal(app.api.notesForTest()[draft.id].body,draft.body);
+ await app.snapshot('.info/connected',true);app.api.selectNote(draft.id,false);app.document.querySelector('.recovery-tools button').click();await app.api.drainCloudForTest();
+ const saved=app.calls.writes.find(write=>write.value?.body===draft.body);assert.ok(saved);assert.notEqual(saved.value.id,draft.id);assert.equal(saved.value.conflictOf,undefined);assert.ok(app.api.notesForTest()[draft.id]);
+ }finally{app.close()}
+});
+
+test('sending large file handles clears the staging list after success or failure and keeps only metadata history',async()=>{
+ for(const fail of [false,true]){const app=await setup();
+ try{const file={name:'virtual-40GiB.bin',size:40*1024**3,type:'application/octet-stream',arrayBuffer(){throw Error('must not read the entire file')}};
+ const manager={isSending:false,sendFileP2P:async actual=>{assert.equal(actual,file);if(fail)throw Error('cancelled');return 'LAN_P2P'}};
+ app.api.stageFilesForTest([file],manager);assert.equal(app.api.stagedCountForTest(),1);await app.document.getElementById('btn-start-send').onclick();assert.equal(app.api.stagedCountForTest(),0);assert.equal(app.calls.writes.length,0);
+ }finally{app.close()}}
+});
+
+test('legacy recursive backups in the offline outbox are quarantined before reconnect replay',async()=>{
+ const draft={id:'old_backup',body:'preserved old draft',title:'memo（競合の控え）',conflictOf:'original'};
+ const app=await setup({cachedRows:[{owner:'alice',id:draft.id,note:draft,pending:true}]});
+ try{await app.login({uid:'alice',displayName:'Test'});await app.snapshot('.info/connected',true);await app.snapshot('users/alice/notes',{});await app.api.drainCloudForTest();assert.equal(app.api.notesForTest()[draft.id].body,draft.body);assert.equal(app.calls.writes.length,0);assert.equal(Object.keys(app.api.notesForTest()).length,1);}finally{app.close()}
 });

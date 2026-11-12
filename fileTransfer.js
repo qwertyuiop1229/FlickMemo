@@ -865,10 +865,24 @@ export class FileTransferManager {
         if (file.size > this._peerReceiveLimit) throw new Error('受信側で大容量受信用の保存先を選択してください。直接保存に非対応の環境では64MiBまでです');
         const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
         const encrypted = !!this.isE2EEEnabled;
+        const totalSize = file.size;
         const chunkSize = this._chunkSize;
         let sent = 0, acknowledged = 0, ended = false, failed = null, timer;
+        let rejectOperation = null;
         const waiters = new Set();
         const wake = () => { for (const resolve of waiters) resolve(); waiters.clear(); };
+        const previousLow = channel.onbufferedamountlow, previousThreshold = channel.bufferedAmountLowThreshold;
+        const bufferedLow = event => { wake(); previousLow?.call(channel,event); };
+        channel.bufferedAmountLowThreshold = SEND_WINDOW_BYTES / 2;
+        channel.onbufferedamountlow = bufferedLow;
+        // One cancellable operation at a time. Racing every chunk against the
+        // same pending completion promise would retain a reaction per chunk.
+        const operation = task => new Promise((resolve,reject) => {
+            const abort = error => { if (rejectOperation === abort) rejectOperation = null; reject(error); };
+            rejectOperation = abort;
+            Promise.resolve(task).then(value => { if (rejectOperation === abort) rejectOperation = null; if(failed)reject(failed);else resolve(value); },abort);
+            if (failed) abort(failed);
+        });
         let resolveComplete, rejectComplete;
         const completion = new Promise((resolve, reject) => { resolveComplete = resolve; rejectComplete = reject; });
         completion.catch(() => {});
@@ -878,13 +892,13 @@ export class FileTransferManager {
         };
         const outgoing = {
             id,
-            fail: error => { if (!failed) failed = error; clearTimeout(timer); rejectComplete(error); wake(); },
+            fail: error => { if (!failed) failed = error; clearTimeout(timer); rejectOperation?.(failed); rejectComplete(failed); wake(); },
             ack: bytes => {
                 if (!Number.isSafeInteger(bytes) || bytes < acknowledged || bytes > sent) { outgoing.fail(new Error('受信確認のサイズが不正です')); return; }
                 if (bytes > acknowledged) { acknowledged = bytes; resetTimer(); wake(); }
             },
             complete: bytes => {
-                if (!ended || bytes !== file.size || acknowledged !== sent) { outgoing.fail(new Error('受信完了の確認が不正です')); return; }
+                if (!ended || bytes !== totalSize || acknowledged !== sent) { outgoing.fail(new Error('受信完了の確認が不正です')); return; }
                 clearTimeout(timer); resolveComplete();
             }
         };
@@ -894,22 +908,22 @@ export class FileTransferManager {
             if (this.dataChannel !== channel || channel.readyState !== 'open') throw new Error('転送中に接続が変更または切断されました');
         };
         try {
-            const mode = await this.getConnectedTransportMode(); assertConnected();
+            const mode = await operation(this.getConnectedTransportMode()); assertConnected();
             this.onProgress(0, file.size, file.name, 'send');
             channel.send(JSON.stringify({ type: 'TRANSFER_LOCK' }));
             channel.send(JSON.stringify({ type: 'file_header', id, name: file.name, size: file.size,
                 mime: file.type || 'application/octet-stream', mode, encrypted, chunkSize }));
             while (sent < file.size) {
-                while (sent - acknowledged >= SEND_WINDOW_BYTES) {
+                while (sent - acknowledged >= SEND_WINDOW_BYTES || (channel.bufferedAmount || 0) > SEND_WINDOW_BYTES) {
                     assertConnected();
                     await new Promise(resolve => waiters.add(resolve));
                 }
                 assertConnected();
                 const offset = sent;
-                const raw = await file.slice(offset, offset + chunkSize).arrayBuffer();
+                const raw = await operation(file.slice(offset, offset + chunkSize).arrayBuffer());
                 assertConnected();
                 if (raw.byteLength !== Math.min(chunkSize, file.size - sent)) throw new Error('送信元ファイルの読込みに失敗しました');
-                const payload = encrypted ? await this.encryptChunk(raw, `${id}:${offset}`) : raw;
+                const payload = encrypted ? await operation(this.encryptChunk(raw, `${id}:${offset}`)) : raw;
                 assertConnected();
                 // Account before send, including synchronous test transports.
                 sent += raw.byteLength;
@@ -931,6 +945,9 @@ export class FileTransferManager {
             throw error;
         } finally {
             clearTimeout(timer); wake();
+            rejectOperation = null;
+            if (channel.onbufferedamountlow === bufferedLow) channel.onbufferedamountlow = previousLow;
+            try { channel.bufferedAmountLowThreshold = previousThreshold || 0; } catch {}
             if (this._outgoing === outgoing) this._outgoing = null;
             if (this.dataChannel === channel) this.sendControlMessage({ type: 'TRANSFER_UNLOCK' });
         }

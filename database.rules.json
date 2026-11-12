@@ -4,7 +4,12 @@
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid"
-        ,"clipboardHistory": {
+        ,"notes": {
+          "$noteId": {
+            ".validate": "!newData.child('conflictOf').exists() || data.exists()"
+          }
+        },
+        "clipboardHistory": {
           ".indexOn": ["updatedAt"]
         },
         "liveSelection": {

@@ -122,7 +122,7 @@ async function main() {
     const update = await signUpdate(root,release,path.join(binaries,'FlickMemo-Setup.exe'));
     await fs.writeFile(path.join(directory,'update.json'),JSON.stringify(update,null,2));
     // The installed app/website now has one atomically published Hosting version.
-    await run(process.execPath, [firebaseCli, 'deploy', '--only', 'hosting']);
+    await run(process.execPath, [firebaseCli, 'deploy', '--only', 'database,hosting']);
     await fs.rm(statePath);
     console.log(`公開完了: Web / PWA / 拡張 / Windows v${state.version}\nhttps://flickmemo-qwe.web.app/download#http-windows`);
 }

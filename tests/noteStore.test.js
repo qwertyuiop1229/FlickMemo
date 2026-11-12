@@ -95,3 +95,22 @@ test('a saved draft advances the base without clearing newer typing or unrelated
         assert.equal(merged.conflict,null); assert.equal(merged.note.body,later.body);
     }
 });
+
+test('local recoveries remain account-scoped and never become pending after edits or stale acknowledgements',async()=>{
+ const factory=new IDBFactory(),store=new NoteStore(factory),note={id:'recovery',body:'valuable draft',conflictOf:'original'};
+ await store.putRecovery('alice',note);await store.put('alice',{...note,body:'edited draft'},true);
+ assert.equal((await store.get('alice',note.id)).pending,false);
+ assert.equal(await store.acknowledge('alice',note),false);
+ const reopened=new NoteStore(factory);assert.equal((await reopened.get('alice',note.id)).localRecovery,true);
+ assert.equal((await reopened.get('alice',note.id)).note.body,'edited draft');assert.equal(await reopened.get('bob',note.id),undefined);
+});
+
+test('a remote cache refresh cannot discard an unobserved pending draft and recovery preserves its newest contents',async()=>{
+ const factory=new IDBFactory(),first=new NoteStore(factory),other=new NoteStore(factory);
+ const original={id:'memo',body:'base'},newer={...original,body:'newer unsent text'};
+ await first.put('alice',original,false);await other.put('alice',newer,true);
+ assert.equal(await first.put('alice',{...original,body:'remote text'},false,original),true);
+ assert.equal((await other.get('alice','memo')).note.body,newer.body);
+ const stored=await first.putRecovery('alice',{...original,conflictOf:'original'});
+ assert.equal(stored.body,newer.body);assert.equal((await other.get('alice','memo')).localRecovery,true);
+});

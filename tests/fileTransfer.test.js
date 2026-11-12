@@ -328,3 +328,28 @@ test('small SCTP limits are negotiated without exceeding the peer message size',
 test('80MiB virtual source streams with bounded reads and no aggregate receive buffer',async()=>{const peers=await pair({});let bytes=0,maxRead=0,closed=false;try{await peers.ready;peers.b.manager.setReceiveSinkFactory(async()=>({write:async chunk=>{assert.ok(chunk.byteLength<=32768);assert.equal(peers.b.manager.receiveBuffer.length,0);bytes+=chunk.byteLength;if(bytes%1048576===0)await new Promise(r=>setImmediate(r))},close:async()=>{closed=true;return{saved:true,size:bytes}},abort:async()=>{}}));await peers.a.manager._receiveChain;const file={name:'virtual-80MiB.bin',size:80*1024*1024,type:'application/octet-stream',slice(start,end){const length=Math.min(end,this.size)-start;maxRead=Math.max(maxRead,length);return{arrayBuffer:async()=>new Uint8Array(length).buffer}}};await peers.a.manager.sendFileP2P(file);assert.equal(bytes,file.size);assert.equal(closed,true);assert.ok(maxRead<=32768);assert.equal(peers.b.files[0][0].saved,true)}finally{peers.close()}});
 test('disk failure aborts partial output and never acknowledges completed receipt',async()=>{const peers=await pair({});let aborted=0;try{await peers.ready;peers.b.manager.setReceiveSinkFactory(async()=>({write:async()=>{throw Error('disk full')},close:async()=>{throw Error('must not close')},abort:async()=>{aborted++}}));await peers.a.manager._receiveChain;await assert.rejects(peers.a.manager.sendFileP2P(asFile(new Blob(['bytes']))));await new Promise(r=>setImmediate(r));assert.equal(aborted,1);assert.equal(peers.b.files.length,0)}finally{peers.close()}});
 test('disconnect during async destination creation aborts the late sink',async()=>{const f=await setup();let release,aborted=0;f.manager.receiveSinkFactory=()=>new Promise(r=>release=r);f.channel.onmessage({data:JSON.stringify({type:'file_header',id:'a'.repeat(32),name:'late.bin',size:1,encrypted:false,chunkSize:32768})});await new Promise(r=>setImmediate(r));f.manager.cleanupPeerConnection();release({abort:async()=>{aborted++}});await f.manager._receiveChain;assert.equal(aborted,1);assert.equal(f.files.length,0)});
+
+test('native DataChannel buffering also gates source reads independently of receiver credits',async()=>{
+ const peers=await pair({});let reads=0;
+ try{await peers.ready;peers.a.channel.bufferedAmount=1048576;
+ const file={name:'bounded.bin',size:3,type:'application/octet-stream',slice(){reads++;return{arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer}}};
+ const sending=peers.a.manager.sendFileP2P(file);await new Promise(r=>setTimeout(r,20));assert.equal(reads,0);
+ peers.a.channel.bufferedAmount=0;peers.a.channel.onbufferedamountlow({});await sending;assert.equal(reads,1);assert.equal(peers.b.files[0][0].size,3);
+ }finally{peers.close()}
+});
+
+test('cancelling a stalled file read promptly rejects and never sends its late result',async()=>{
+ const peers=await pair({});let release,started;const began=new Promise(resolve=>started=resolve);
+ try{await peers.ready;const file={name:'slow.bin',size:3,type:'application/octet-stream',slice(){started();return{arrayBuffer:()=>new Promise(resolve=>release=resolve)}}};
+ const sending=peers.a.manager.sendFileP2P(file);await began;peers.a.manager.cleanupPeerConnection(new Error('cancelled'));
+ await assert.rejects(sending,/cancelled|切断|接続/);release(new Uint8Array([1,2,3]).buffer);await new Promise(r=>setImmediate(r));assert.equal(peers.b.files.length,0);assert.equal(peers.a.manager.isSending,false);
+ }finally{release?.(new ArrayBuffer(3));peers.close()}
+});
+
+test('a 40GiB advertised source starts and cancels with 32KiB reads without allocating the file size',async()=>{
+ const peers=await pair({});let reads=0,maxRead=0,release,started,aborted=0;const began=new Promise(resolve=>started=resolve);
+ try{await peers.ready;peers.b.manager.setReceiveSinkFactory(async()=>({write:async()=>{},close:async()=>{},abort:async()=>{aborted++}}));await peers.a.manager._receiveChain;
+ const file={name:'40GiB.bin',size:40*1024**3,type:'application/octet-stream',slice(start,end){reads++;maxRead=Math.max(maxRead,end-start);return{arrayBuffer:()=>{if(reads===1)return Promise.resolve(new ArrayBuffer(end-start));started();return new Promise(resolve=>release=resolve)}}}};
+ const sending=peers.a.manager.sendFileP2P(file);await began;peers.a.manager.cleanupPeerConnection(new Error('cancelled'));await assert.rejects(sending);release(new ArrayBuffer(maxRead));await new Promise(r=>setImmediate(r));assert.ok(maxRead<=32768);assert.equal(peers.b.files.length,0);assert.ok(aborted<=1);
+ }finally{release?.(new ArrayBuffer(maxRead));peers.close()}
+});

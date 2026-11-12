@@ -35,6 +35,12 @@ try {
     await assert.rejects(update(ref(b.db, base), { 'clipboardHistory/id1': null, 'clipboardHistoryTombstones/id1': { deletedAt: 1 } }));
     assert.equal((await get(ref(a.db, `${base}/clipboardHistory/id1`))).val().text, 'synthetic-1');
     const notePath = ref(a.db, `${base}/notes/merge-test`);
+    await assert.rejects(set(ref(a.db, `${base}/notes/recursive-new`),{id:'recursive-new',body:'must stay local',conflictOf:'original'}));
+    const legacyBackup=ref(a.db,`${base}/notes/legacy-backup`);
+    await set(legacyBackup,{id:'legacy-backup',body:'existing legacy note'});
+    await update(legacyBackup,{conflictOf:'original',body:'existing backup remains editable'});
+    assert.equal((await get(legacyBackup)).val().body,'existing backup remains editable');
+    await assert.rejects(set(ref(b.db,`${base}/notes/recursive-other`),{id:'recursive-other',body:'denied',conflictOf:'original'}));
     const original = { id:'merge-test', body:'base', title:'memo', folderId:'', updatedAt:1 };
     await set(notePath, original);
     await update(notePath,{body:'PWA latest',updatedAt:2});
@@ -51,10 +57,21 @@ try {
         return result.conflict ? undefined : result.note;
     },{applyLocally:false});
     assert.equal(rejected.committed,false);assert.equal((await get(notePath)).val().body,'PWA latest');
+    const blankPath=ref(a.db,`${base}/notes/blank-roundtrip`),blank={id:'blank-roundtrip',body:'',title:'',codeCollapsed:{},pinned:false};
+    await set(blankPath,blank);const roundtrip=(await get(blankPath)).val();
+    assert.equal(roundtrip.codeCollapsed,undefined);assert.equal(reconcileNote(blank,roundtrip,null).conflict,null);
+    let unwatchBlank;
+    await new Promise((resolve,reject)=>{unwatchBlank=onValue(blankPath,()=>resolve(),reject);});
+    for(let n=0;n<15;n++){
+        const stable=await runTransaction(blankPath,remote=>{const merged=reconcileNote(blank,remote,null);return merged.conflict?undefined:merged.note;},{applyLocally:false});
+        assert.equal(stable.committed,true,'An empty settings roundtrip must never create a conflict');
+    }
+    unwatchBlank();
     unwatch();
     await set(ref(a.db, `${base}/folders/folder_work`),{id:'folder_work',name:'仕事',updatedAt:1});
     await assert.rejects(get(ref(b.db, `${base}/folders`)));
     console.log('Note transactions: independent folder/body merge, stale body rejection, folder account isolation PASS');
+    console.log('Recovery safety: Firebase empty-object roundtrip, new automatic backup rejection, legacy backup edits and owner isolation PASS');
     console.log('Database emulator: own-account CRUD, cross-account/guest rejection, atomic history deletion, newest-50 visibility, note preservation PASS');
 } catch (error) {
     exitCode = 1;

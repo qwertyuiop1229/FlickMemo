@@ -4,3 +4,14 @@ test('three-way merge preserves independent remote edits and durable base',async
 test('stale legacy pending cache and concurrent body changes preserve both versions rather than overwrite remote',()=>{const local={id:'memo',body:'Windows draft',updatedAt:99999999},remote={id:'memo',body:'latest PWA',updatedAt:1};for(const base of [undefined,{id:'memo',body:'common base'}]){const result=reconcileNote(local,remote,base,['body']);assert.equal(result.note,remote);assert.equal(result.patch,null);assert.equal(result.conflict,local)}assert.equal(reconcileNote(remote,remote,undefined,['body']).conflict,null)});
 
 test('an initially empty Firebase transaction cache cannot throw or silently overwrite a record',()=>{const local={id:'memo',body:'local'};assert.deepEqual(reconcileNote(local,null,local,['body']),{note:null,patch:null,conflict:local})});
+
+test('new memo empty settings omitted by Firebase and reordered collapse maps never create false conflicts',()=>{
+ const created={id:'memo',body:'',title:'',codeCollapsed:{},pinned:false};
+ const remote={id:'memo',body:'',title:'',pinned:false};
+ assert.equal(reconcileNote(created,remote,null).conflict,null);
+ const base={...created,codeCollapsed:{block_2:true,block_1:true}};
+ const latest={...base,codeCollapsed:{block_1:true,block_2:true}};
+ const local={...base,codeCollapsed:{...base.codeCollapsed,block_0:true}};
+ const merged=reconcileNote(local,latest,base,['codeCollapsed']);
+ assert.equal(merged.conflict,null);assert.equal(merged.note.codeCollapsed.block_0,true);
+});
