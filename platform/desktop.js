@@ -46,7 +46,7 @@ export const desktop = {
     }
 };
 
-export async function setupDesktop({ prepareClose, notify, resume = () => {} }) {
+export async function setupDesktop({ prepareClose, notify, resume = () => {}, probeConnection = async () => {} }) {
     let closing = false;
     await listen('desktop-close-requested', async () => {
         if (closing) return;
@@ -78,6 +78,7 @@ export async function setupDesktop({ prepareClose, notify, resume = () => {} }) 
     if (diagnostic) {
         // Runs only in a fresh native diagnostic profile. No real notes/account/clipboard.
         try {
+            await probeConnection();
             const waitFor = async predicate => {
                 const deadline = Date.now() + 10_000;
                 while (!predicate()) {

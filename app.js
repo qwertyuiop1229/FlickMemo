@@ -2,6 +2,9 @@ import { directorySink } from './streamingFiles.js';
 import { setupFolders } from './platform/folders.js';
 import { reconcileNote, sameValue } from './noteSync.js';
 import { setupShareQr } from './platform/shareQr.js';
+import { configureDatabaseTransport } from './platform/databaseTransport.js';
+import { createSyncRecovery } from './platform/syncRecovery.js';
+import { setupNoteMenu } from './platform/noteMenu.js';
 import { uniqueArchiveName } from './archiveNames.js';
 import { copyClipboardFile } from './clipboardFiles.js';
 import { validNote } from './noteData.js';
@@ -46,7 +49,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.119";
+const APP_VERSION = "1.3.120";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -62,11 +65,12 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const isDesktop = !!window.__TAURI_INTERNALS__;
+configureDatabaseTransport(isDesktop || location.protocol === 'chrome-extension:');
 const db = getDatabase(app);
 let currentDbRef = null;
 let stopSyncConnection = null, remoteConnected = false;
 let resumeSyncTask = null, resumeSyncKey = '', lastResumeSync = -Infinity;
-const isDesktop = !!window.__TAURI_INTERNALS__;
 const localWrites = new WriteBarrier();
 const desktopReady = isDesktop ? import('./platform/desktop.js') : Promise.resolve(null);
 let historyPanel = null;
@@ -533,6 +537,7 @@ function recordLocation() {
 let toastTimer = null;
 let currentUserId = null;
 let isGuestMode = false;
+const syncRecovery = createSyncRecovery({retry:resumeCloudSync,eligible:()=>isDesktop && !!currentUserId && navigator.onLine!==false && document.visibilityState!=='hidden' && !transferManager?.isSending && !transferManager?.incomingFileInfo});
 
 // 省メモリ・通信節約用の最適化タイマー＆差分キャッシュ
 let applyingFolder = false;
@@ -558,6 +563,15 @@ const folders = setupFolders({
         renderList(searchInput.value); folders.selected(currentNotes[activeNoteId]); recordLocation();
     },
     write: (id, value) => currentUserId ? set(ref(db, `users/${currentUserId}/folders/${id}`), value) : Promise.resolve(), notify: showToast
+});
+const noteMenu=setupNoteMenu({getNote:id=>currentNotes[id],choices:()=>folders.choices(),location:note=>folders.location(note),owner:()=>`${authGeneration}:${cacheOwner()}`,notify:showToast,
+    move:(id,folderId)=>{
+        if(!currentNotes[id]||currentNotes[id].deletedAt)return;
+        scheduleSaveNote(id,{folderId});flushPendingSave(id);
+        if(id===activeNoteId){if(folders.active!=='all')folders.setActive(folderId||'unfiled');folders.selected(currentNotes[id]);}
+        renderList(searchInput.value);recordLocation();showToast(`「${folders.location(currentNotes[id]).name}」に移動しました`);
+    },
+    pin:id=>{const note=currentNotes[id];if(!note||note.deletedAt)return;scheduleSaveNote(id,{pinned:!note.pinned});flushPendingSave(id);renderList(searchInput.value);if(id===activeNoteId)btnPin.classList.toggle('active',!!note.pinned);}
 });
 const folderListButton = document.createElement('button'); folderListButton.id = 'btn-folder-list'; folderListButton.type = 'button'; folderListButton.className = 'm3-icon-button mobile-only'; folderListButton.title = 'フォルダとメモ一覧'; folderListButton.setAttribute('aria-label', folderListButton.title);
 folderListButton.innerHTML = '<span class="material-symbols-outlined">folder_open</span>';
@@ -614,6 +628,8 @@ function restoreEditorScrollState(state) {
 function setStatus(type, text) {
     statusBar.className = `m3-badge status-${type}`;
     statusText.textContent = text;
+    statusBar.title = currentUserId && !remoteConnected ? `${text} · クリックして再接続` : text;
+    statusBar.setAttribute('aria-label',currentUserId&&!remoteConnected?`${text}。押すと再接続します`:text);
 }
 
 function showToast(msg, duration = 4000, actions = null) {
@@ -685,7 +701,7 @@ function showToast(msg, duration = 4000, actions = null) {
     setTimeout(dismiss, autoDuration);
 }
 
-window.addEventListener('online', () => { void resumeCloudSync(); });
+window.addEventListener('online', () => { void resumeCloudSync();syncRecovery.refresh(); });
 window.addEventListener('offline', () => setStatus('offline', 'ローカル保存済み'));
 
 function renderAppVersion() {
@@ -998,6 +1014,7 @@ function pushTextHistory(text) {
 // ★ アクティブなリスト項目だけのピンポイントDOM更新（全体DOM全破棄・全再構築を防止して省メモリ＆CPU化）
 function updateActiveNoteItemDOM(id) {
     if (!id) return;
+    if(id!==activeNoteId){renderList(searchInput.value);return;}
     const activeLi = noteList.querySelector(`.note-item.active`);
     if (!activeLi) {
         renderList(searchInput.value);
@@ -1019,6 +1036,7 @@ function updateActiveNoteItemDOM(id) {
 // ★ ローカル即時（0ms）反映＋RTDB通信デバウンス（750ms）で通信量を最少化
 function scheduleSaveNote(id, updatedFields) {
     if (!id || !currentNotes[id]) return;
+    if(syncDebounceTimer && activeNoteId && id!==activeNoteId)flushPendingSave(activeNoteId);
 
     const dirtyFields = pendingEditFields.get(id) || new Set();
     for (const key of Object.keys(updatedFields)) dirtyFields.add(key);
@@ -1028,8 +1046,7 @@ function scheduleSaveNote(id, updatedFields) {
     saveLocalNote(currentNotes[id]);
 
     updateActiveNoteItemDOM(id);
-    updateTitlePlaceholder(currentNotes[id]);
-    updateEditorFooter();
+    if(id===activeNoteId){updateTitlePlaceholder(currentNotes[id]);updateEditorFooter();}
 
     setStatus('saving', '保存中...');
 
@@ -1229,6 +1246,7 @@ function deleteLocalNote(id, pending = true) {
 }
 async function clearLocalData() {
     ++cacheGeneration;
+    noteMenu.close();
     localRecoveryIds.clear(); recoveryNotices.clear();
     clearTimeout(syncDebounceTimer);
     syncDebounceTimer = null;
@@ -1384,6 +1402,9 @@ function renderList(filter = '') {
             titleSpan.textContent = getNoteDisplayTitle(n);
         }
         contentDiv.appendChild(titleSpan);
+        if(currentTab==='notes' && folders.active==='all'){
+            const place=document.createElement('span');place.className='note-folder-location';const icon=document.createElement('span');icon.className='material-symbols-outlined';icon.setAttribute('aria-hidden','true');icon.textContent='folder';const name=document.createElement('span');name.textContent=folders.location(n).name;place.append(icon,name);place.title=`保存先：${folders.location(n).name}`;contentDiv.append(place);
+        }
 
         if (currentTab === 'trash') {
             const subMeta = document.createElement('span');
@@ -1408,6 +1429,11 @@ function renderList(filter = '') {
         };
 
         li.appendChild(contentDiv);
+        if(currentTab==='notes'){
+            const more=document.createElement('button');more.type='button';more.className='btn-note-more';more.title='メモの操作';more.setAttribute('aria-label',`${getNoteDisplayTitle(n)}：メモの操作`);more.setAttribute('aria-haspopup','dialog');more.setAttribute('aria-expanded','false');more.innerHTML='<span class="material-symbols-outlined" aria-hidden="true">more_horiz</span>';
+            more.onclick=event=>{event.stopPropagation();noteMenu.open(n.id,more);};
+            li.oncontextmenu=event=>{event.preventDefault();noteMenu.open(n.id,more,event);};li.append(more);
+        }
         li.appendChild(delBtn);
         noteList.appendChild(li);
     });
@@ -2271,6 +2297,7 @@ let isTransferring = false;
 function setTransferUILock(isLocked) {
     isLocked = isLocked || !!transferManager?.isSending || !!transferManager?.incomingFileInfo;
     isTransferring = isLocked;
+    if(!isLocked)syncRecovery.refresh();
     const elementsToLock = [
         dropzoneArea,
         fileInput,
@@ -2937,7 +2964,8 @@ document.querySelectorAll('.dev-filter-btn').forEach(btn => {
 if (statusBar) {
     statusBar.onclick = () => {
         const text = statusText?.textContent || '同期完了';
-        showToast(`ステータス: ${text}`);
+        if(currentUserId && !remoteConnected){void resumeCloudSync();syncRecovery.refresh();showToast('クラウドへの再接続を試みています。端末に保存したメモは保持しています。');}
+        else showToast(`ステータス: ${text}`);
     };
 }
 
@@ -3181,6 +3209,7 @@ document.getElementById('btn-google-other').onclick = () => loginWithProvider(ne
 
 onAuthStateChanged(auth, async user => {
     const generation = ++authGeneration;
+    syncRecovery.session(user ? `${generation}:${user.uid}` : null);
     historySelection = '';
     historyPanel?.accountChanged();
     clipboardAdapter?.stopSelection().catch(() => {});
@@ -3243,6 +3272,7 @@ onAuthStateChanged(auth, async user => {
         stopSyncConnection = onValue(ref(db, '.info/connected'), snapshot => {
             if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
             remoteConnected = snapshot.val() === true; refreshCloudStatus();
+            syncRecovery.connection(remoteConnected);
             if (remoteConnected) for (const id of pendingLocalIds) if (currentNotes[id]) syncSaveNote(currentNotes[id]);
         });
         currentDbRef = ref(db, `users/${user.uid}/notes`);
@@ -3429,9 +3459,11 @@ window.addEventListener('pagehide', (e) => {
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
         handleNoteSave(); // P2P は切断しない
+        syncRecovery.refresh();
     } else if (document.visibilityState === 'visible') {
         checkPendingExtensionNotes();
         if (isDesktop) void resumeCloudSync();
+        syncRecovery.refresh();
     }
 });
 
@@ -3455,7 +3487,15 @@ historyButton.onclick = () => openHistoryPanel().catch(error => showToast(String
 setupColorPicker({ win: window, doc: document, isDesktop, native: desktopReady.then(module => module?.desktop), notify: showToast });
 if (isDesktop) {
     desktopReady.then(async ({ setupDesktop, desktop }) => {
-        await setupDesktop({ notify: showToast, resume: resumeCloudSync, prepareClose: async () => {
+        await setupDesktop({ notify: showToast, resume: resumeCloudSync, probeConnection: async () => {
+            // Only the disposable diagnostic profile calls this. No user data is read.
+            localStorage.setItem('firebase:previous_websocket_failure','true');
+            let stop, timer;
+            try { await new Promise((resolve,reject)=>{
+                timer=setTimeout(()=>reject(new Error('WindowsのFirebase WebSocket接続を確認できません')),15000);
+                stop=onValue(ref(db,'.info/connected'),snapshot=>{if(snapshot.val()===true)resolve();},reject);
+            }); } finally {clearTimeout(timer);stop?.();goOffline(db);}
+        }, prepareClose: async () => {
             if (transferManager?.isSending || transferManager?.incomingFileInfo) {
                 if (!window.confirm('ファイル転送中です。転送を中止して画面を閉じますか？')) throw new Error('画面を開いたまま転送を続けます');
                 transferManager.stopDevicePresence();

@@ -2,6 +2,8 @@ import { directorySink } from '../streamingFiles.js';
 import { setupFolders } from '../platform/folders.js';
 import { reconcileNote, sameValue } from '../noteSync.js';
 import { setupShareQr } from '../platform/shareQr.js';
+import { createSyncRecovery } from '../platform/syncRecovery.js';
+import { setupNoteMenu } from '../platform/noteMenu.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -31,6 +33,8 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
         pretendToBeVisual: true
     });
     const window = dom.window;
+    window.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')};
+    window.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')};
     if (directoryPicker) window.showDirectoryPicker = directoryPicker;
     window.matchMedia = () => ({ matches: false });
     window.open = url => { calls.opened.push(url); return calls.popup; };
@@ -95,6 +99,9 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
         './fileTransfer.js': { FileTransferManager: class { stopDevicePresence() {} } }
     };
     dependencies['./platform/shareQr.js'] = { setupShareQr: args => setupShareQr({ ...args, doc: window.document }) };
+    dependencies['./platform/databaseTransport.js'] = { configureDatabaseTransport:()=>{} };
+    dependencies['./platform/syncRecovery.js'] = { createSyncRecovery };
+    dependencies['./platform/noteMenu.js'] = { setupNoteMenu:args=>setupNoteMenu({...args,doc:window.document,win:window}) };
     const sandbox = { window, document: window.document, navigator: window.navigator, location: window.location,
         crypto: webcrypto, performance: window.performance, URL, URLSearchParams, TextEncoder, Uint8Array,
         structuredClone, Blob, File: window.File, console: { log() {}, warn() {}, error() {}, info() {} },
@@ -359,4 +366,23 @@ test('resume reconnects once, adopts fresh server notes and does not run for gue
   assert.equal(app.document.getElementById('note-body').value,'new PWA body');
   assert.equal(app.calls.writes.length,0);
  }finally{app.close()}
+});
+
+test('note menu moves a non-active memo without changing the editor or cancelling its pending body save',async()=>{
+ const app=await setup();try{
+  const doc=app.document;doc.querySelector('[data-add]').click();const form=doc.querySelector('.folder-dialog form');form.elements.name.value='仕事';form.dispatchEvent(new app.dom.window.Event('submit',{cancelable:true}));
+  const a={id:'a',title:'Active',body:'A'},b={id:'b',title:'Other',body:'B'};app.api.setNotes({a,b});app.api.selectNote('a',false);doc.getElementById('note-body').value='pending body';app.api.scheduleSaveNote('a',{body:'pending body'});app.api.renderList();
+  const more=[...doc.querySelectorAll('.btn-note-more')].find(button=>button.getAttribute('aria-label').includes('Other'));
+  assert.equal(more.nextElementSibling.classList.contains('btn-delete'),true);more.click();
+  [...doc.querySelectorAll('.note-actions-menu button')].find(button=>button.textContent.includes('フォルダを変更')).click();
+  [...doc.querySelectorAll('.note-actions-menu button')].find(button=>button.textContent.endsWith('仕事')).click();
+  await app.api.drainCloudForTest();
+  assert.equal(app.api.activeIdForTest(),'a');assert.equal(doc.getElementById('note-body').value,'pending body');assert.equal(doc.querySelector('.note-item.active .title').textContent,'Active');
+  assert.equal(app.api.notesForTest().a.body,'pending body');assert.ok(app.api.notesForTest().b.folderId);assert.equal((await app.store.get('guest','a')).note.body,'pending body');
+  assert.equal([...doc.querySelectorAll('.note-item')].find(row=>row.textContent.includes('Other')).querySelector('.note-folder-location').textContent.includes('仕事'),true);
+ }finally{app.close()}
+});
+
+test('right-click opens the same note menu and account cleanup invalidates its old actions',async()=>{
+ const app=await setup();try{app.api.setNotes({n:{id:'n',title:'<img src=x>',body:'safe'}});app.api.renderList();const row=app.document.querySelector('.note-item');row.dispatchEvent(new app.dom.window.MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:20,clientY:30}));assert.equal(app.document.querySelector('.note-actions-menu').hidden,false);assert.equal(app.document.querySelectorAll('.note-actions-menu img').length,0);const pin=[...app.document.querySelectorAll('.note-actions-menu button')].find(b=>b.textContent.includes('ピン留め'));await app.api.clearLocalData();pin.click();assert.equal(app.document.querySelector('.note-actions-menu').hidden,true);assert.equal(Object.keys(app.api.notesForTest()).length,0);}finally{app.close()}
 });

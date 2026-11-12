@@ -92,6 +92,8 @@ export function setupFolders({ doc = document, win = window, notes, select, move
     }
     return {
         render, setOwner, effective, get active() { return active; },
+        choices:()=>[{id:'',name:'未分類'},...currentItems().map(item=>({id:item.id,name:item.name}))],
+        location(note){const id=effective(note);return{id,name:id?items[id].name:'未分類'};},
         setActive(id) { active = ['all', 'unfiled'].includes(id) || (items[id] && !items[id].deletedAt) ? id : 'all'; render(); },
         matches(note) { return active === 'all' || effective(note) === (active === 'unfiled' ? '' : active); },
         selected(note) { picker.querySelector('select').value = effective(note); picker.querySelector('select').disabled = !!note.deletedAt; },
