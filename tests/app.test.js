@@ -54,7 +54,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     };
     const snapshots = new Map(), remoteValues = new Map();
     const dbApi = { getDatabase: () => ({}), ref: (_, path) => path,
-        set: async (path,value) => {calls.writes.push({path,value});}, remove: async () => {}, get: async path => ({ val: () => remoteValues.get(path) ?? null }),
+        set: async (path,value) => {calls.writes.push({path,value});}, remove: async path => {calls.writes.push({path,deleted:true});}, get: async path => ({ val: () => remoteValues.get(path) ?? null }),
         runTransaction: async (path, callback) => {
             const returned = callback(structuredClone(remoteValues.get(path) ?? null));
             const value = returned === undefined ? undefined : firebaseValue(returned);
@@ -87,7 +87,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     const dependencies = { './streamingFiles.js': { directorySink }, './platform/folders.js': { setupFolders: args => setupFolders({ ...args, doc: window.document, win: window }) }, './noteSync.js': { reconcileNote, sameValue },
         'firebase/app': { initializeApp: () => ({}) }, 'firebase/auth': authApi, 'firebase/database': dbApi,
         './archiveNames.js': archiveNames, './clipboardFiles.js': clipboardFiles, './authProtocol.js': protocol, './noteData.js': noteData,
-        './noteStore.js': { NoteStore: class extends NoteStore { constructor() { super(factory); } async put(...args){await super.put(...args);await saveGate?.();} } },
+        './noteStore.js': { NoteStore: class extends NoteStore { constructor() { super(factory); } async put(...args){const dirty=await super.put(...args);await saveGate?.();return dirty;} } },
         './platform/writeBarrier.js': { WriteBarrier },
         './platform/colorPicker.js': { setupColorPicker },
         './platform/navigation.js': { createNavigation },
@@ -105,7 +105,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     const context = vm.createContext(sandbox);
     const source = await fs.readFile(new URL('../app.js', import.meta.url), 'utf8');
     const module = new vm.SourceTextModule(source + `
-        export { recoverDraft, createNewNote, safeCloudWrite, scheduleSaveNote, flushPendingSave, loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
+        export { recoverDraft, createNewNote, safeCloudWrite, syncDeleteNote, scheduleSaveNote, flushPendingSave, loginWithProvider, handleExternalAuthSuccess, finishAuthAttempt, renderList, buildCodeBlockHTML, resetTextHistory, pushTextHistory, clearLocalData, saveHistoryNote, selectNote, openTransferView };
         export function changeTestOwner(uid){currentUserId=uid;remoteConnected=true;auth.currentUser=uid?{uid}:null;isGuestMode=!uid;++authGeneration;currentNotes={};}
         export function setNotes(notes) { currentNotes = notes; }
         export function notesForTest() { return currentNotes; }
@@ -125,7 +125,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     });
     await module.evaluate();
     await authCallback(null);
-    return { dom, login: async user => { auth.currentUser=user; await authCallback(user); }, remote: (path,value) => remoteValues.set(path,structuredClone(value)), snapshot: async (path,value) => { if (value && typeof value === 'object') for (const [id,note] of Object.entries(value)) remoteValues.set(path + '/' + id,structuredClone(note)); return snapshots.get(path)?.({ val: () => value }); }, api: module.namespace, calls, chrome, session, document: window.document,
+    return { dom, store:seed, login: async user => { auth.currentUser=user; await authCallback(user); }, remote: (path,value) => remoteValues.set(path,structuredClone(value)), snapshot: async (path,value) => { if (value && typeof value === 'object') for (const [id,note] of Object.entries(value)) remoteValues.set(path + '/' + id,structuredClone(note)); return snapshots.get(path)?.({ val: () => value }); }, api: module.namespace, calls, chrome, session, document: window.document,
         message: (...args) => messageListener(...args), close: () => dom.window.close() };
 }
 
@@ -318,4 +318,17 @@ test('legacy recursive backups in the offline outbox are quarantined before reco
  const draft={id:'old_backup',body:'preserved old draft',title:'memo（競合の控え）',conflictOf:'original'};
  const app=await setup({cachedRows:[{owner:'alice',id:draft.id,note:draft,pending:true}]});
  try{await app.login({uid:'alice',displayName:'Test'});await app.snapshot('.info/connected',true);await app.snapshot('users/alice/notes',{});await app.api.drainCloudForTest();assert.equal(app.api.notesForTest()[draft.id].body,draft.body);assert.equal(app.calls.writes.length,0);assert.equal(Object.keys(app.api.notesForTest()).length,1);}finally{app.close()}
+});
+
+test('a stale tab cannot upload or remotely delete an ID protected by another tab',async()=>{
+ const app=await setup();
+ try{
+  await app.login({uid:'alice',displayName:'Test'});await app.snapshot('.info/connected',true);
+  const original={id:'memo',body:'old tab',title:'memo'},recovery={...original,body:'protected by another tab',conflictOf:'memo'};
+  app.api.setNotes({memo:original});await app.store.putRecovery('alice',recovery);
+  await app.api.syncDeleteNote(original.id);assert.equal(app.calls.writes.length,0);
+  await app.api.safeCloudWrite(original.id);assert.equal(app.calls.writes.length,0);
+  assert.equal(app.api.notesForTest().memo.body,recovery.body);
+  assert.equal((await app.store.get('alice','memo')).note.body,recovery.body);
+ }finally{app.close()}
 });

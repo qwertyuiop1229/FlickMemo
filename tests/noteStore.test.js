@@ -114,3 +114,16 @@ test('a remote cache refresh cannot discard an unobserved pending draft and reco
  const stored=await first.putRecovery('alice',{...original,conflictOf:'original'});
  assert.equal(stored.body,newer.body);assert.equal((await other.get('alice','memo')).localRecovery,true);
 });
+
+test('another tab cannot replace or delete a protected recovery through a stale remote cache',async()=>{
+ const factory=new IDBFactory(),first=new NoteStore(factory),other=new NoteStore(factory);
+ const original={id:'memo',body:'base'},recovery={...original,body:'protected draft',conflictOf:'memo'};
+ await first.put('alice',original);await other.putRecovery('alice',recovery);
+ await first.put('alice',{...original,body:'remote text'},false,original);
+ await first.delete('alice',original.id);await first.delete('alice',original.id,true);
+ assert.equal((await other.get('alice',original.id)).note.body,recovery.body);
+ await other.put('alice',{...recovery,body:'explicit recovery edit'},false,undefined,true);
+ assert.equal((await first.get('alice',original.id)).note.body,'explicit recovery edit');
+ await other.delete('alice',original.id,false,true);
+ assert.equal(await first.get('alice',original.id),undefined);
+});

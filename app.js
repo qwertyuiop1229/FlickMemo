@@ -44,7 +44,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.116";
+const APP_VERSION = "1.3.117";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -277,6 +277,14 @@ async function writeNoteTransaction(id, fieldNames = null) {
     let release = null, readTimer = null;
     try {
         const row = await noteStore.get(owner, id);
+        if (row?.localRecovery) {
+            if (owner === currentUserId && generation === authGeneration) {
+                localRecoveryIds.add(id); pendingLocalIds.delete(id); currentNotes[id] = row.note;
+                renderList(searchInput.value);
+                if (activeNoteId === id) selectNote(id, false, true);
+            }
+            return false;
+        }
         const writtenFields = fieldNames || (row?.pendingFields || Object.keys(note));
         // Keep this location subscribed: get() alone may prune the SDK cache
         // before runTransaction reads its initial value.
@@ -330,11 +338,13 @@ async function writeNoteTransaction(id, fieldNames = null) {
 function syncSaveNote(note) { return note?.id ? safeCloudWrite(note.id) : Promise.resolve(false); }
 function syncUpdateNoteFields(id, fields) { return fields ? safeCloudWrite(id, fields) : Promise.resolve(false); }
 
-function syncDeleteNote(id) {
+async function syncDeleteNote(id) {
     if (!currentUserId || !id) return;
     if (localRecoveryIds.has(id)) return Promise.resolve(true);
-    const noteRef = ref(db, `users/${currentUserId}/notes/${id}`);
-    const owner = currentUserId;
+    const owner = currentUserId, generation = authGeneration;
+    const row = await noteStore.get(owner, id).catch(error => { localSaveError(error); return {localRecovery:true}; });
+    if (row?.localRecovery || owner !== currentUserId || generation !== authGeneration) return false;
+    const noteRef = ref(db, `users/${owner}/notes/${id}`);
     return remove(noteRef).then(() => {
         noteStore.delete(owner, id).catch(localSaveError);
         if (currentUserId === owner) pendingDeleteIds.delete(id);
@@ -1165,20 +1175,22 @@ async function loadLocalNotes() {
 }
 function saveLocalNote(note, pending = true, expectedPending = undefined) {
     if (!note?.id) return;
+    const recoveryEdit = pending && localRecoveryIds.has(note.id);
     pending = pending && !localRecoveryIds.has(note.id);
     if (pending && currentUserId) pendingLocalIds.add(note.id);
     const owner = cacheOwner(), snapshot = structuredClone(note);
-    return localWrites.track(`${owner}:${note.id}`, noteStore.put(owner, snapshot, pending && !!currentUserId, expectedPending)).then(dirty => {
+    return localWrites.track(`${owner}:${note.id}`, noteStore.put(owner, snapshot, pending && !!currentUserId, expectedPending, recoveryEdit)).then(dirty => {
         if (dirty === false && owner === cacheOwner() && sameValue(currentNotes[note.id],snapshot)) pendingLocalIds.delete(note.id);
         if (owner === cacheOwner() && activeNoteId === note.id && localRecoveryIds.has(note.id)) setStatus('synced','復旧メモをこの端末に保存済み');
     }).catch(localSaveError);
 }
 function deleteLocalNote(id, pending = true) {
     if (!id) return;
+    const recoveryEdit = pending && localRecoveryIds.has(id);
     pending = pending && !localRecoveryIds.has(id);
     pendingLocalIds.delete(id);
     if (pending && currentUserId) pendingDeleteIds.add(id);
-    localWrites.track(`${cacheOwner()}:${id}`, noteStore.delete(cacheOwner(), id, pending && !!currentUserId)).catch(localSaveError);
+    localWrites.track(`${cacheOwner()}:${id}`, noteStore.delete(cacheOwner(), id, pending && !!currentUserId, recoveryEdit)).catch(localSaveError);
 }
 async function clearLocalData() {
     ++cacheGeneration;

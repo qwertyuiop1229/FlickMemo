@@ -32,7 +32,7 @@ export class NoteStore {
             request.onerror = () => reject(request.error);
         });
     }
-    async put(owner, note, pending = false, expectedPending = undefined) {
+    async put(owner, note, pending = false, expectedPending = undefined, recoveryEdit = false) {
         // Snapshot now, before an account switch or subsequent edit can mutate it.
         const row = { owner, id: note.id, note: structuredClone(note), pending };
         let effectivePending = false;
@@ -40,6 +40,9 @@ export class NoteStore {
             const request = store.get([owner, note.id]);
             request.onsuccess = () => {
                 const previous = request.result;
+                // Another tab may have protected this ID after our last read.
+                // Remote cache refreshes must never replace that recovery.
+                if (!pending && previous?.localRecovery && !recoveryEdit) return;
                 if (!pending && previous?.pending && !sameValue(previous.note,row.note) && (expectedPending === undefined || !sameValue(previous.note,expectedPending))) {
                     effectivePending = true;
                     return;
@@ -74,8 +77,15 @@ export class NoteStore {
         });
         return stored;
     }
-    async delete(owner, id, pending = false) {
-        return this.write(store => pending ? store.put({ owner, id, note: null, pending: true }) : store.delete([owner, id]));
+    async delete(owner, id, pending = false, recoveryEdit = false) {
+        return this.write(store => {
+            const request = store.get([owner, id]);
+            request.onsuccess = () => {
+                if (request.result?.localRecovery && !recoveryEdit) return;
+                if (pending) store.put({ owner, id, note: null, pending: true });
+                else store.delete([owner, id]);
+            };
+        });
     }
     async acknowledge(owner, note, fields = null) {
         let acknowledged = false;
