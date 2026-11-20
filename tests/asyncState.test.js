@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {waitForAsyncState} from '../scripts/async-state.mjs';
+import {unchangedFor,waitForAsyncState} from '../scripts/async-state.mjs';
+
+test('a delayed final position update restarts the full quiet interval before measuring idle',()=>{
+    let time=0;
+    const settled=unchangedFor(state=>state.positionUpdates,300,()=>time);
+    assert.equal(settled({positionUpdates:80}),false);
+    time=200;
+    assert.equal(settled({positionUpdates:81}),false);
+    time=300;
+    assert.equal(settled({positionUpdates:81}),false);
+    time=500;
+    assert.equal(settled({positionUpdates:81}),true);
+    time=501;
+    assert.equal(settled({positionUpdates:82}),false);
+});
 test('IPC polling awaits each result and retries false asynchronous results until the condition is true',async()=>{
     let reads=0, inFlight=0;
     const state=await waitForAsyncState(async()=>{

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {waitForAsyncState} from './async-state.mjs';
+import {unchangedFor,waitForAsyncState} from './async-state.mjs';
 const exec=promisify(execFile);
 export async function verifyWindowsColors(page,pid,{baseline=false}={}){
  if(process.env.GITHUB_ACTIONS!=='true'||process.platform!=='win32')throw new Error('Disposable GitHub Windows runner required');
@@ -21,14 +21,18 @@ export async function verifyWindowsColors(page,pid,{baseline=false}={}){
  performance.positionUpdates=after.positionUpdates-before.positionUpdates;performance.sampleUpdates=after.sampleUpdates-before.sampleUpdates;
  performance.motionUpdates=(after.motionUpdates??0)-(before.motionUpdates??0);
  performance.followFps=Number((performance.positionUpdates/(performance.durationMs/1000)).toFixed(1));
- const idleBefore=await invoke('desktop_color_status'),idleStarted=Date.now(),idle=JSON.parse((await input('idle')).stdout),idleAfter=await invoke('desktop_color_status');
+ // Synthetic input stops before the native window has necessarily processed its
+ // final queued position. Require a quiet interval before measuring idle.
+ const settled=unchangedFor(status=>status.positionUpdates,300);
+ const idleBefore=await wait(status=>status.active&&settled(status),'カーソル停止後の描画完了');
+ const idleStarted=Date.now(),idle=JSON.parse((await input('idle')).stdout),idleAfter=await invoke('desktop_color_status');
  idle.observationMs=Date.now()-idleStarted;
  idle.positionUpdates=idleAfter.positionUpdates-idleBefore.positionUpdates;idle.sampleUpdates=idleAfter.sampleUpdates-idleBefore.sampleUpdates;
  performance.idle=idle;
+ await fs.writeFile(`desktop-reports/color-picker-${baseline?'baseline':'performance'}.json`,JSON.stringify(performance,null,2));
  assert.equal(idle.positionUpdates,0,'A stationary cursor must not reposition the picker');
  assert.ok(idle.sampleUpdates>0&&idle.sampleUpdates<=Math.ceil(idle.observationMs/25)+3,JSON.stringify(idle));
  assert.ok(idle.singleCoreCpuPercent<5,JSON.stringify(idle));
- await fs.writeFile(`desktop-reports/color-picker-${baseline?'baseline':'performance'}.json`,JSON.stringify(performance,null,2));
  assert.ok(performance.followFps>=25,JSON.stringify(performance));
  if(!baseline){assert.ok(performance.motionUpdates>0,'Real input must use the event-driven motion path');assert.ok(performance.motionUpdates<=Math.ceil(performance.durationMs/15)+2,'Motion messages must be throttled');const prior=JSON.parse(await fs.readFile('desktop-reports/color-picker-baseline.json','utf8'));assert.ok(performance.followFps>=prior.followFps*0.9,JSON.stringify({prior,performance}));assert.ok(performance.singleCoreCpuPercent<=prior.singleCoreCpuPercent*1.5+2,JSON.stringify({prior,performance}));}
  console.log(`${baseline?'Baseline':'Current'} color picker movement performance:`,performance);
