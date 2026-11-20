@@ -123,6 +123,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
         export function activeIdForTest() { return activeNoteId; }
         export function stageFilesForTest(files, manager) { transferManager = manager; stageFiles(files); }
         export function stagedCountForTest() { return stagedFilesQueue.length; }
+        export { handleFileReceived, handleAppExitCleanup };
         export async function drainCloudForTest() { for(let n=0;n<100;n++){await Promise.allSettled([...cloudWrites.values()].map(entry=>entry.promise));await new Promise(resolve=>setTimeout(resolve,1));if(!cloudWrites.size)return;}throw new Error('Cloud work did not settle'); }
         export function historySize() { return textHistory.reduce((sum, text) => sum + text.length, 0); }
     `, { context, importModuleDynamically: async () => { throw new Error('Unexpected eager dynamic import'); } });
@@ -387,4 +388,27 @@ test('note menu moves a non-active memo without changing the editor or cancellin
 
 test('right-click opens the same note menu and account cleanup invalidates its old actions',async()=>{
  const app=await setup();try{app.api.setNotes({n:{id:'n',title:'<img src=x>',body:'safe'}});app.api.renderList();const row=app.document.querySelector('.note-item');row.dispatchEvent(new app.dom.window.MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:20,clientY:30}));assert.equal(app.document.querySelector('.note-actions-menu').hidden,false);assert.equal(app.document.querySelectorAll('.note-actions-menu img').length,0);const pin=[...app.document.querySelectorAll('.note-actions-menu button')].find(b=>b.textContent.includes('ピン留め'));await app.api.clearLocalData();pin.click();assert.equal(app.document.querySelector('.note-actions-menu').hidden,true);assert.equal(Object.keys(app.api.notesForTest()).length,0);}finally{app.close()}
+});
+
+test('leaving a PWA page releases staged files, received ZIP data and history even when the page is cached', async()=>{
+    const app = await setup();
+    try {
+        const file = new Blob(['payload']);
+        const batch = {id:crypto.randomUUID(),total:2};
+        app.api.handleFileReceived(file,'first.txt','LAN_P2P',{...batch,index:0});
+        app.api.handleFileReceived(file,'second.txt','LAN_P2P',{...batch,index:1});
+        app.api.stageFilesForTest([{name:'pending.bin',size:1024}],{
+            stopDevicePresence(){}, resetReceiveBuffer(){}
+        });
+        const zip = app.document.getElementById('btn-received-zip');
+        assert.equal(zip.hidden,false);
+        assert.equal(app.document.querySelectorAll('.transfer-history-item').length,2);
+        const event = new app.dom.window.Event('pagehide');
+        Object.defineProperty(event,'persisted',{value:true});
+        app.dom.window.dispatchEvent(event);
+        assert.equal(zip.hidden,true);
+        assert.equal(app.api.stagedCountForTest(),0);
+        assert.equal(app.document.querySelectorAll('.transfer-history-item').length,0);
+        assert.deepEqual(await app.store.entries('guest'),[]);
+    } finally { app.close(); }
 });

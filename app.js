@@ -50,7 +50,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.121";
+const APP_VERSION = "1.3.122";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -2009,36 +2009,17 @@ function handleFileReceived(blob, filename, mode, batch) {
     }
     const emoji = getFileIconEmoji(filename, blob.type);
     if (transferStatusLabel) transferStatusLabel.textContent = '受信完了';
-    const isImage = isImageFile(filename, blob.type);
-
     // 履歴に追加（手動ダウンロード・コピーボタン付き）
     addTransferHistory(filename, blob.size, '受信', mode || 'LAN_P2P', blob);
     setTransferUILock(false);
     scheduleProgressAutoDismiss();
 
-    const actions = [];
-    if (isImage) {
-        actions.push({
-            label: 'プレビュー',
-            icon: 'visibility',
-            onClick: () => openImagePreviewModal(blob, filename)
-        });
-    }
-    actions.push({
-        label: 'コピー',
-        icon: 'content_copy',
-        onClick: () => copyFileToClipboard(blob, filename)
-    });
-    actions.push({
-        label: '保存',
-        icon: 'download',
-        onClick: () => {
-            downloadBlob(blob, filename);
-            showToast(`💾 「${filename}」をダウンロードしました`);
+    showToast(`${emoji} 「${filename}」を受信しました`, 7000, [{
+        label: '履歴を開く', icon: 'history', onClick: () => {
+            openTransferView();
+            document.querySelector('.transfers-history-card').open = true;
         }
-    });
-
-    showToast(`${emoji} 「${filename}」を受信しました`, 7000, actions);
+    }]);
 }
 
 function handleTransferProgress(bytes, total, name, direction) {
@@ -3505,18 +3486,29 @@ function handleNoteSave() {
 }
 
 // ★ アプリ完全終了時のみ P2P を切断（タスクキル・タブ閉じ・スマホスワイプ終了・メモリ完全解放）
-function handleAppExitCleanup() {
+function releaseTransferPayloads() {
+    closeImagePreviewModal();
     // アクティブな全 Blob URL を一括破棄（iOS Safari メモリリーク防止）
     activeBlobUrls.forEach(url => {
         try { URL.revokeObjectURL(url); } catch (e) {}
     });
     activeBlobUrls.clear();
+    clearTransferHistoryUI();
+    clearTimeout(autoDismissProgressTimer);
+    transferProgressCard?.classList.add('hidden');
+    stagedFilesQueue = [];
+    if (fileInput) fileInput.value = '';
+    renderStagedFilesUI();
+}
 
+function handleAppExitCleanup() {
     if (transferManager) {
         transferManager.stopDevicePresence();
         transferManager.resetReceiveBuffer();
     }
-    stagedFilesQueue = [];
+    releaseTransferPayloads();
+    updateTransferSteps(false);
+    setTransferUILock(false);
     handleNoteSave();
 }
 
@@ -3525,10 +3517,9 @@ window.addEventListener('beforeunload', handleAppExitCleanup);
 
 // iOS PWA / モバイルのスワイプ終了・ホームボタン長押し強制終了 → P2P クリーンアップ
 // (pagehide の persisted=false =本当のページ破棄のみ対応)
-window.addEventListener('pagehide', (e) => {
-    if (!e.persisted) {
-        handleAppExitCleanup();
-    }
+window.addEventListener('pagehide', handleAppExitCleanup);
+window.addEventListener('pageshow', event => {
+    if (event.persisted && currentTab === 'transfer') openTransferView();
 });
 
 // ウィンドウ最小化・バックグラウンド移行 → メモ保存のみ、P2P 接続は維持
@@ -3582,6 +3573,7 @@ if (isDesktop) {
                 if (activeNoteId && currentNotes[activeNoteId]) await saveLocalNote(currentNotes[activeNoteId]);
                 await localWrites.drain();
                 localStorage.setItem(`desktop-active:${cacheOwner()}`, activeNoteId || '');
+                releaseTransferPayloads();
             } finally { document.body.inert = false; }
         }});
     }).catch(error => showToast('Windows機能を開始できませんでした: ' + String(error)));

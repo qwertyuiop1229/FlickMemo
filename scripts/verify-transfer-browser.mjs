@@ -12,6 +12,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`${base}/tests/fixtures/transfer-browser.html`, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => typeof document.getElementById('run').onclick === 'function');
     await page.locator('#run').click();
     // A large virtual source may legitimately take over a minute on a slow
     // browser. Poll a few times per second, avoiding a frame-by-frame observer.

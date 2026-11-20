@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "flickmemo-desktop"
-version = "1.3.121"
+version = "1.3.122"
 dependencies = [
  "base64 0.22.1",
  "form_urlencoded",

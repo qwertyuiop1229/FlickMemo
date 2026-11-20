@@ -35,7 +35,21 @@ for (const channel of ['chrome','msedge']) {
   await page.screenshot({path:`desktop-reports/transfer-${channel}-390.png`});
   await page.setViewportSize({width:1100,height:800});
   await page.screenshot({path:`desktop-reports/transfer-${channel}-1100.png`});
+  const inspectStorage = () => page.evaluate(async()=>({
+     caches: await caches.keys(), databases: await indexedDB.databases(),
+     usage: (await navigator.storage.estimate()).usage,
+  }));
+  const before=await inspectStorage();
+  const payload=Buffer.alloc(16*1024*1024,0x7b);
+  await page.locator('#file-input').setInputFiles({name:'large.bin',mimeType:'application/octet-stream',buffer:payload});
+  await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
+  assert.equal(await page.locator('#staged-file-count').textContent(),'0');
+  assert.equal(await page.locator('#file-input').evaluate(input=>input.files.length),0);
+  const after=await inspectStorage();
+  assert.deepEqual(after.caches,before.caches);
+  assert.deepEqual(after.databases,before.databases);
+  assert.ok(after.usage-before.usage < payload.length / 4,'Transfer must not enlarge persistent storage by the payload size');
   assert.deepEqual(errors,[]);
-  console.log(`${channel}: folder management, restored folder, staged transfer and mobile layout PASS`);
+  console.log(`${channel}: folder management, restored folder, staged transfer, mobile layout and no payload-sized storage growth PASS`);
  } finally {await browser.close();}
 }

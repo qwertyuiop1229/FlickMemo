@@ -297,7 +297,8 @@ fn create_receive_zip(service: &Service, entries: Vec<(String, String)>) -> Resu
             let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated)
                 .compression_level(Some(3))
-                .large_file(size >= 0xffff_0000);
+                // Reserve headroom for DEFLATE expansion on incompressible data.
+                .large_file(size >= 0xff00_0000);
             zip.start_file(name, options)
                 .map_err(|_| "ZIPにファイルを追加できません")?;
             use std::io::Read;
