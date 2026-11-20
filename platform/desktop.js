@@ -7,6 +7,7 @@ import './desktopUpdates.css';
 let expectedOwner = 'guest';
 export const desktop = {
     receiveDirectory: () => invoke('desktop_receive_directory'),
+    receiveZip: entries => invoke('desktop_receive_zip', { entries }),
     receiveForget: () => invoke('desktop_receive_abort', { id: null }),
     receiveSink: async info => {
         const { id } = await invoke('desktop_receive_begin', { name: info.name, size: info.size }); let offset = 0;

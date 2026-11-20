@@ -556,6 +556,7 @@ fn main() {
             receive_files::desktop_receive_begin,
             receive_files::desktop_receive_write,
             receive_files::desktop_receive_finish,
+            receive_files::desktop_receive_zip,
             receive_files::desktop_receive_abort,
             startup::desktop_startup_status,
             startup::desktop_startup_set,

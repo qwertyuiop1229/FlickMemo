@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::{
+    collections::VecDeque,
     fs::{File, OpenOptions},
     io::Write,
     path::PathBuf,
@@ -15,6 +16,8 @@ pub struct Receiver {
     directory: Option<PathBuf>,
     active: Option<Partial>,
     selection_generation: u64,
+    completed: VecDeque<(String, PathBuf, u64)>,
+    archiving: bool,
 }
 struct Partial {
     id: String,
@@ -40,6 +43,7 @@ pub struct Started {
 #[serde(rename_all = "camelCase")]
 pub struct Saved {
     saved: bool,
+    archive_id: String,
     saved_name: String,
     size: u64,
 }
@@ -81,12 +85,14 @@ impl Receiver {
             return Err("受信が終了してから保存先を選択してください".into());
         }
         self.directory = Some(directory);
+        self.completed.clear();
         Ok(true)
     }
     fn forget(&mut self) {
         self.begin_selection();
         self.active.take();
         self.directory = None;
+        self.completed.clear();
     }
 
     fn begin(&mut self, name: &str, size: u64) -> Result<Started, String> {
@@ -185,6 +191,7 @@ impl Receiver {
         }
         let result = Saved {
             saved: true,
+            archive_id: id.to_owned(),
             saved_name: active
                 .destination
                 .file_name()
@@ -193,9 +200,130 @@ impl Receiver {
                 .into(),
             size: active.size,
         };
+        if self.completed.len() == 1000 {
+            self.completed.pop_front();
+        }
+        self.completed
+            .push_back((id.to_owned(), target, active.size));
         self.active.take();
         Ok(result)
     }
+}
+
+#[tauri::command]
+pub async fn desktop_receive_zip(
+    state: State<'_, Service>,
+    entries: Vec<(String, String)>,
+) -> Result<String, String> {
+    let service = state.inner().clone();
+    task(move || create_receive_zip(&service, entries)).await
+}
+
+fn create_receive_zip(service: &Service, entries: Vec<(String, String)>) -> Result<String, String> {
+    use std::{
+        collections::HashSet,
+        os::windows::fs::{MetadataExt, OpenOptionsExt},
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
+    };
+    if !(2..=1000).contains(&entries.len()) {
+        return Err("ZIPにまとめるファイル数が不正です".into());
+    }
+    let (directory, generation, files) = {
+        let mut receiver = service.lock().map_err(|_| "受信状態を確認できません")?;
+        if receiver.archiving {
+            return Err("ZIPを作成中です".into());
+        }
+        let directory = receiver
+            .directory
+            .clone()
+            .ok_or("受信の保存先を選択してください")?;
+        let mut names = HashSet::new();
+        let mut files = Vec::new();
+        for (id, name) in entries {
+            let (_, path, size) = receiver
+                .completed
+                .iter()
+                .find(|entry| entry.0 == id)
+                .ok_or("受信ファイルが見つかりません")?;
+            let clean = safe_name(&name);
+            let mut unique = clean.clone();
+            let mut index = 2;
+            while !names.insert(unique.to_lowercase()) {
+                unique = format!("{index}-{clean}");
+                index += 1;
+            }
+            files.push((path.clone(), *size, unique));
+        }
+        receiver.archiving = true;
+        (directory, receiver.selection_generation, files)
+    };
+    let id = uuid::Uuid::new_v4();
+    let name = format!("FlickMemo-{id}.zip");
+    let temporary = directory.join(format!("FlickMemo-{id}.zip.part"));
+    let mut created = false;
+    let result = (|| {
+        let output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|_| "ZIPの保存先を開けません")?;
+        created = true;
+        let mut zip = zip::ZipWriter::new(output);
+        for (path, size, name) in files {
+            if service
+                .lock()
+                .map_err(|_| "受信状態を確認できません")?
+                .selection_generation
+                != generation
+            {
+                return Err("保存先が変更されました");
+            }
+            let input = OpenOptions::new()
+                .read(true)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(path)
+                .map_err(|_| "受信ファイルを開けません")?;
+            let meta = input
+                .metadata()
+                .map_err(|_| "受信ファイルを確認できません")?;
+            if !meta.is_file()
+                || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                || meta.len() != size
+            {
+                return Err("受信ファイルが変更されました");
+            }
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .compression_level(Some(3))
+                .large_file(size >= 0xffff_0000);
+            zip.start_file(name, options)
+                .map_err(|_| "ZIPにファイルを追加できません")?;
+            use std::io::Read;
+            let copied = std::io::copy(&mut input.take(size), &mut zip)
+                .map_err(|_| "圧縮に失敗しました。空き容量を確認してください")?;
+            if copied != size {
+                return Err("受信ファイルが変更されました");
+            }
+        }
+        zip.finish()
+            .and_then(|file| Ok(file.sync_all()?))
+            .map_err(|_| "ZIPを確定できません")?;
+        let receiver = service.lock().map_err(|_| "受信状態を確認できません")?;
+        if receiver.selection_generation != generation {
+            return Err("保存先が変更されました");
+        }
+        std::fs::rename(&temporary, directory.join(&name)).map_err(|_| "ZIPを保存できません")?;
+        Ok(name)
+    })();
+    if created && result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    if let Ok(mut receiver) = service.lock() {
+        receiver.archiving = false;
+    }
+    result.map_err(String::from)
 }
 async fn task<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
@@ -356,6 +484,48 @@ pub async fn desktop_receive_abort(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn archives_only_completed_files_and_preserves_duplicate_names_and_content() {
+        use std::io::Read;
+        let dir = std::env::temp_dir().join(format!("FlickMemo-zip-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let mut receiver = Receiver::diagnostic(dir.clone());
+        let mut entries = Vec::new();
+        let mut paths = Vec::new();
+        for bytes in [b"first".as_slice(), b"second".as_slice()] {
+            let started = receiver.begin("same.txt", bytes.len() as u64).unwrap();
+            receiver.write(&started.id, 0, bytes).unwrap();
+            let saved = receiver.finish(&started.id).unwrap();
+            entries.push((saved.archive_id, "same.txt".to_owned()));
+            paths.push(dir.join(saved.saved_name));
+        }
+        let service = Arc::new(Mutex::new(receiver));
+        assert!(create_receive_zip(&service, vec![("unknown".into(), "a".into()); 2]).is_err());
+        let path = dir.join(create_receive_zip(&service, entries.clone()).unwrap());
+        let mut archive = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+        let mut content = String::new();
+        archive
+            .by_name("same.txt")
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
+        assert_eq!(content, "first");
+        content.clear();
+        archive
+            .by_name("2-same.txt")
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
+        assert_eq!(content, "second");
+        drop(archive);
+        std::fs::remove_file(path).unwrap();
+        for path in paths {
+            std::fs::remove_file(path).unwrap();
+        }
+        assert!(create_receive_zip(&service, entries).is_err());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir(dir).unwrap();
+    }
     #[test]
     fn writes_in_order_commits_only_complete_files_and_cleans_partial_data() {
         let dir =

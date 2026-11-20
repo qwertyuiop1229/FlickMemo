@@ -1,4 +1,5 @@
 import { directorySink } from '../streamingFiles.js';
+import { createReceivedArchive, writeReceivedZip } from '../platform/receivedArchive.js';
 import { setupFolders } from '../platform/folders.js';
 import { reconcileNote, sameValue } from '../noteSync.js';
 import { setupShareQr } from '../platform/shareQr.js';
@@ -99,6 +100,7 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
         './fileTransfer.js': { FileTransferManager: class { stopDevicePresence() {} } }
     };
     dependencies['./platform/shareQr.js'] = { setupShareQr: args => setupShareQr({ ...args, doc: window.document }) };
+    dependencies['./platform/receivedArchive.js'] = { createReceivedArchive, writeReceivedZip };
     dependencies['./platform/databaseTransport.js'] = { configureDatabaseTransport:()=>{} };
     dependencies['./platform/syncRecovery.js'] = { createSyncRecovery };
     dependencies['./platform/noteMenu.js'] = { setupNoteMenu:args=>setupNoteMenu({...args,doc:window.document,win:window}) };

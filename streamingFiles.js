@@ -13,7 +13,7 @@ export async function directorySink(directory, info, env = globalThis) {
         async close() {
             if (aborted || bytes !== info.size) throw Error('受信ファイルの長さが一致しません');
             await writer.close(); if (aborted) throw Error('受信を中止しました'); closed = true;
-            return { saved: true, savedName: name, size: bytes, type: info.mime || 'application/octet-stream' };
+            return { saved: true, savedName: name, size: bytes, type: info.mime || 'application/octet-stream', handle, directory };
         },
         async abort() { if (closed || aborted) return; aborted = true; try { await writer.abort(); } catch {} await directory.removeEntry(name).catch(() => {}); }
     };

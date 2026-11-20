@@ -718,6 +718,7 @@ export class FileTransferManager {
                         } else if (meta.type === 'RECEIVE_CAPACITY') {
                             if (!this._protocolReady || !Number.isSafeInteger(meta.maxReceiveBytes) || meta.maxReceiveBytes < 0) throw new Error('受信可能サイズが不正です');
                             this._peerReceiveLimit = meta.maxReceiveBytes;
+                            this.onStatusUpdate('receive_capacity', this._peerReceiveLimit);
                         } else if (meta.type === 'HELLO_ACK') {
                             if (meta.protocol !== TRANSFER_PROTOCOL_VERSION || meta.nonce !== handshake.nonce) throw new Error(UPDATE_MESSAGE);
                             if (handshake.roomKey && meta.proof !== await this.keyProof(handshake.nonce)) throw new Error('共有リンクの暗号鍵が一致しません。リンクを作り直して再接続してください');
@@ -761,7 +762,7 @@ export class FileTransferManager {
                                 this._receiveSink = null;
                                 this.resetReceiveBuffer();
                                 clearTimeout(this._receiveTimer);
-                                await this.onFileReceived(blob, this.sanitizeFilename(info.name), info.mode || 'WAN_P2P');
+                                await this.onFileReceived(blob, this.sanitizeFilename(info.name), info.mode || 'WAN_P2P', info.batch);
                                 if (generation !== this._receiveGeneration) return;
                                 dc.send(JSON.stringify({ type: 'file_received', id: info.id, bytes: info.size }));
                                 this.onStatusUpdate('remote_transfer_lock', false);
@@ -855,7 +856,9 @@ export class FileTransferManager {
         return 'WAN_P2P';
     }
 
-    async sendFileP2P(file) {
+    get peerReceiveLimit() { return this._peerReceiveLimit; }
+
+    async sendFileP2P(file, batch) {
         const channel = this.dataChannel;
         if (!channel || channel.readyState !== 'open') throw new Error('送信先に接続してください');
         await this._readyPromise;
@@ -912,7 +915,7 @@ export class FileTransferManager {
             this.onProgress(0, file.size, file.name, 'send');
             channel.send(JSON.stringify({ type: 'TRANSFER_LOCK' }));
             channel.send(JSON.stringify({ type: 'file_header', id, name: file.name, size: file.size,
-                mime: file.type || 'application/octet-stream', mode, encrypted, chunkSize }));
+                mime: file.type || 'application/octet-stream', mode, encrypted, chunkSize, batch }));
             while (sent < file.size) {
                 while (sent - acknowledged >= SEND_WINDOW_BYTES || (channel.bufferedAmount || 0) > SEND_WINDOW_BYTES) {
                     assertConnected();

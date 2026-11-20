@@ -1,4 +1,5 @@
 import { directorySink } from './streamingFiles.js';
+import { createReceivedArchive, writeReceivedZip } from './platform/receivedArchive.js';
 import { setupFolders } from './platform/folders.js';
 import { reconcileNote, sameValue } from './noteSync.js';
 import { setupShareQr } from './platform/shareQr.js';
@@ -49,7 +50,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.120";
+const APP_VERSION = "1.3.121";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -1221,7 +1222,7 @@ async function loadLocalNotes() {
         pendingDeleteIds = new Set(entries.filter(row => row.pending && row.note === null).map(row => row.id));
         renderList(searchInput.value);
         const restore = isDesktop ? localStorage.getItem(`desktop-active:${owner}`) : null;
-        if (restore && currentNotes[restore] && !currentNotes[restore].deletedAt) selectNote(restore, false);
+        if (restore && currentNotes[restore] && !currentNotes[restore].deletedAt && folders.matches(currentNotes[restore])) selectNote(restore, false);
         else if (isGuestMode) initAutoNote();
     } catch (error) { localSaveError(error); }
 }
@@ -1311,6 +1312,11 @@ function initAutoNote() {
         return;
     }
 
+    if (folders.active !== 'all') {
+        const latest = Object.values(currentNotes).filter(n=>!n.deletedAt && folders.matches(n)).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0))[0];
+        if (latest) selectNote(latest.id, false, true);
+        return;
+    }
     const existingEmpty = Object.values(currentNotes).find(n => !n.deletedAt && (!n.body || !n.body.trim()) && (!n.title || !n.title.trim()));
     if (existingEmpty) {
         selectNote(existingEmpty.id, true);
@@ -1750,6 +1756,9 @@ let autoDismissProgressTimer = null;
 let lastProgressPaint = 0;
 
 function clearTransferHistoryUI() {
+    archiveOperation?.abort();
+    receivedArchive.clear();
+    archiveButton.hidden = true;
     if (!transferHistoryList) return;
     transferHistoryList.innerHTML = '<li class="empty-history">履歴はありません</li>';
 }
@@ -1851,6 +1860,8 @@ function handleTransferStatus(event, data) {
             else transferLockBanner.classList.add('hidden');
         }
         if (btnStartSend) btnStartSend.disabled = isLocked || !!transferManager?.isSending;
+    } else if (event === 'receive_capacity') {
+        renderStagedFilesUI();
     }
 }
 
@@ -1987,7 +1998,9 @@ if (btnPreviewDownload) {
     };
 }
 
-function handleFileReceived(blob, filename, mode) {
+function handleFileReceived(blob, filename, mode, batch) {
+    receivedArchive.add(blob, filename, batch);
+    archiveButton.hidden = !receivedArchive.ready();
     if (blob?.saved) {
         addTransferHistory(filename, blob.size, '受信・保存済み', mode || 'WAN_P2P');
         if (transferStatusLabel) transferStatusLabel.textContent = '保存先への書込みが完了しました';
@@ -2162,14 +2175,58 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = nul
 
 let stagedFilesQueue = [];
 let receiveDirectory = null;
+const receivedArchive = createReceivedArchive();
+let archiveOperation = null;
+const archiveButton = document.getElementById('btn-received-zip');
+archiveButton.onclick = async () => {
+    const entries = receivedArchive.ready();
+    if (!entries || archiveOperation) return;
+    const operation = new AbortController();
+    archiveOperation = operation;
+    archiveButton.disabled = true;
+    let writer;
+    try {
+        if (entries.every(entry => entry.data.archiveId)) {
+            const {desktop} = await desktopReady;
+            operation.signal.throwIfAborted();
+            const name = await desktop.receiveZip(entries.map(({data,name}) => [data.archiveId,name]));
+            operation.signal.throwIfAborted();
+            showToast(`受信フォルダに「${name}」を保存しました`);
+        } else if (entries.some(entry => entry.data.handle)) {
+            const directory = entries.find(entry => entry.data.directory).data.directory;
+            const name = `FlickMemo-${crypto.randomUUID()}.zip`;
+            try {
+                const handle = await directory.getFileHandle(name, {create:true});
+                writer = await handle.createWritable();
+                await writeReceivedZip(entries, writer, operation.signal);
+            } catch (error) {
+                await writer?.abort().catch(() => {});
+                await directory.removeEntry(name).catch(() => {});
+                throw error;
+            }
+            showToast('受信フォルダにZIPを保存しました');
+        } else {
+            const archive = await writeReceivedZip(entries, undefined, operation.signal);
+            operation.signal.throwIfAborted();
+            downloadBlob(archive, 'FlickMemo.zip');
+        }
+    } catch (error) {
+        if (!operation.signal.aborted) showToast(`ZIPを作成できませんでした: ${error.message}`);
+    } finally {
+        archiveOperation = null;
+        archiveButton.disabled = false;
+    }
+};
 let receiveChoiceEpoch = 0;
 const canSelectReceiveDirectory = isDesktop || typeof window.showDirectoryPicker === 'function';
 const receiveTools = document.createElement('div'); receiveTools.className = 'transfer-storage-tools';
 receiveTools.innerHTML = '<button type="button" class="btn-secondary-sm" data-directory><span class="material-symbols-outlined">folder_open</span>大容量受信の保存先を選ぶ</button><button type="button" class="btn-secondary-sm" data-release hidden>保存先を解除</button><button type="button" class="btn-danger-sm" data-cancel>転送を中止</button><p role="status"></p>';
-document.getElementById('dropzone-area')?.after(receiveTools);
+document.getElementById('transfer-receive-settings')?.append(receiveTools);
 const receiveHint = receiveTools.querySelector('[role=status]');
-const receiveDefaultHint = canSelectReceiveDirectory ? '保存先を選ぶと、受信データを少量ずつ直接保存します。複数ファイルもZIPを作らず順に送信します。' : 'この環境の受信は64MiBまでです。大容量の受信にはPCのChrome・Edge等で保存先を選択してください。送信は受信側が対応していれば大容量にも対応します。';
+const receiveDefaultHint = canSelectReceiveDirectory ? '大容量ファイルや複数ファイルを受け取る前に、保存先フォルダを選んでください。' : '大容量の受信には、Windows版またはフォルダへの直接保存に対応するPCブラウザをお使いください。';
 receiveTools.querySelector('[data-directory]').disabled = !canSelectReceiveDirectory;
+receiveTools.querySelector('[data-directory]').hidden = !canSelectReceiveDirectory;
+receiveTools.querySelector('[data-cancel]').hidden = true;
 receiveHint.textContent = receiveDefaultHint;
 receiveTools.querySelector('[data-directory]').onclick = async () => {
     if (transferManager?.incomingFileInfo || transferManager?.isSending) { showToast('転送が終わってから保存先を変更してください'); return; }
@@ -2180,6 +2237,7 @@ receiveTools.querySelector('[data-directory]').onclick = async () => {
         if (isDesktop) {
             const { desktop } = await desktopReady; if (!current()) return;
             const name = await desktop.receiveDirectory(); if (!name || !current()) return;
+            if (receiveDirectory) { receivedArchive.clear(); archiveButton.hidden = true; }
             directory = { name, native: true }; receiveDirectory = directory; ensureTransferManager().setReceiveSinkFactory(info => desktop.receiveSink(info));
         } else { directory = await window.showDirectoryPicker({ mode: 'readwrite' }); if (!current()) return; receiveDirectory = directory; ensureTransferManager().setReceiveSinkFactory(info => directorySink(directory, info, window)); } receiveHint.textContent = `受信保存先: ${directory.name}（直接保存・ファイルサイズの固定上限なし）`; receiveTools.querySelector('[data-release]').hidden = false; }
     catch (error) { if (current() && error?.name !== 'AbortError') showToast('保存先を選べません: ' + String(error?.message || error)); }
@@ -2190,6 +2248,7 @@ receiveTools.querySelector('[data-release]').onclick = async () => {
     try {
         transferManager?.setReceiveSinkFactory(null);
         choice = ++receiveChoiceEpoch; receiveDirectory = null;
+        if (isDesktop) { receivedArchive.clear(); archiveButton.hidden = true; }
         receiveTools.querySelector('[data-directory]').disabled = true;
         receiveTools.querySelector('[data-release]').hidden = true;
         if (isDesktop) await desktopReady.then(({desktop}) => desktop.receiveForget());
@@ -2209,7 +2268,15 @@ const btnStartSend = document.getElementById('btn-start-send');
 function renderStagedFilesUI() {
     if (!stagedFilesCard || !stagedFileList) return;
 
-    if (stagedFilesQueue.length === 0) {
+    const hasFiles = stagedFilesQueue.length > 0;
+    dropzoneArea.classList.toggle('hidden',hasFiles);
+    const limit = transferManager?.peerReceiveLimit ?? 64*1024*1024;
+    const needsFolder = stagedFilesQueue.some(file => file.size > limit);
+    const largeBatch = stagedFilesQueue.length > 1 && stagedFilesQueue.reduce((sum,file)=>sum+file.size,0) > 64*1024*1024;
+    document.getElementById('transfer-size-warning').textContent = needsFolder
+        ? '送信前に相手に保存先フォルダを選んでもらってください。選択後、そのまま送信できます。'
+        : largeBatch && limit <= 64*1024*1024 ? '相手がフォルダを選んでおくと、このファイル一式を受信後にZIPへまとめられます。' : '';
+    if (!hasFiles) {
         stagedFilesCard.classList.add('hidden');
         stagedFileList.innerHTML = '';
         if (stagedFileCount) stagedFileCount.textContent = '0';
@@ -2242,10 +2309,9 @@ function renderStagedFilesUI() {
 }
 
 function stageFiles(files) {
-    if (!files || files.length === 0) return;
+    if (isTransferring || !files || files.length === 0) return;
     Array.from(files).forEach(f => stagedFilesQueue.push(f));
     renderStagedFilesUI();
-    showToast(`${files.length} 件のファイルを送信リストに追加しました`);
 }
 
 // ドロップゾーン＆ファイル選択バインド
@@ -2255,7 +2321,7 @@ if (dropzoneArea && fileInput && btnBrowseFiles) {
         fileInput.click();
     };
 
-    dropzoneArea.onclick = () => fileInput.click();
+    dropzoneArea.onclick = event => { if (event.target !== fileInput) fileInput.click(); };
 
     dropzoneArea.ondragover = (e) => {
         e.preventDefault();
@@ -2297,6 +2363,7 @@ let isTransferring = false;
 function setTransferUILock(isLocked) {
     isLocked = isLocked || !!transferManager?.isSending || !!transferManager?.incomingFileInfo;
     isTransferring = isLocked;
+    receiveTools.querySelector('[data-cancel]').hidden = !isLocked;
     if(!isLocked)syncRecovery.refresh();
     const elementsToLock = [
         dropzoneArea,
@@ -2334,6 +2401,14 @@ if (btnStartSend) {
             return;
         }
 
+        const limit = transferManager.peerReceiveLimit;
+        if (limit !== undefined && stagedFilesQueue.some(file => file.size > limit)) {
+            renderStagedFilesUI();
+            showToast('相手が保存先を選んだら、もう一度「送信開始」を押してください');
+            return;
+        }
+        const total = stagedFilesQueue.length;
+        const batchId = total > 1 && total <= 1000 ? crypto.randomUUID() : null;
         let fileToSend = null;
         setTransferUILock(true);
         try {
@@ -2341,7 +2416,8 @@ if (btnStartSend) {
                 fileToSend = stagedFilesQueue[0];
                 const name = fileToSend.name, size = fileToSend.size;
                 if (transferStatusLabel) transferStatusLabel.textContent = `「${name}」を送信中`;
-                const actualMode = await transferManager.sendFileP2P(fileToSend);
+                const batch = batchId ? {id:batchId,total,index:total-stagedFilesQueue.length} : undefined;
+                const actualMode = await transferManager.sendFileP2P(fileToSend, batch);
                 addTransferHistory(name, size, '送信', actualMode);
                 stagedFilesQueue.shift(); fileToSend = null; renderStagedFilesUI();
                 showToast(`「${name}」の受信完了を確認しました`);
@@ -2520,7 +2596,7 @@ function ensureTransferManager() {
             auth,
             db,
             (event, data) => handleTransferStatus(event, data),
-            (blob, filename, mode) => handleFileReceived(blob, filename, mode),
+            (blob, filename, mode, batch) => handleFileReceived(blob, filename, mode, batch),
             (bytes, total, name, direction) => handleTransferProgress(bytes, total, name, direction)
         );
         if (receiveDirectory) { const directory = receiveDirectory; transferManager.setReceiveSinkFactory(info => directory.native ? desktopReady.then(({desktop}) => desktop.receiveSink(info)) : directorySink(directory, info, window)); }
@@ -3368,7 +3444,7 @@ onAuthStateChanged(auth, async user => {
                     const isMobile = window.innerWidth <= 768;
                     if (!isMobile) {
                         const validNotes = Object.values(currentNotes)
-                            .filter(n => !n.deletedAt)
+                            .filter(n => !n.deletedAt && (currentTab !== 'notes' || folders.matches(n)))
                             .sort((a, b) => Number(localRecoveryIds.has(a.id)) - Number(localRecoveryIds.has(b.id)) || (b.updatedAt || 0) - (a.updatedAt || 0));
 
                         if (validNotes.length > 0) {

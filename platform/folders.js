@@ -11,11 +11,62 @@ export function setupFolders({ doc = document, win = window, notes, select, move
     dialog.setAttribute('aria-labelledby','folder-dialog-title');
     dialog.innerHTML = '<form><span class="material-symbols-outlined folder-dialog-icon" aria-hidden="true">create_new_folder</span><h2 id="folder-dialog-title">フォルダを作成</h2><p class="folder-dialog-description">メモをまとめて、見つけやすく。</p><label>フォルダ名<input name="name" maxlength="60" required autocomplete="off" placeholder="例：仕事、アイデア"></label><p role="status"></p><div class="folder-dialog-actions"><button type="button" data-cancel class="btn-secondary-sm">キャンセル</button><button type="submit" class="btn-primary-sm">作成</button></div></form>';
     doc.body.append(dialog);
+    const manager = doc.createElement('dialog');
+    manager.className = 'folder-dialog folder-manager';
+    manager.setAttribute('aria-labelledby','folder-manager-title');
+    manager.innerHTML = '<h2 id="folder-manager-title">フォルダを管理</h2><label>フォルダを検索<input type="search" placeholder="フォルダ名" autocomplete="off"></label><div class="folder-manager-list"></div><div class="folder-dialog-actions"><button type="button" class="btn-secondary-sm" data-close>閉じる</button><button type="button" class="btn-primary-sm" data-create>作成</button></div>';
+    doc.body.append(manager);
+    const manage = doc.createElement('button');
+    manage.type = 'button'; manage.className = 'folder-manage-button'; manage.textContent = 'フォルダを管理';
+    root.querySelector('.folder-panel').append(manage);
+    manage.onclick = () => { root.querySelector('details').open = false; renderManager(); manager.showModal(); };
+    manager.querySelector('[data-close]').onclick = () => manager.close();
+    manager.querySelector('[data-create]').onclick = () => editFromManager();
+    manager.querySelector('input').oninput = renderManager;
+    let returnToManager = false;
+    let removing = null;
+    let renderedManagement = '';
+    function editFromManager(id) { returnToManager = true; manager.close(); edit(id); }
+    dialog.addEventListener('close',()=>{ if(returnToManager){returnToManager=false;renderManager();manager.showModal();} });
+    function renderManager() {
+        const list = manager.querySelector('.folder-manager-list');
+        const query = manager.querySelector('input').value.trim().toLocaleLowerCase();
+        const filtered = currentItems().filter(folder => folder.name.toLocaleLowerCase().includes(query));
+        const state = JSON.stringify([owner,query,removing,filtered]);
+        if (state === renderedManagement) return;
+        renderedManagement = state;
+        list.replaceChildren();
+        for (const folder of filtered) {
+            const row = doc.createElement('div'); row.className = 'folder-manager-row';
+            const name = doc.createElement('span'); name.textContent = folder.name;
+            row.append(name);
+            const action = (label, handler, danger = false) => {
+                const button = doc.createElement('button'); button.type='button'; button.textContent=label;
+                button.className=danger?'btn-danger-sm':'btn-secondary-sm'; button.onclick=handler;
+                row.append(button);
+            };
+            if (removing === folder.id) {
+                name.textContent = `${folder.name}を削除？ メモは未分類に移ります。`;
+                action('戻る',()=>{removing=null;renderManager();});
+                action('削除',()=>{try{update(folder.id,folder.name,true);removing=null;renderManager();}catch(error){notify(error.message);}},true);
+            } else {
+                action('名前変更',()=>editFromManager(folder.id));
+                action('削除',()=>{removing=folder.id;renderManager();},true);
+            }
+            list.append(row);
+        }
+        if (!filtered.length) list.textContent = query ? '一致するフォルダがありません' : 'フォルダはまだありません';
+    }
     const form = dialog.querySelector('form'), message = dialog.querySelector('[role=status]');
     const picker = doc.createElement('label'); picker.className = 'note-folder-picker'; picker.title = 'メモの保存フォルダ'; picker.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">folder</span><select aria-label="このメモの保存フォルダ"></select><span class="material-symbols-outlined folder-picker-chevron" aria-hidden="true">expand_more</span>';
     doc.getElementById('editor-toolbar')?.append(picker);
     picker.querySelector('select').onchange = event => move(event.target.value);
     function persist() { try { win.localStorage.setItem(`flickmemo-folders:${owner}`, JSON.stringify({ items, dirty })); } catch { throw Error('フォルダ設定を端末に保存できません'); } }
+    function setActive(id) {
+        active = ['all', 'unfiled'].includes(id) || (items[id] && !items[id].deletedAt) ? id : 'all';
+        try { win.localStorage.setItem(`flickmemo-active-folder:${owner}`,active); } catch {}
+        render();
+    }
     function send(id) {
         if (owner === 'guest' || !dirty[id]) return;
         const uid = owner, ticket = generation, value = dirty[id], key = `${uid}:${ticket}:${id}`;
@@ -32,7 +83,7 @@ export function setupFolders({ doc = document, win = window, notes, select, move
         const before = { items: Object.assign(Object.create(null), items), dirty: Object.assign(Object.create(null), dirty) };
         items[id] = value; dirty[id] = value;
         try { persist(); } catch (error) { items = before.items; dirty = before.dirty; throw error; }
-        if (deleted && active === id) active = 'unfiled';
+        if (deleted && active === id) setActive('unfiled');
         send(id); render(); select(active);
     }
     function edit(id = null) {
@@ -49,6 +100,7 @@ export function setupFolders({ doc = document, win = window, notes, select, move
     const currentItems = () => Object.values(items).filter(f => !f.deletedAt).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
     const effective = note => note.folderId && items[note.folderId] && !items[note.folderId].deletedAt ? note.folderId : '';
     function render() {
+        if(manager.open)renderManager();
         const folders = currentItems(), counts = new Map(), values = Object.values(notes()).filter(n => !n.deletedAt);
         for (const note of values) { const id = effective(note); counts.set(id, (counts.get(id) || 0) + 1); }
         const state = JSON.stringify([owner, active, values.length, counts.get('') || 0, folders.map(f => [f.id, f.name, counts.get(f.id) || 0])]);
@@ -65,7 +117,7 @@ export function setupFolders({ doc = document, win = window, notes, select, move
             const icon = doc.createElement('span'); icon.className = 'material-symbols-outlined'; icon.setAttribute('aria-hidden','true'); icon.textContent = item.id === 'all' ? 'description' : item.id === 'unfiled' ? 'folder_open' : 'folder';
             const name = doc.createElement('span'); name.className = 'folder-name'; name.textContent = item.name;
             const count = doc.createElement('span'); count.className = 'folder-count'; count.textContent = String(item.id === 'all' ? values.length : counts.get(item.id === 'unfiled' ? '' : item.id) || 0);
-            button.append(icon, name, count); button.onclick = () => { active = item.id; root.querySelector('details').open = false; render(); select(active); }; row.append(button);
+            button.append(icon, name, count); button.onclick = () => { root.querySelector('details').open = false; setActive(item.id); select(active); }; row.append(button);
             if (!['all', 'unfiled'].includes(item.id)) {
                 const tools = doc.createElement('details'); tools.className = 'folder-actions';
                 const more = doc.createElement('summary'); more.setAttribute('aria-label',`${item.name}: フォルダの操作`); more.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">more_horiz</span>'; tools.append(more);
@@ -84,17 +136,20 @@ export function setupFolders({ doc = document, win = window, notes, select, move
         combo.value = chosen; if (combo.selectedIndex < 0) combo.value = "";
     }
     function setOwner(uid) {
+        returnToManager=false;removing=null;if(manager.open)manager.close();manager.querySelector('input').value='';root.querySelector('details').open=false;
         ++generation; owner = uid || 'guest'; active = 'all'; items = Object.create(null); dirty = Object.create(null); if (dialog.open) dialog.close();
         try { const saved = JSON.parse(win.localStorage.getItem(`flickmemo-folders:${owner}`) || '{}');
             for (const [id, value] of Object.entries(saved.items || {}).slice(0, 200)) if (validFolder(value, id)) items[id] = value;
             for (const [id, value] of Object.entries(saved.dirty || {}).slice(0, 200)) if (validFolder(value, id)) dirty[id] = value;
+            const savedActive = win.localStorage.getItem(`flickmemo-active-folder:${owner}`);
+            if (savedActive === 'unfiled' || (items[savedActive] && !items[savedActive].deletedAt)) active = savedActive;
         } catch {} render();
     }
     return {
         render, setOwner, effective, get active() { return active; },
         choices:()=>[{id:'',name:'未分類'},...currentItems().map(item=>({id:item.id,name:item.name}))],
         location(note){const id=effective(note);return{id,name:id?items[id].name:'未分類'};},
-        setActive(id) { active = ['all', 'unfiled'].includes(id) || (items[id] && !items[id].deletedAt) ? id : 'all'; render(); },
+        setActive,
         matches(note) { return active === 'all' || effective(note) === (active === 'unfiled' ? '' : active); },
         selected(note) { picker.querySelector('select').value = effective(note); picker.querySelector('select').disabled = !!note.deletedAt; },
         receive(remote) {
@@ -102,7 +157,7 @@ export function setupFolders({ doc = document, win = window, notes, select, move
             for (const [id, value] of Object.entries(dirty)) {
                 if (accepted[id] && accepted[id].updatedAt > value.updatedAt) delete dirty[id]; else accepted[id] = value;
             }
-            items = accepted; if (!['all', 'unfiled'].includes(active) && (!items[active] || items[active].deletedAt)) active = 'unfiled';
+            items = accepted; if (!['all', 'unfiled'].includes(active) && (!items[active] || items[active].deletedAt)) setActive('unfiled');
             try { persist(); } catch (error) { notify(error.message); } render(); for (const id of Object.keys(dirty)) send(id); changed();
         }
     };
