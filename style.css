@@ -40,6 +40,27 @@ html {
     overflow: hidden;
 }
 
+.pwa-status-surface {
+    display: none;
+}
+
+@media (display-mode: standalone) {
+    @supports (-webkit-touch-callout: none) and (background-clip: text) {
+        /* WebKit samples a fixed surface wider than a thin (10px) border.
+           Empty text clipping supplies the status-bar color without painting over controls. */
+        .pwa-status-surface {
+            display: block;
+            position: fixed;
+            inset: 0 0 auto;
+            height: 11px;
+            z-index: 2147483647;
+            pointer-events: none;
+            background-color: var(--m3-surface);
+            background-clip: text;
+        }
+    }
+}
+
 /* ★ 邪魔なアローボタン（三角）を完全に削除 */
 ::-webkit-scrollbar-button {
     display: none !important;
