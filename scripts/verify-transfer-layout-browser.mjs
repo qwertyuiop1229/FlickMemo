@@ -23,7 +23,40 @@ for (const channel of ['chrome','msedge']) {
   await page.locator('.folder-filter').filter({hasText:'旅行'}).click();
   await page.reload();await page.locator('#btn-guest-login').click();
   assert.equal(await page.locator('.folder-current').innerText(),'旅行');
+  await page.locator('.folder-browser > summary').click();
+  await page.getByRole('button',{name:'フォルダを管理'}).click();
+  const travel=manager.locator('article').filter({has:page.getByRole('button',{name:'旅行を開く',exact:true})});
+  await travel.getByRole('button',{name:'新しいメモ',exact:true}).click();
+  await page.locator('#note-title-input').fill('持ち物');
+  await page.locator('#note-body').fill('充電ケーブルと地図');
+  await page.locator('#btn-folder-list').click();
+  await page.locator('.folder-browser > summary').click();
+  await page.getByRole('button',{name:'フォルダを管理'}).click();
+  assert.match(await travel.innerText(),/充電ケーブルと地図/);
+  await page.screenshot({path:`desktop-reports/folder-gallery-${channel}-390.png`});
+  await page.setViewportSize({width:1100,height:800});
+  assert.ok((await manager.boundingBox()).width>800);
+  await page.screenshot({path:`desktop-reports/folder-gallery-${channel}-1100.png`});
+  await page.setViewportSize({width:390,height:760});
+  await travel.locator('.folder-card-previews button').click();
+  assert.equal(await page.locator('#note-body').inputValue(),'充電ケーブルと地図');
   await page.locator('#btn-header-transfer').click();
+  // Use a synthetic link to exercise the real waiting card without creating a room.
+  await page.evaluate(()=>{
+     document.getElementById('room-create-section').classList.add('hidden');
+     document.getElementById('room-active-status').classList.remove('hidden');
+     document.getElementById('room-status-url').textContent='https://flickmemo-qwe.web.app/?room=rm_'+'a'.repeat(32)+'#key='+'b'.repeat(64);
+  });
+  for(const width of [320,390,768,1100]) {
+     await page.setViewportSize({width,height:760});
+     const overflow=await page.locator('#transfer-panel').evaluate(el=>({width:el.clientWidth,scroll:el.scrollWidth,
+       children:[...el.querySelectorAll('*')].filter(node=>node.getBoundingClientRect().right>el.getBoundingClientRect().right+1).slice(0,10).map(node=>node.id||node.className)}));
+     assert.equal(overflow.scroll,overflow.width,JSON.stringify({width,overflow}));
+     const card=await page.locator('#room-active-status').boundingBox();
+     const buttons=await page.locator('.room-status-actions').boundingBox();
+     assert.ok(buttons.x>=card.x && buttons.x+buttons.width<=card.x+card.width+1);
+  }
+  await page.setViewportSize({width:390,height:760});
   assert.equal(await page.locator('.transfer-options').getAttribute('open'),null);
   assert.equal(await page.locator('.transfer-storage-tools [data-cancel]').isVisible(),false);
   // Preview the connected layout without opening a public sharing room.

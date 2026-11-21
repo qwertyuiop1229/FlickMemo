@@ -1594,12 +1594,14 @@ body.is-extension-popup {
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
+    min-width: 0;
 }
 
 .room-action-container {
     display: flex;
     flex-direction: column;
     gap: 0.8rem;
+    min-width: 0;
 }
 
 .room-section-box {
@@ -1700,6 +1702,9 @@ body.is-extension-popup {
     border-radius: var(--m3-radius-md);
     padding: 0.8rem 1rem;
     display: flex;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
     justify-content: space-between;
     align-items: center;
     gap: 0.6rem;
@@ -1712,7 +1717,7 @@ body.is-extension-popup {
     font-size: 0.82rem;
     color: var(--m3-primary);
     font-weight: 500;
-    flex: 1;
+    flex: 1 1 210px;
     min-width: 0;
 }
 
@@ -1721,15 +1726,14 @@ body.is-extension-popup {
     flex-direction: column;
     gap: 0.2rem;
     min-width: 0;
+    flex: 1;
 }
 
 .room-status-title {
     font-size: 0.82rem;
     font-weight: 600;
     color: var(--m3-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
 }
 
 .room-status-url {
@@ -1739,6 +1743,7 @@ body.is-extension-popup {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    width: 100%;
 }
 
 .room-status-actions {
@@ -1746,6 +1751,7 @@ body.is-extension-popup {
     align-items: center;
     gap: 0.3rem;
     flex-shrink: 0;
+    margin-inline-start: auto;
 }
 
 /* STEP 2: 接続中セッションヘッダー */
@@ -2785,7 +2791,7 @@ body.is-extension-popup {
 .transfer-top-bar { padding-bottom: 8px; }
 .transfer-top-bar h2 { color: var(--m3-text); }
 .transfer-top-bar .material-symbols-outlined { color: var(--m3-primary); }
-.transfer-step-connect, .transfer-step-session { min-width: 0; display: grid; gap: 10px; animation: transfer-enter .24s var(--m3-motion-curve); }
+.transfer-step-connect, .transfer-step-session { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; animation: transfer-enter .24s var(--m3-motion-curve); }
 .transfer-disclosure { padding: 0; background: transparent; border: 0; min-width: 0; }
 .transfer-disclosure > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; min-height: 36px; border-radius: 10px; color: var(--m3-text-variant); font-size: 13px; cursor: pointer; transition: background .18s; }
 .transfer-disclosure > summary::-webkit-details-marker { display: none; }
@@ -2811,10 +2817,20 @@ body.is-extension-popup {
 .transfer-disclosure button, .folder-manage-button { transition: background .18s, transform .18s var(--m3-motion-curve); }
 .folder-manage-button { width: 100%; margin-top: 6px; padding: 9px; border: 0; border-top: 1px solid var(--m3-border); background: transparent; color: var(--m3-primary); cursor: pointer; border-radius: 10px; }
 .folder-manage-button:hover { background: var(--m3-surface-hover); }
-.folder-manager { width: min(510px,calc(100vw - 24px)); }
-.folder-manager-list { display: grid; gap: 6px; max-height: 42dvh; overflow: auto; margin-top: 14px; color: var(--m3-text-variant); }
-.folder-manager-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border-radius: 12px; background: var(--m3-surface-container); }
-.folder-manager-row > span { flex: 1 1 110px; overflow-wrap: anywhere; font-size: 13px; }
 @keyframes transfer-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 @media (max-width: 520px) { .transfer-panel { padding: 8px; } .transfer-header-card { gap: 8px; } .dropzone-content .dropzone-icon { display:none; } }
 @media (prefers-reduced-motion: reduce) { .transfer-step-connect, .transfer-step-session, .transfer-disclosure[open] > :not(summary) { animation: none; } .transfer-disclosure > summary, .transfer-disclosure > summary::after, .folder-manage-button { transition: none; } }
+
+.temporary-receive {
+    padding: 12px;
+    margin-top: 7px;
+    border: 1px solid var(--m3-border);
+    border-radius: 12px;
+    background: var(--m3-surface-container);
+}
+.temporary-receive p { color: var(--m3-text-variant); font-size: 12px; line-height: 1.6; margin-bottom: 8px; }
+.temporary-receive [hidden] { display: none !important; }
+.temporary-receive ul { list-style: none; max-height: 38dvh; overflow: auto; }
+.temporary-receive li { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 8px 0; }
+.temporary-receive li strong { color: var(--m3-text); flex: 1 1 100%; overflow-wrap: anywhere; font-size: 13px; }
+.temporary-receive a { text-decoration: none; }

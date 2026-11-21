@@ -50,7 +50,7 @@ function loadPrism() {
 import { FileTransferManager } from './fileTransfer.js';
 
 // ★ アプリ内に直接埋め込まれたバージョン定数（bump.jsでデプロイ時に自動書き換え）
-const APP_VERSION = "1.3.124";
+const APP_VERSION = "1.3.125";
 
 // ⚠️ ご自身のキーを入れてください
 const firebaseConfig = {
@@ -544,6 +544,8 @@ const syncRecovery = createSyncRecovery({retry:resumeCloudSync,eligible:()=>isDe
 let applyingFolder = false;
 const folders = setupFolders({
     changed: () => renderList(searchInput.value), notes: () => currentNotes,
+    openNote: id => selectNote(id, false),
+    newNote: () => createNewNote(),
     select: () => {
         if (syncDebounceTimer && activeNoteId) flushPendingSave(activeNoteId);
         applyingFolder = true;
@@ -1280,6 +1282,7 @@ async function clearLocalData() {
     receiveHint.textContent = receiveDefaultHint;
     if (isDesktop) await desktopReady.then(({desktop}) => desktop.receiveForget()).catch(() => {});
     if (transferManager) { transferManager.cleanupPeerConnection?.(); transferManager.setReceiveSinkFactory?.(null); }
+    void endTemporaryReceive();
     receiveTools.querySelector('[data-release]').hidden = true;
     renderStagedFilesUI();
     renderList('');
@@ -1966,7 +1969,7 @@ function closeImagePreviewModal() {
     if (imagePreviewModal) {
         imagePreviewModal.classList.add('hidden');
     }
-    if (previewImageEl) previewImageEl.src = '';
+    if (previewImageEl) { previewImageEl.onload = null; previewImageEl.src = ''; }
     if (currentPreviewObjectUrl) {
         URL.revokeObjectURL(currentPreviewObjectUrl);
         activeBlobUrls.delete(currentPreviewObjectUrl);
@@ -1999,6 +2002,13 @@ if (btnPreviewDownload) {
 }
 
 function handleFileReceived(blob, filename, mode, batch) {
+    if (blob?.temporaryFile) {
+        showTemporaryFile(blob,filename);
+        if (transferStatusLabel) transferStatusLabel.textContent = '受信完了。ファイルに保存できます';
+        setTransferUILock(false);
+        scheduleProgressAutoDismiss();
+        return;
+    }
     receivedArchive.add(blob, filename, batch);
     archiveButton.hidden = !receivedArchive.ready();
     if (blob?.saved) {
@@ -2101,6 +2111,26 @@ function addTransferHistory(name, size, type, mode = 'LAN_P2P', fileOrBlob = nul
         </div>
     `;
 
+    if (fileOrBlob && canShareReceivedFiles) {
+        const share = document.createElement('button');
+        share.type = 'button'; share.className = 'm3-icon-button-sm btn-hist-share';
+        share.title = '共有・「ファイル」に保存'; share.setAttribute('aria-label',share.title);
+        share.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">ios_share</span>';
+        share.onclick = async () => {
+            try {
+                const file = new File([fileOrBlob],name,{type:fileOrBlob.type || 'application/octet-stream'});
+                if (!navigator.canShare({files:[file]})) {
+                    showToast('このファイルは共有できません。ダウンロードをお使いください');
+                    return;
+                }
+                await navigator.share({files:[file]});
+            } catch (error) {
+                if (error.name !== 'AbortError') showToast('共有できませんでした。ダウンロードをお使いください');
+            }
+        };
+        li.querySelector('.btn-hist-dl').after(share);
+    }
+
     // 画像の場合、ファイル名情報のクリックでプレビューを表示
     const infoDiv = li.querySelector('.transfer-history-info');
     if (infoDiv && isImage) {
@@ -2200,11 +2230,141 @@ archiveButton.onclick = async () => {
 };
 let receiveChoiceEpoch = 0;
 const canSelectReceiveDirectory = isDesktop || typeof window.showDirectoryPicker === 'function';
+const appleMobile = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const canShareReceivedFiles = typeof navigator.share === 'function' && typeof navigator.canShare === 'function';
 const receiveTools = document.createElement('div'); receiveTools.className = 'transfer-storage-tools';
 receiveTools.innerHTML = '<button type="button" class="btn-secondary-sm" data-directory><span class="material-symbols-outlined">folder_open</span>大容量受信の保存先を選ぶ</button><button type="button" class="btn-secondary-sm" data-release hidden>保存先を解除</button><button type="button" class="btn-danger-sm" data-cancel>転送を中止</button><p role="status"></p>';
 document.getElementById('transfer-receive-settings')?.append(receiveTools);
+const temporaryTools = document.createElement('section');
+temporaryTools.className = 'temporary-receive';
+temporaryTools.hidden = true;
+temporaryTools.innerHTML = '<p role="status"></p><button type="button" class="btn-secondary-sm" data-enable>大容量受信を準備</button><button type="button" class="btn-secondary-sm" data-finish hidden>終了して一時ファイルを削除</button><ul></ul>';
+receiveTools.after(temporaryTools);
+const temporaryStatus = temporaryTools.querySelector('[role=status]');
+const temporaryEnable = temporaryTools.querySelector('[data-enable]');
+const temporaryFinish = temporaryTools.querySelector('[data-finish]');
+const temporaryList = temporaryTools.querySelector('ul');
+const temporaryEnv = {storage:navigator.storage,locks:navigator.locks,crypto:window.crypto};
+const canUseTemporaryReceive = appleMobile && !canSelectReceiveDirectory &&
+    typeof navigator.storage?.getDirectory === 'function' && typeof navigator.locks?.request === 'function' &&
+    typeof window.FileSystemFileHandle?.prototype.createWritable === 'function' && typeof URL.createObjectURL === 'function';
+let temporaryReceive = null;
+let temporaryEpoch = 0;
+const temporaryUrls = new Set();
+temporaryTools.hidden = !canUseTemporaryReceive;
+const temporaryHelp = '大容量の受信には端末の空き容量を使います。受信後に「ファイル」へ保存し、一時ファイルを削除してください。';
+temporaryStatus.textContent = temporaryHelp;
+const temporarySupport = canUseTemporaryReceive ? import('./platform/temporaryReceive.js') : null;
+const temporaryStartupCleanup = temporarySupport?.then(module=>module.clearAbandonedReceives(temporaryEnv)).catch(() => {});
+
+temporaryEnable.onclick = async () => {
+    if (transferManager?.incomingFileInfo || transferManager?.isSending) {
+        showToast('転送が終わってから大容量受信を準備してください');
+        return;
+    }
+    const ticket = ++temporaryEpoch;
+    temporaryEnable.disabled = true;
+    let session;
+    try {
+        const {openTemporaryReceive} = await temporarySupport;
+        await temporaryStartupCleanup;
+        if (ticket !== temporaryEpoch) return;
+        session = await openTemporaryReceive(temporaryEnv);
+        if (ticket !== temporaryEpoch) { await session.close(); return; }
+        ensureTransferManager().setReceiveSinkFactory(info=>session.createSink(info));
+        temporaryReceive = session;
+        temporaryEnable.hidden = true;
+        temporaryFinish.hidden = false;
+        temporaryStatus.textContent = '準備完了。相手に送信を始めてもらってください。保存が終わるまで画面を開いておいてください。';
+    } catch (error) {
+        await session?.close().catch(()=>{});
+        if (ticket === temporaryEpoch) temporaryStatus.textContent = `大容量受信を準備できませんでした。${error.message}`;
+    } finally { temporaryEnable.disabled = false; }
+};
+
+async function endTemporaryReceive() {
+    const ticket = ++temporaryEpoch;
+    const session = temporaryReceive;
+    if (!session) return;
+    temporaryReceive = null;
+    temporaryFinish.hidden = true;
+    temporaryList.replaceChildren();
+    for (const url of temporaryUrls) URL.revokeObjectURL(url);
+    temporaryUrls.clear();
+    try {
+        transferManager?.setReceiveSinkFactory(null);
+    } catch (error) {
+        transferManager?.cleanupPeerConnection(error);
+        transferManager?.setReceiveSinkFactory(null);
+    }
+    try {
+        await session.close();
+        if (ticket === temporaryEpoch) temporaryStatus.textContent = temporaryHelp;
+    } catch {
+        if (ticket === temporaryEpoch) temporaryStatus.textContent = '一時ファイルを削除できませんでした。画面を開き直すと再試行します。';
+    } finally { temporaryEnable.hidden = false; }
+}
+
+temporaryFinish.onclick = () => {
+    if (transferManager?.incomingFileInfo || transferManager?.isSending) {
+        showToast('転送を完了または中止してから終了してください');
+        return;
+    }
+    void endTemporaryReceive();
+};
+
+function showTemporaryFile({temporaryFile, remove},filename) {
+    const url = URL.createObjectURL(temporaryFile);
+    temporaryUrls.add(url);
+    const row = document.createElement('li');
+    const name = document.createElement('strong');
+    name.textContent = filename;
+    const save = document.createElement('a');
+    save.href = url;
+    save.download = filename;
+    save.className = 'btn-primary-sm';
+    save.textContent = 'ダウンロード';
+    const forget = document.createElement('button');
+    forget.type = 'button';
+    forget.className = 'btn-secondary-sm';
+    forget.textContent = '一時ファイルを削除';
+    forget.onclick = async () => {
+        forget.disabled = true;
+        try {
+            await remove();
+            URL.revokeObjectURL(url);
+            temporaryUrls.delete(url);
+            row.remove();
+        } catch { showToast('一時ファイルを削除できませんでした'); }
+        finally { forget.disabled = false; }
+    };
+    row.append(name,save,forget);
+    if (canShareReceivedFiles) {
+        const share = document.createElement('button');
+        share.type = 'button'; share.className = 'btn-secondary-sm';
+        share.textContent = '共有してファイルに保存';
+        share.onclick = async () => {
+            try {
+                const file = new File([temporaryFile],filename,{type:temporaryFile.type || 'application/octet-stream'});
+                if (!navigator.canShare({files:[file]})) throw new Error('共有できない形式です');
+                await navigator.share({files:[file]});
+            } catch (error) {
+                if (error.name !== 'AbortError') showToast('このファイルは共有できません。「ダウンロード」をお使いください');
+            }
+        };
+        save.after(share);
+    }
+    temporaryList.append(row);
+    temporaryStatus.textContent = '受信完了。「ダウンロード」でファイルに保存し、保存を確認してから一時ファイルを削除してください。';
+}
+
 const receiveHint = receiveTools.querySelector('[role=status]');
-const receiveDefaultHint = canSelectReceiveDirectory ? '大容量ファイルや複数ファイルを受け取る前に、保存先フォルダを選んでください。' : '大容量の受信には、Windows版またはフォルダへの直接保存に対応するPCブラウザをお使いください。';
+const receiveDefaultHint = canSelectReceiveDirectory
+    ? '大容量ファイルを受け取る前に、保存先フォルダを選んでください。'
+    : appleMobile
+        ? `${canShareReceivedFiles ? '通常受信は履歴から「ファイルに保存」できます。' : '通常受信は履歴からダウンロードできます。'}${canUseTemporaryReceive ? '64MiBを超える場合は大容量受信を準備してください。' : '64MiBを超える受信には、iPadOS 26以降の対応ブラウザか、直接保存に対応する端末をお使いください。'}`
+        : '通常受信は1ファイル64MiBまでです。大容量の受信には、Windows版かフォルダへの直接保存に対応するブラウザをお使いください。';
 receiveTools.querySelector('[data-directory]').disabled = !canSelectReceiveDirectory;
 receiveTools.querySelector('[data-directory]').hidden = !canSelectReceiveDirectory;
 receiveTools.querySelector('[data-cancel]').hidden = true;
@@ -2255,7 +2415,7 @@ function renderStagedFilesUI() {
     const needsFolder = stagedFilesQueue.some(file => file.size > limit);
     const largeBatch = stagedFilesQueue.length > 1 && stagedFilesQueue.reduce((sum,file)=>sum+file.size,0) > 64*1024*1024;
     document.getElementById('transfer-size-warning').textContent = needsFolder
-        ? '送信前に相手に保存先フォルダを選んでもらってください。選択後、そのまま送信できます。'
+        ? '相手に「大容量受信を準備」または「大容量受信の保存先を選ぶ」を押してもらってください。準備が終わると送信できます。'
         : largeBatch && limit <= 64*1024*1024 ? '相手がフォルダを選んでおくと、このファイル一式を受信後にZIPへまとめられます。' : '';
     if (!hasFiles) {
         stagedFilesCard.classList.add('hidden');
@@ -2385,7 +2545,7 @@ if (btnStartSend) {
         const limit = transferManager.peerReceiveLimit;
         if (limit !== undefined && stagedFilesQueue.some(file => file.size > limit)) {
             renderStagedFilesUI();
-            showToast('相手が保存先を選んだら、もう一度「送信開始」を押してください');
+            showToast('相手の保存先が準備できたら、もう一度「送信開始」を押してください');
             return;
         }
         const total = stagedFilesQueue.length;
@@ -2779,7 +2939,7 @@ document.getElementById('btn-new').onclick = () => createNewNote(true);
 window.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
-        if (currentTab === 'notes') createNewNote(true);
+        if (currentTab === 'notes' && !document.querySelector('dialog[open]')) createNewNote(true);
     }
 });
 
@@ -3506,6 +3666,7 @@ function handleAppExitCleanup() {
         transferManager.stopDevicePresence();
         transferManager.resetReceiveBuffer();
     }
+    void endTemporaryReceive();
     releaseTransferPayloads();
     updateTransferSteps(false);
     setTransferUILock(false);

@@ -55,7 +55,10 @@ export class FileTransferManager {
     setReceiveSinkFactory(factory) {
         if (this.incomingFileInfo) throw new Error('受信が終わってから保存先を変更してください');
         this.receiveSinkFactory = factory;
-        if (this._protocolReady && this.dataChannel?.readyState === 'open') this.dataChannel.send(JSON.stringify({ type: 'RECEIVE_CAPACITY', maxReceiveBytes: factory ? Number.MAX_SAFE_INTEGER : MAX_RECEIVE_BYTES }));
+        if (this._protocolReady && this.dataChannel?.readyState === 'open') {
+            try { this.dataChannel.send(JSON.stringify({ type: 'RECEIVE_CAPACITY', maxReceiveBytes: factory ? Number.MAX_SAFE_INTEGER : MAX_RECEIVE_BYTES })); }
+            catch (error) { this.cleanupPeerConnection(error); }
+        }
     }
     setCustomEncryptionKey(keyString) {
         this.customKeyString = keyString || null;

@@ -21,7 +21,7 @@ import { WriteBarrier } from '../platform/writeBarrier.js';
 import { createNavigation } from '../platform/navigation.js';
 import { setupColorPicker } from '../platform/colorPicker.js';
 
-async function setup({ edge = false, extension = false, saveGate, transactionGate, transactionEcho = false, directoryPicker, cachedRows = [] } = {}) {
+async function setup({ edge = false, extension = false, saveGate, transactionGate, transactionEcho = false, directoryPicker, fileShare, cachedRows = [] } = {}) {
     function firebaseValue(value) {
         if(value==null)return null;
         if(typeof value!=='object')return value;
@@ -37,6 +37,10 @@ async function setup({ edge = false, extension = false, saveGate, transactionGat
     window.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')};
     window.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')};
     if (directoryPicker) window.showDirectoryPicker = directoryPicker;
+    if (fileShare) {
+        window.navigator.canShare = ({files}) => files?.length === 1;
+        window.navigator.share = fileShare;
+    }
     window.matchMedia = () => ({ matches: false });
     window.open = url => { calls.opened.push(url); return calls.popup; };
     Object.defineProperty(window, 'crypto', { value: webcrypto });
@@ -411,4 +415,19 @@ test('leaving a PWA page releases staged files, received ZIP data and history ev
         assert.equal(app.document.querySelectorAll('.transfer-history-item').length,0);
         assert.deepEqual(await app.store.entries('guest'),[]);
     } finally { app.close(); }
+});
+
+test('receive history hands the named file to the system share sheet from the save button', async()=>{
+    const shared=[];
+    const app=await setup({fileShare:async payload=>{shared.push(payload.files[0]);}});
+    try {
+        const file=new app.dom.window.Blob(['試験データ'],{type:'text/plain'});
+        app.api.handleFileReceived(file,'あいう.txt','LAN_P2P');
+        app.document.querySelector('.btn-hist-share').click();
+        assert.equal(shared[0].name,'あいう.txt');
+        assert.equal(shared[0].type,'text/plain');
+        assert.equal(shared[0].size,file.size);
+        assert.ok(app.document.querySelector('.btn-hist-dl'));
+        assert.deepEqual(await app.store.entries('guest'),[]);
+    } finally {app.close();}
 });

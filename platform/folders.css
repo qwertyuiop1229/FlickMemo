@@ -31,3 +31,83 @@
 .btn-note-more{display:flex;align-items:center;justify-content:center;flex:0 0 32px;width:32px;height:32px;border:0;border-radius:999px;padding:6px;background:none;color:var(--m3-text-muted);cursor:pointer;opacity:.75}.btn-note-more .material-symbols-outlined{font-size:20px}.btn-note-more:hover,.btn-note-more[aria-expanded=true]{background:var(--m3-surface-hover);color:var(--m3-primary);opacity:1}.note-item .btn-delete{flex:0 0 32px;width:32px;height:32px;justify-content:center;border-radius:999px}.note-item:focus-within .btn-delete{opacity:1}.btn-note-more:focus-visible,.note-actions-menu button:focus-visible,#status-bar:focus-visible{outline:2px solid var(--m3-primary);outline-offset:2px}
 .note-folder-location{display:flex;align-items:center;gap:4px;max-width:100%;color:var(--m3-text-muted);font-size:10px;line-height:16px}.note-folder-location>.material-symbols-outlined{font-size:12px;flex-shrink:0}.note-folder-location>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .note-actions-menu{position:fixed;inset:auto;margin:0;width:min(280px,calc(100vw - 16px));max-height:calc(100dvh - 16px);overflow:auto;padding:8px;border:1px solid var(--m3-border);border-radius:20px;background:var(--m3-surface-container);color:var(--m3-text);box-shadow:0 8px 24px #0004;z-index:1000}.note-actions-menu[popover]:not(:popover-open),.note-actions-menu[hidden]{display:none}.note-actions-menu:popover-open{animation:folder-enter .12s var(--m3-motion-curve)}.note-menu-heading{font-size:12px;font-weight:500;margin:10px 12px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.note-menu-location{margin:0 12px 10px;font-size:11px;line-height:1.6;color:var(--m3-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.note-actions-menu button{display:flex;align-items:center;gap:12px;min-height:42px;width:100%;padding:10px 12px;border:0;border-radius:12px;background:none;color:var(--m3-text);font-size:13px;text-align:left;cursor:pointer}.note-actions-menu button>.material-symbols-outlined{font-size:20px;color:var(--m3-text-variant);flex-shrink:0}.note-menu-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.note-actions-menu button:hover{background:var(--m3-surface-hover)}.note-actions-menu button.selected{background:color-mix(in srgb,var(--m3-primary) 14%,transparent);color:var(--m3-primary)}.note-actions-menu button:disabled{opacity:.45;cursor:wait}.note-menu-folder-list{max-height:40dvh;overflow:auto;overscroll-behavior:contain;border-top:1px solid var(--m3-border);margin-top:4px;padding-top:4px}@media(prefers-reduced-motion:reduce){.note-actions-menu:popover-open{animation:none}}
+
+/* Folder gallery is opened on demand. The sidebar remains usable for quick switching. */
+.folder-manager {
+    width: min(1000px, calc(100vw - 36px));
+    height: min(760px, calc(100dvh - 36px));
+    padding: clamp(14px, 3vw, 28px);
+    overflow: hidden;
+}
+.folder-manager[open] { display: flex; flex-direction: column; gap: 14px; }
+.folder-gallery-header, .folder-gallery-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.folder-gallery-header h2 { margin: 0; font-size: clamp(21px, 4vw, 28px); }
+.folder-gallery-toolbar label { display: flex; align-items: center; flex: 1; min-width: 0; max-width: 420px; }
+.folder-gallery-toolbar label input { width: 100%; background: transparent; padding: 4px 0; border: 0; box-shadow: none; }
+.folder-gallery-toolbar label:focus-within { outline: 2px solid var(--m3-primary); }
+.folder-manager-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 244px), 1fr));
+    grid-auto-rows: min-content;
+    align-content: start;
+    flex: 1;
+    max-height: none;
+    min-height: 0;
+    margin: 0;
+    gap: 12px;
+    padding: 2px;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+.folder-manager-row {
+    display: flex;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--m3-border);
+    border-radius: 20px;
+    background: var(--m3-surface-container);
+}
+.folder-card-open, .folder-card-previews button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    width: 100%;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--m3-text);
+    text-align: left;
+    cursor: pointer;
+    transition: background .18s var(--m3-motion-curve);
+}
+.folder-card-open { padding: 10px 8px; }
+.folder-card-open .material-symbols-outlined { color: var(--m3-primary); font-size: 28px; }
+.folder-card-open strong { flex: 1; overflow-wrap: anywhere; }
+.folder-card-open small { color: var(--m3-text-muted); white-space: nowrap; }
+.folder-card-open[aria-current=true] { background: color-mix(in srgb,var(--m3-primary) 12%,transparent); }
+.folder-card-open:hover, .folder-card-previews button:hover { background: var(--m3-surface-hover); }
+.folder-card-open:focus-visible, .folder-card-previews button:focus-visible { outline: 2px solid var(--m3-primary); }
+.folder-card-previews { padding: 3px; border-radius: 14px; background: var(--m3-surface); color: var(--m3-text-muted); font-size: 12px; }
+.folder-card-previews:not(:has(button)) { padding: 12px; }
+.folder-card-previews button { display: grid; gap: 3px; min-height: 41px; padding: 6px 9px; }
+.folder-card-previews strong, .folder-card-previews span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-card-previews span { color: var(--m3-text-variant); }
+.folder-card-previews span:empty { display: none; }
+.folder-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.folder-card-actions p { flex-basis: 100%; font-size: 12px; color: var(--m3-text-variant); }
+.folder-card-actions button { padding: 6px 9px; font-size: 12px; }
+@media (max-width: 520px) {
+    .folder-manager { width: calc(100vw - 16px); height: calc(100dvh - 16px); border-radius: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .folder-card-open, .folder-card-previews button { transition: none; }
+}

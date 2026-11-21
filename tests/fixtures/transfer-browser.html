@@ -5,6 +5,7 @@
 <script type="module">
 import { FileTransferManager } from '/fileTransfer.js';
 import { normalizeImageToPng } from '/clipboardFiles.js';
+import { clearAbandonedReceives, openTemporaryReceive } from '/platform/temporaryReceive.js';
 const result = document.querySelector('#results'), status = document.querySelector('#status');
 function check(condition, message) { if (!condition) throw new Error(message); }
 function report(text) { const li = document.createElement('li'); li.textContent = text; result.append(li); }
@@ -55,19 +56,44 @@ document.querySelector('#run').onclick=async()=>{
       } finally {peers.close();}
     }
     const peers = await makePair(false, false);
+    const env = {storage:navigator.storage,locks:navigator.locks,crypto};
+    const root = await navigator.storage.getDirectory();
+    const directoryName='flickmemo-temporary-receive-v1';
+    const abandoned = await root.getDirectoryHandle(directoryName,{create:true});
+    await abandoned.getFileHandle('abandoned',{create:true});
+    await clearAbandonedReceives(env);
+    const session = await openTemporaryReceive(env);
     try {
       let received = 0, maximumRead = 0;
-      peers.b.setReceiveSinkFactory(async () => ({
-        write: async bytes => { check(peers.b.receiveBuffer.length === 0, 'Unexpected accumulated receive data'); check(new Uint8Array(bytes).every((value,index) => value === (received + index) % 251), 'Stream bytes changed'); received += bytes.byteLength; },
-        close: async () => ({saved:true,size:received}), abort: async () => {}
-      }));
+      const folder = await root.getDirectoryHandle(directoryName);
+      check((await folder.keys().next()).done, 'Abandoned file was not removed');
+      await clearAbandonedReceives(env);
+      const cancelled = await session.createSink({name:'cancel.bin',size:5});
+      await cancelled.write(new Uint8Array([1]));
+      await cancelled.abort();
+      check((await folder.keys().next()).done, 'Cancelled partial file still exists');
+      peers.b.setReceiveSinkFactory(async info => {
+        const sink = await session.createSink(info);
+        return { ...sink, write: async bytes => {
+          check(peers.b.receiveBuffer.length === 0, 'Unexpected accumulated receive data');
+          check(new Uint8Array(bytes).every((value,index) => value === (received + index) % 251), 'Stream bytes changed');
+          await sink.write(bytes);
+          received += bytes.byteLength;
+        } };
+      });
       const deadline = Date.now() + 5000; while(peers.a._peerReceiveLimit !== Number.MAX_SAFE_INTEGER) { if(Date.now()>deadline)throw Error('Capacity negotiation timeout'); await new Promise(resolve=>setTimeout(resolve,10)); }
       const file = { name:'virtual-80MiB.bin', type:'application/octet-stream', size:80*1024*1024,
         slice(start,end) { const length = Math.min(this.size,end)-start; maximumRead = Math.max(maximumRead,length); return {arrayBuffer:async()=>Uint8Array.from({length},(_,i)=>(start+i)%251).buffer}; }
       };
       await peers.a.sendFileP2P(file); check(received === file.size && maximumRead <= 32768, 'Unbounded source or incomplete stream');
-      report('PASS streaming: 80MiB virtual source, exact bytes, bounded 32KiB reads, no aggregate receive Blob');
-    } finally { peers.close(); }
+      const saved = peers.files.at(-1);
+      check(saved?.temporaryFile.size === file.size, 'Missing file on disk');
+      const tail = new Uint8Array(await saved.temporaryFile.slice(-32).arrayBuffer());
+      check(tail.length === 32 && tail.every((value,index)=>value === (file.size - 32 + index) % 251), 'Incorrect bytes on disk');
+      await saved.remove();
+      check((await folder.keys().next()).done, 'Saved temporary file still present after deletion');
+      report('PASS streaming: 80MiB into real temporary storage, bounded 32KiB reads, cancellation and deletion');
+    } finally { peers.close(); await session.close(); }
     status.textContent='PASS: 13 real WebRTC and PNG/streaming checks';document.body.dataset.result='passed';
   } catch(error) {status.textContent='FAIL: '+error.message;document.body.dataset.result='failed';}
 };

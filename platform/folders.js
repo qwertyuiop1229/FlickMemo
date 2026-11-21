@@ -1,6 +1,6 @@
 const ID = /^folder_[A-Za-z0-9_-]{1,73}$/;
 export function validFolder(value, id = value?.id) { return !!value && typeof value === 'object' && typeof id === 'string' && ID.test(id) && !['__proto__', 'constructor', 'prototype'].includes(id) && value.id === id && typeof value.name === 'string' && value.name.trim().length > 0 && value.name.length <= 60 && Number.isFinite(value.updatedAt) && (value.deletedAt == null || Number.isFinite(value.deletedAt)); }
-export function setupFolders({ doc = document, win = window, notes, select, move, write, notify, changed = () => {} }) {
+export function setupFolders({ doc = document, win = window, notes, select, openNote, newNote, move, write, notify, changed = () => {} }) {
     let owner = 'guest', generation = 0, items = Object.create(null), dirty = Object.create(null), active = 'all', editing = null;
     const inFlight = new Set();
     let renderedState = null;
@@ -14,15 +14,19 @@ export function setupFolders({ doc = document, win = window, notes, select, move
     const manager = doc.createElement('dialog');
     manager.className = 'folder-dialog folder-manager';
     manager.setAttribute('aria-labelledby','folder-manager-title');
-    manager.innerHTML = '<h2 id="folder-manager-title">フォルダを管理</h2><label>フォルダを検索<input type="search" placeholder="フォルダ名" autocomplete="off"></label><div class="folder-manager-list"></div><div class="folder-dialog-actions"><button type="button" class="btn-secondary-sm" data-close>閉じる</button><button type="button" class="btn-primary-sm" data-create>作成</button></div>';
+    manager.innerHTML = '<header class="folder-gallery-header"><h2 id="folder-manager-title" tabindex="-1" autofocus>フォルダ</h2><button type="button" class="m3-icon-button" data-close aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></header><div class="folder-gallery-toolbar"><label class="m3-search-bar"><span class="material-symbols-outlined" aria-hidden="true">search</span><input type="search" aria-label="フォルダを検索" placeholder="フォルダを検索" autocomplete="off"></label><button type="button" class="btn-primary-sm" data-create>フォルダを作成</button></div><div class="folder-manager-list"></div>';
     doc.body.append(manager);
     const manage = doc.createElement('button');
     manage.type = 'button'; manage.className = 'folder-manage-button'; manage.textContent = 'フォルダを管理';
     root.querySelector('.folder-panel').append(manage);
-    manage.onclick = () => { root.querySelector('details').open = false; renderManager(); manager.showModal(); };
+    manage.onclick = () => { suppressGalleryFocus=false; root.querySelector('details').open = false; renderManager(); manager.showModal(); };
     manager.querySelector('[data-close]').onclick = () => manager.close();
     manager.querySelector('[data-create]').onclick = () => editFromManager();
     manager.querySelector('input').oninput = renderManager;
+    let suppressGalleryFocus = false;
+    manager.addEventListener('close', () => {
+        if (!suppressGalleryFocus && !returnToManager && !dialog.open) root.querySelector('summary').focus({preventScroll:true});
+    });
     let returnToManager = false;
     let removing = null;
     let renderedManagement = '';
@@ -31,27 +35,73 @@ export function setupFolders({ doc = document, win = window, notes, select, move
     function renderManager() {
         const list = manager.querySelector('.folder-manager-list');
         const query = manager.querySelector('input').value.trim().toLocaleLowerCase();
-        const filtered = currentItems().filter(folder => folder.name.toLocaleLowerCase().includes(query));
-        const state = JSON.stringify([owner,query,removing,filtered]);
+        const filtered = [...currentItems(),{id:'unfiled',name:'未分類'},{id:'all',name:'すべてのメモ'}]
+            .filter(folder => folder.name.toLocaleLowerCase().includes(query));
+        const groups = new Map(filtered.map(folder => [folder.id,{count:0,recent:[]}]));
+        const add = (group,note) => {
+            if (!group) return;
+            group.count++;
+            const rank = group.recent.findIndex(other => (other.updatedAt || 0) < (note.updatedAt || 0));
+            if (rank >= 0) group.recent.splice(rank,0,note);
+            else if (group.recent.length < 3) group.recent.push(note);
+            if (group.recent.length > 3) group.recent.pop();
+        };
+        for (const note of Object.values(notes())) {
+            if (note.deletedAt) continue;
+            add(groups.get('all'),note);
+            add(groups.get(effective(note) || 'unfiled'),note);
+        }
+        const state = JSON.stringify([owner,query,active,removing,filtered.map(folder => {
+            const {count,recent} = groups.get(folder.id);
+            return [folder.id,folder.name,count,recent.map(note=>[note.id,note.title?.slice(0,100),note.body?.slice(0,180)])];
+        })]);
         if (state === renderedManagement) return;
         renderedManagement = state;
         list.replaceChildren();
         for (const folder of filtered) {
-            const row = doc.createElement('div'); row.className = 'folder-manager-row';
-            const name = doc.createElement('span'); name.textContent = folder.name;
-            row.append(name);
+            const row = doc.createElement('article'); row.className = 'folder-manager-row';
+            const {count,recent} = groups.get(folder.id);
+            const open = doc.createElement('button'); open.type = 'button'; open.className = 'folder-card-open';
+            open.setAttribute('aria-label',`${folder.name}を開く`);
+            if (active === folder.id) open.setAttribute('aria-current','true');
+            const icon = doc.createElement('span'); icon.className = 'material-symbols-outlined'; icon.setAttribute('aria-hidden','true');
+            icon.textContent = folder.id === 'all' ? 'description' : 'folder_open';
+            const name = doc.createElement('strong'); name.textContent = folder.name;
+            const quantity = doc.createElement('small'); quantity.textContent = `${count}件`;
+            open.append(icon,name,quantity);
+            const openFolder = () => { manager.close(); setActive(folder.id); select(active); };
+            open.onclick = openFolder;
+            row.append(open);
+            const previews = doc.createElement('div'); previews.className = 'folder-card-previews';
+            for (const note of recent) {
+                const preview = doc.createElement('button'); preview.type = 'button';
+                const title = doc.createElement('strong');
+                const body = doc.createElement('span');
+                const excerpt = (note.body || '').slice(0,180).trim();
+                title.textContent = note.title?.trim().slice(0,100) || excerpt.split(/\r?\n/)[0] || '空のメモ';
+                body.textContent = excerpt.replace(/\s+/g,' ');
+                preview.append(title,body);
+                preview.onclick = () => { if(!notes()[note.id] || notes()[note.id].deletedAt)return; suppressGalleryFocus=true; openFolder(); openNote?.(note.id); };
+                previews.append(preview);
+            }
+            if (!recent.length) previews.textContent = 'メモはまだありません';
+            row.append(previews);
+            const actions = doc.createElement('div'); actions.className = 'folder-card-actions'; row.append(actions);
             const action = (label, handler, danger = false) => {
                 const button = doc.createElement('button'); button.type='button'; button.textContent=label;
                 button.className=danger?'btn-danger-sm':'btn-secondary-sm'; button.onclick=handler;
-                row.append(button);
+                actions.append(button);
             };
             if (removing === folder.id) {
-                name.textContent = `${folder.name}を削除？ メモは未分類に移ります。`;
+                const warning = doc.createElement('p'); warning.textContent = 'フォルダを削除しますか？ メモは未分類に移ります。'; actions.append(warning);
                 action('戻る',()=>{removing=null;renderManager();});
                 action('削除',()=>{try{update(folder.id,folder.name,true);removing=null;renderManager();}catch(error){notify(error.message);}},true);
             } else {
-                action('名前変更',()=>editFromManager(folder.id));
-                action('削除',()=>{removing=folder.id;renderManager();},true);
+                if (newNote && folder.id !== 'all') action('新しいメモ',()=>{suppressGalleryFocus=true;openFolder();newNote();});
+                if (!['all','unfiled'].includes(folder.id)) {
+                    action('名前変更',()=>editFromManager(folder.id));
+                    action('削除',()=>{removing=folder.id;renderManager();},true);
+                }
             }
             list.append(row);
         }
